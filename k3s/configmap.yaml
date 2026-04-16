@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tripkit-config
+  namespace: tripkit
+data:
+  DB_PATH: "/data/tripkit.db"
+  PORT: "3001"

@@ -1,0 +1,7 @@
+.github/
+.git/
+.gitignore
+README.md
+k3s/
+data/
+*.db
