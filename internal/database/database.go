@@ -1,29 +1,37 @@
 // Package database initializes and returns a GORM DB connection.
+// The driver is selected at runtime via DB_DRIVER env var (postgres or sqlite).
+// SQLite requires CGO; in CGO_ENABLED=0 builds only Postgres is available.
 package database
 
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"time"
 
 	"github.com/rjullien/tripkit-backend/internal/models"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
-// Init opens (or creates) the SQLite database and auto-migrates all models.
-func Init(dbPath string) (*gorm.DB, error) {
-	if dir := filepath.Dir(dbPath); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, err
-		}
+// Connect opens a database connection based on the DB_DRIVER env var.
+// Defaults to "sqlite" when unset (local dev with CGO).
+func Connect() (*gorm.DB, error) {
+	driver := os.Getenv("DB_DRIVER")
+	if driver == "" {
+		driver = "sqlite"
 	}
 
-	db, err := gorm.Open(sqlite.Open(dbPath+"?_foreign_keys=on&_journal_mode=WAL"), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Warn),
-	})
+	var db *gorm.DB
+	var err error
+
+	switch driver {
+	case "postgres":
+		db, err = openPostgres()
+	case "sqlite":
+		db, err = openSQLite()
+	default:
+		return nil, fmt.Errorf("unsupported DB_DRIVER: %s", driver)
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -31,19 +39,21 @@ func Init(dbPath string) (*gorm.DB, error) {
 	return autoMigrate(db)
 }
 
-// InitMemory opens an in-memory SQLite database (for tests).
-// Each call creates a unique database to avoid cross-test pollution.
-func InitMemory() (*gorm.DB, error) {
-	// Use a unique name per call to isolate test databases
-	name := fmt.Sprintf("file:memdb_%d?mode=memory&cache=shared&_foreign_keys=on", time.Now().UnixNano())
-	db, err := gorm.Open(sqlite.Open(name), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
+// Init opens (or creates) the SQLite database at the given path and auto-migrates.
+// Kept for backward compatibility and tests.
+func Init(dbPath string) (*gorm.DB, error) {
+	db, err := openSQLiteAt(dbPath)
 	if err != nil {
 		return nil, err
 	}
-
 	return autoMigrate(db)
+}
+
+// GormConfig returns a shared GORM config.
+func GormConfig(level logger.LogLevel) *gorm.Config {
+	return &gorm.Config{
+		Logger: logger.Default.LogMode(level),
+	}
 }
 
 func autoMigrate(db *gorm.DB) (*gorm.DB, error) {
