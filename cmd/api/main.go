@@ -24,12 +24,7 @@ func main() {
 		}
 	}
 
-	dbPath := os.Getenv("DB_PATH")
-	if dbPath == "" {
-		dbPath = "data/tripkit.db"
-	}
-
-	db, err := database.Init(dbPath)
+	db, err := database.Connect()
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
