@@ -13,7 +13,6 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/rjullien/tripkit-backend/internal/database"
 	"github.com/rjullien/tripkit-backend/internal/handlers"
-	"github.com/rjullien/tripkit-backend/internal/middleware"
 )
 
 func main() {
@@ -48,9 +47,8 @@ func main() {
 	// Health (no auth)
 	r.Get("/health", h.Health)
 
-	// API routes (with auth)
+	// API routes — auth handled by Authelia forwardAuth at ingress level
 	r.Route("/api", func(r chi.Router) {
-		r.Use(middleware.Auth)
 
 		// Trips
 		r.Get("/trips", h.ListTrips)

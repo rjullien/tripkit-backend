@@ -6,14 +6,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 	"github.com/rjullien/tripkit-backend/internal/database"
 	"github.com/rjullien/tripkit-backend/internal/handlers"
-	"github.com/rjullien/tripkit-backend/internal/middleware"
 )
 
 func setupRouter(t *testing.T) *chi.Mux {
@@ -27,7 +25,6 @@ func setupRouter(t *testing.T) *chi.Mux {
 	r.Use(cors.Handler(cors.Options{AllowedOrigins: []string{"*"}}))
 	r.Get("/health", h.Health)
 	r.Route("/api", func(r chi.Router) {
-		r.Use(middleware.Auth)
 		r.Get("/trips", h.ListTrips)
 		r.Post("/trips", h.CreateTrip)
 		r.Get("/trips/{tripId}", h.GetTrip)
@@ -61,21 +58,6 @@ func doReq(r *chi.Mux, method, url string, body any) *httptest.ResponseRecorder 
 	return w
 }
 
-func doReqAuth(r *chi.Mux, method, url string, body any, token string) *httptest.ResponseRecorder {
-	var reqBody io.Reader
-	if body != nil {
-		b, _ := json.Marshal(body)
-		reqBody = bytes.NewReader(b)
-	}
-	req := httptest.NewRequest(method, url, reqBody)
-	req.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	return w
-}
 
 func parseResp(w *httptest.ResponseRecorder) map[string]any {
 	var m map[string]any
@@ -89,63 +71,27 @@ func parseRespSlice(w *httptest.ResponseRecorder) []any {
 	return m
 }
 
-// ─── Auth ────────────────────────────────────────────────────────────────────
+// ─── Health ──────────────────────────────────────────────────────────────────
 
-func TestAuth_NoToken_DevMode(t *testing.T) {
-	os.Unsetenv("TRIPKIT_API_TOKEN")
+func TestHealth(t *testing.T) {
 	r := setupRouter(t)
-	w := doReq(r, "GET", "/api/trips", nil)
+	w := doReq(r, "GET", "/health", nil)
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
 	}
 }
 
-func TestAuth_MissingHeader(t *testing.T) {
-	os.Setenv("TRIPKIT_API_TOKEN", "secret")
-	defer os.Unsetenv("TRIPKIT_API_TOKEN")
+// ─── API routes (no auth middleware — Authelia handles auth at ingress) ──────
+
+func TestAPI_NoAuthRequired(t *testing.T) {
 	r := setupRouter(t)
 	w := doReq(r, "GET", "/api/trips", nil)
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401, got %d", w.Code)
-	}
-}
-
-func TestAuth_WrongToken(t *testing.T) {
-	os.Setenv("TRIPKIT_API_TOKEN", "secret")
-	defer os.Unsetenv("TRIPKIT_API_TOKEN")
-	r := setupRouter(t)
-	w := doReqAuth(r, "GET", "/api/trips", nil, "wrong")
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected 403, got %d", w.Code)
-	}
-}
-
-func TestAuth_CorrectToken(t *testing.T) {
-	os.Setenv("TRIPKIT_API_TOKEN", "secret")
-	defer os.Unsetenv("TRIPKIT_API_TOKEN")
-	r := setupRouter(t)
-	w := doReqAuth(r, "GET", "/api/trips", nil, "secret")
 	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", w.Code)
+		t.Errorf("expected 200 without auth header, got %d", w.Code)
 	}
 }
 
-func TestAuth_NonBearerScheme(t *testing.T) {
-	os.Setenv("TRIPKIT_API_TOKEN", "secret")
-	defer os.Unsetenv("TRIPKIT_API_TOKEN")
-	r := setupRouter(t)
-	req := httptest.NewRequest("GET", "/api/trips", nil)
-	req.Header.Set("Authorization", "Basic secret")
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected 403, got %d", w.Code)
-	}
-}
-
-func TestAuth_HealthNoAuth(t *testing.T) {
-	os.Setenv("TRIPKIT_API_TOKEN", "secret")
-	defer os.Unsetenv("TRIPKIT_API_TOKEN")
+func TestHealth_NoAuth(t *testing.T) {
 	r := setupRouter(t)
 	w := doReq(r, "GET", "/health", nil)
 	if w.Code != http.StatusOK {
