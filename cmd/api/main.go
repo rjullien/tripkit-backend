@@ -66,9 +66,6 @@ func main() {
 
 	// API routes — auth handled by Authelia forwardAuth at ingress level
 	r.Route(apiRoute, func(r chi.Router) {
-		// Health also under prefix (for ingress routing)
-		r.Get("/health", h.Health)
-
 
 		// Trips
 		r.Get("/trips", h.ListTrips)

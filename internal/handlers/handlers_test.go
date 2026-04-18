@@ -36,7 +36,6 @@ func setupRouterWithPrefix(t *testing.T, prefix string) *chi.Mux {
 		apiRoute = "/"
 	}
 	r.Route(apiRoute, func(r chi.Router) {
-		r.Get("/health", h.Health)
 		r.Get("/trips", h.ListTrips)
 		r.Post("/trips", h.CreateTrip)
 		r.Get("/trips/{tripId}", h.GetTrip)
@@ -130,15 +129,6 @@ func TestHealth_NoAuth(t *testing.T) {
 	w := doReq(r, "GET", "/health", nil)
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
-	}
-}
-
-func TestHealth_UnderBasePath(t *testing.T) {
-	r := setupRouter(t) // prefix="/api"
-	// /api/health should also work
-	w := doReq(r, "GET", "/api/health", nil)
-	if w.Code != http.StatusOK {
-		t.Errorf("expected /api/health 200, got %d", w.Code)
 	}
 }
 
