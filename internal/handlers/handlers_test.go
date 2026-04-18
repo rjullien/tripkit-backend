@@ -15,6 +15,13 @@ import (
 )
 
 func setupRouter(t *testing.T) *chi.Mux {
+	return setupRouterWithPrefix(t, "/api")
+}
+
+// setupRouterWithPrefix creates a test router with the given route prefix.
+// Use prefix="/api" for the legacy /api path (used by most tests),
+// or prefix="" for root mounting (BASE_PATH="" production mode).
+func setupRouterWithPrefix(t *testing.T, prefix string) *chi.Mux {
 	t.Helper()
 	db, err := database.InitMemory()
 	if err != nil {
@@ -24,7 +31,11 @@ func setupRouter(t *testing.T) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(cors.Handler(cors.Options{AllowedOrigins: []string{"*"}}))
 	r.Get("/health", h.Health)
-	r.Route("/api", func(r chi.Router) {
+	apiRoute := prefix
+	if apiRoute == "" {
+		apiRoute = "/"
+	}
+	r.Route(apiRoute, func(r chi.Router) {
 		r.Get("/trips", h.ListTrips)
 		r.Post("/trips", h.CreateTrip)
 		r.Get("/trips/{tripId}", h.GetTrip)
@@ -44,7 +55,6 @@ func setupRouter(t *testing.T) *chi.Mux {
 	})
 	return r
 }
-
 func doReq(r *chi.Mux, method, url string, body any) *httptest.ResponseRecorder {
 	var reqBody io.Reader
 	if body != nil {
@@ -78,6 +88,29 @@ func TestHealth(t *testing.T) {
 	w := doReq(r, "GET", "/health", nil)
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+// TestBasePath_RootMount verifies that when BASE_PATH="" routes are served at
+// root (i.e. GET /trips, not GET /api/trips).
+func TestBasePath_RootMount(t *testing.T) {
+	r := setupRouterWithPrefix(t, "") // equivalent to BASE_PATH=""
+	// /health should work at root regardless
+	if w := doReq(r, "GET", "/health", nil); w.Code != http.StatusOK {
+		t.Errorf("expected /health 200, got %d", w.Code)
+	}
+	// /trips (root mount) should work
+	if w := doReq(r, "GET", "/trips", nil); w.Code != http.StatusOK {
+		t.Errorf("expected /trips 200 with root mount, got %d", w.Code)
+	}
+	// /api/trips should NOT exist (wrong prefix)
+	if w := doReq(r, "GET", "/api/trips", nil); w.Code == http.StatusOK {
+		t.Errorf("expected /api/trips to NOT be routed with root mount")
+	}
+	// POST /trips should also work
+	w := doReq(r, "POST", "/trips", map[string]any{"id": "rt1", "name": "Root Trip"})
+	if w.Code != http.StatusCreated {
+		t.Errorf("expected POST /trips 201 with root mount, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

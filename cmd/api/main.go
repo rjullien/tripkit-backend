@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
@@ -44,11 +45,27 @@ func main() {
 		MaxAge:           300,
 	}))
 
-	// Health (no auth)
+	// Health (always at root, no auth)
 	r.Get("/health", h.Health)
 
+	// BASE_PATH — configurable route prefix (default: empty = routes at root)
+	// Examples: BASE_PATH="" → GET /trips, BASE_PATH="/api" → GET /api/trips
+	basePath := os.Getenv("BASE_PATH")
+	// Clean: ensure leading slash if non-empty, strip trailing slash
+	if basePath != "" {
+		if !strings.HasPrefix(basePath, "/") {
+			basePath = "/" + basePath
+		}
+		basePath = strings.TrimRight(basePath, "/")
+	}
+
+	apiRoute := basePath
+	if apiRoute == "" {
+		apiRoute = "/" // mount at root
+	}
+
 	// API routes — auth handled by Authelia forwardAuth at ingress level
-	r.Route("/api", func(r chi.Router) {
+	r.Route(apiRoute, func(r chi.Router) {
 
 		// Trips
 		r.Get("/trips", h.ListTrips)
