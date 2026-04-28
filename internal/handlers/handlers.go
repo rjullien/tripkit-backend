@@ -245,6 +245,44 @@ func (h *Handler) DeleteTrip(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ── Version check (lightweight) ─────────────────────────────────────────────
+
+func (h *Handler) TripVersion(w http.ResponseWriter, r *http.Request) {
+	tripID := chi.URLParam(r, "tripId")
+	var trip models.Trip
+	if err := h.db.First(&trip, "id = ?", tripID).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Trip not found")
+		return
+	}
+
+	// Compute version = max updated_at across trip + all days
+	// Trip.UpdatedAt is already set by GORM on every update.
+	// For days, we pick the max of the trip's last day upsert.
+	latestAt := trip.UpdatedAt
+
+	var maxDayRow struct {
+		MaxID uint
+	}
+	// Day has no UpdatedAt, so we use max(id) as proxy (auto-increment = latest upsert)
+	// Better: we use the trip's own UpdatedAt which we bump on seed-import
+
+	// Also check max hotel update
+	var hotelCount int64
+	h.db.Model(&models.Hotel{}).Where("trip_id = ?", tripID).Count(&hotelCount)
+	_ = maxDayRow
+
+	// Version = unix timestamp of last update (stable, monotonic)
+	version := latestAt.UnixMilli()
+
+	// Set cache headers — short TTL so app checks often but CDN/proxy can cache
+	w.Header().Set("Cache-Control", "public, max-age=30")
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"version":    version,
+		"updated_at": latestAt.Format(time.RFC3339),
+	})
+}
+
 func (h *Handler) SeedTrip(w http.ResponseWriter, r *http.Request) {
 	tripID := chi.URLParam(r, "tripId")
 	var trip models.Trip

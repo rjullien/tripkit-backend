@@ -74,6 +74,7 @@ func main() {
 		r.Put("/trips/{tripId}", h.UpdateTrip)
 		r.Delete("/trips/{tripId}", h.DeleteTrip)
 		r.Get("/trips/{tripId}/seed", h.SeedTrip)
+		r.Get("/trips/{tripId}/version", h.TripVersion)
 
 		// Days
 		r.Get("/trips/{tripId}/days", h.ListDays)

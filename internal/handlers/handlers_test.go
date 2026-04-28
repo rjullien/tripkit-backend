@@ -42,6 +42,7 @@ func setupRouterWithPrefix(t *testing.T, prefix string) *chi.Mux {
 		r.Put("/trips/{tripId}", h.UpdateTrip)
 		r.Delete("/trips/{tripId}", h.DeleteTrip)
 		r.Get("/trips/{tripId}/seed", h.SeedTrip)
+		r.Get("/trips/{tripId}/version", h.TripVersion)
 		r.Get("/trips/{tripId}/days", h.ListDays)
 		r.Get("/trips/{tripId}/days/{dayNum}", h.GetDay)
 		r.Put("/trips/{tripId}/days/{dayNum}", h.UpsertDay)
