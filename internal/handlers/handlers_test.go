@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/rjullien/tripkit-backend/internal/database"
 	"github.com/rjullien/tripkit-backend/internal/handlers"
+	"github.com/rjullien/tripkit-backend/internal/middleware"
 )
 
 func setupRouter(t *testing.T) *chi.Mux {
@@ -36,6 +37,7 @@ func setupRouterWithPrefix(t *testing.T, prefix string) *chi.Mux {
 		apiRoute = "/"
 	}
 	r.Route(apiRoute, func(r chi.Router) {
+		r.Use(middleware.UserIdentity)
 		r.Get("/trips", h.ListTrips)
 		r.Post("/trips", h.CreateTrip)
 		r.Get("/trips/{tripId}", h.GetTrip)
@@ -53,10 +55,16 @@ func setupRouterWithPrefix(t *testing.T, prefix string) *chi.Mux {
 		r.Put("/trips/{tripId}/lists/{listId}", h.UpsertList)
 		r.Delete("/trips/{tripId}/lists/{listId}", h.DeleteList)
 		r.Patch("/trips/{tripId}/lists/{listId}/sync", h.SyncList)
+		r.Get("/trips/{tripId}/weather", h.GetWeather)
 	})
 	return r
 }
 func doReq(r *chi.Mux, method, url string, body any) *httptest.ResponseRecorder {
+	return doReqAs(r, method, url, body, "")
+}
+
+// doReqAs is like doReq but sets the Remote-User header to simulate Authelia injection.
+func doReqAs(r *chi.Mux, method, url string, body any, user string) *httptest.ResponseRecorder {
 	var reqBody io.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
@@ -64,6 +72,9 @@ func doReq(r *chi.Mux, method, url string, body any) *httptest.ResponseRecorder 
 	}
 	req := httptest.NewRequest(method, url, reqBody)
 	req.Header.Set("Content-Type", "application/json")
+	if user != "" {
+		req.Header.Set("Remote-User", user)
+	}
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	return w
@@ -592,5 +603,181 @@ func TestSync_ServerSyncAt(t *testing.T) {
 	body := parseResp(doSync(r, map[string]any{"deviceId": "d", "lastSyncAt": 0, "checks": map[string]any{}, "custom": map[string]any{}, "hidden": []any{}}))
 	if body["serverSyncAt"].(float64) <= 0 {
 		t.Errorf("expected positive serverSyncAt")
+	}
+}
+
+// ─── User identity middleware ─────────────────────────────────────────────────
+
+func TestUser_ContextMiddleware(t *testing.T) {
+	r := setupRouter(t)
+	// With Remote-User header: should succeed (200 on /api/trips)
+	w := doReqAs(r, "GET", "/api/trips", nil, "rene")
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 with Remote-User header, got %d", w.Code)
+	}
+	// Without Remote-User header and TRIPKIT_REQUIRE_USER not set: should default to anonymous (200)
+	w = doReq(r, "GET", "/api/trips", nil)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 without Remote-User (anonymous fallback), got %d", w.Code)
+	}
+}
+
+// ─── Personal Lists ───────────────────────────────────────────────────────────
+
+func TestLists_PersonalOwner(t *testing.T) {
+	r := setupRouter(t)
+	doReq(r, "POST", "/api/trips", map[string]any{"id": "tp", "name": "P"})
+
+	// Create a personal list owned by rene
+	w := doReqAs(r, "PUT", "/api/trips/tp/lists/pl-rene",
+		map[string]any{"type": "packing", "title": "René's list", "data": map[string]any{}, "owner_user": "rene"},
+		"rene")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	body := parseResp(w)
+	if body["owner_user"] != "rene" {
+		t.Errorf("expected owner_user=rene, got %v", body["owner_user"])
+	}
+}
+
+func TestLists_FilterByOwner(t *testing.T) {
+	r := setupRouter(t)
+	doReq(r, "POST", "/api/trips", map[string]any{"id": "tf", "name": "F"})
+
+	// Shared list (no owner)
+	doReq(r, "PUT", "/api/trips/tf/lists/shared-1",
+		map[string]any{"type": "packing", "title": "Shared", "data": map[string]any{}})
+
+	// René's personal list
+	doReqAs(r, "PUT", "/api/trips/tf/lists/rene-1",
+		map[string]any{"type": "packing", "title": "René", "data": map[string]any{}, "owner_user": "rene"},
+		"rene")
+
+	// Nicole's personal list
+	doReqAs(r, "PUT", "/api/trips/tf/lists/nicole-1",
+		map[string]any{"type": "packing", "title": "Nicole", "data": map[string]any{}, "owner_user": "nicole"},
+		"nicole")
+
+	// Filter by ?owner=rene: should return shared + rene's list, NOT nicole's
+	w := doReqAs(r, "GET", "/api/trips/tf/lists?owner=rene", nil, "rene")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	items := parseRespSlice(w)
+	if len(items) != 2 {
+		t.Errorf("expected 2 lists (shared + rene's), got %d", len(items))
+	}
+	// No filter: all 3 lists
+	w = doReq(r, "GET", "/api/trips/tf/lists", nil)
+	items = parseRespSlice(w)
+	if len(items) != 3 {
+		t.Errorf("expected 3 lists without filter, got %d", len(items))
+	}
+}
+
+func TestSync_PersonalListForbidden(t *testing.T) {
+	r := setupRouter(t)
+	doReq(r, "POST", "/api/trips", map[string]any{"id": "tpf", "name": "PF"})
+	// Create a list owned by rene
+	doReqAs(r, "PUT", "/api/trips/tpf/lists/rene-list",
+		map[string]any{"type": "packing", "title": "René", "data": map[string]any{}, "owner_user": "rene"},
+		"rene")
+
+	// Nicole tries to sync René's personal list → 403
+	w := doReqAs(r, "PATCH", "/api/trips/tpf/lists/rene-list/sync",
+		map[string]any{"deviceId": "nicole-phone", "lastSyncAt": 0, "checks": map[string]any{}, "custom": map[string]any{}, "hidden": []any{}},
+		"nicole")
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSync_PersonalListOwnerOK(t *testing.T) {
+	r := setupRouter(t)
+	doReq(r, "POST", "/api/trips", map[string]any{"id": "tpo", "name": "PO"})
+	// Create a list owned by rene
+	doReqAs(r, "PUT", "/api/trips/tpo/lists/rene-list",
+		map[string]any{"type": "packing", "title": "René", "data": map[string]any{}, "owner_user": "rene"},
+		"rene")
+
+	// René syncs his own list → 200
+	w := doReqAs(r, "PATCH", "/api/trips/tpo/lists/rene-list/sync",
+		map[string]any{"deviceId": "rene-phone", "lastSyncAt": 0, "checks": map[string]any{}, "custom": map[string]any{}, "hidden": []any{}},
+		"rene")
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSync_SharedListAnyone(t *testing.T) {
+	r := setupRouter(t)
+	doReq(r, "POST", "/api/trips", map[string]any{"id": "tsa", "name": "SA"})
+	// Create a shared list (no owner)
+	doReq(r, "PUT", "/api/trips/tsa/lists/shared-list",
+		map[string]any{"type": "shopping", "title": "Shared", "data": map[string]any{}})
+
+	syncBody := map[string]any{"deviceId": "any-device", "lastSyncAt": 0, "checks": map[string]any{}, "custom": map[string]any{}, "hidden": []any{}}
+
+	// Nicole can sync the shared list → 200
+	w := doReqAs(r, "PATCH", "/api/trips/tsa/lists/shared-list/sync", syncBody, "nicole")
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for nicole on shared list, got %d: %s", w.Code, w.Body.String())
+	}
+	// Anonymous also can sync → 200
+	w = doReq(r, "PATCH", "/api/trips/tsa/lists/shared-list/sync", syncBody)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for anonymous on shared list, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDeleteList_PersonalForbidden(t *testing.T) {
+	r := setupRouter(t)
+	doReq(r, "POST", "/api/trips", map[string]any{"id": "tdp", "name": "DP"})
+	// Create a list owned by rene
+	doReqAs(r, "PUT", "/api/trips/tdp/lists/rene-del",
+		map[string]any{"type": "packing", "title": "René del", "data": map[string]any{}, "owner_user": "rene"},
+		"rene")
+
+	// Nicole tries to delete René's list → 403
+	w := doReqAs(r, "DELETE", "/api/trips/tdp/lists/rene-del", nil, "nicole")
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+	// List must still exist
+	w = doReq(r, "GET", "/api/trips/tdp/lists/rene-del", nil)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected list to still exist (200), got %d", w.Code)
+	}
+}
+
+// ─── Weather ──────────────────────────────────────────────────────────────────
+
+func TestWeather_MissingParams(t *testing.T) {
+	r := setupRouter(t)
+	doReq(r, "POST", "/api/trips", map[string]any{"id": "tw", "name": "W"})
+
+	// No lat/lon → 400
+	w := doReq(r, "GET", "/api/trips/tw/weather", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 with no params, got %d", w.Code)
+	}
+	// Only lat → 400
+	w = doReq(r, "GET", "/api/trips/tw/weather?lat=48.85", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 with only lat, got %d", w.Code)
+	}
+	// Only lon → 400
+	w = doReq(r, "GET", "/api/trips/tw/weather?lon=2.35", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 with only lon, got %d", w.Code)
+	}
+}
+
+func TestWeather_TripNotFound(t *testing.T) {
+	r := setupRouter(t)
+	w := doReq(r, "GET", "/api/trips/nonexistent-trip/weather?lat=48.85&lon=2.35", nil)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d: %s", w.Code, w.Body.String())
 	}
 }
