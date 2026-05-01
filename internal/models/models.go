@@ -76,3 +76,20 @@ type ListHidden struct {
 	DeviceID string `gorm:"primaryKey;size:255" json:"device_id"`
 	ItemID   string `gorm:"primaryKey;size:255" json:"item_id"`
 }
+
+// MagicToken is a one-time invite link token.
+type MagicToken struct {
+	Token     string    `gorm:"primaryKey;size:64" json:"token"`
+	Name      string    `gorm:"not null;size:255" json:"name"`
+	Role      string    `gorm:"not null;size:50;default:'viewer'" json:"role"` // admin, viewer
+	TripID    string    `gorm:"not null;size:255" json:"trip_id"`
+	UsedBy    *string   `gorm:"size:255" json:"used_by"`
+	UsedAt    *time.Time `json:"used_at"`
+	ExpiresAt time.Time `gorm:"not null" json:"expires_at"`
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+}
+
+// IsValid checks if the token can still be used.
+func (t MagicToken) IsValid() bool {
+	return t.UsedBy == nil && time.Now().Before(t.ExpiresAt)
+}

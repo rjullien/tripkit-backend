@@ -65,6 +65,7 @@ func autoMigrate(db *gorm.DB) (*gorm.DB, error) {
 		&models.ListCheck{},
 		&models.ListCustomItem{},
 		&models.ListHidden{},
+		&models.MagicToken{},
 	); err != nil {
 		return nil, err
 	}

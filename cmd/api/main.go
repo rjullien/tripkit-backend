@@ -49,6 +49,11 @@ func main() {
 	// Health (always at root, no auth)
 	r.Get("/health", h.Health)
 
+	// Auth routes (no auth required for login, admin-protected for invite/list)
+	r.Post("/auth/invite", h.CreateInvite)
+	r.Post("/auth/login", h.LoginMagicLink)
+	r.Get("/auth/invites", h.ListInvites)
+
 	// BASE_PATH — configurable route prefix (default: empty = routes at root)
 	// Examples: BASE_PATH="" → GET /trips, BASE_PATH="/api" → GET /api/trips
 	basePath := os.Getenv("BASE_PATH")
@@ -65,9 +70,11 @@ func main() {
 		apiRoute = "/" // mount at root
 	}
 
-	// API routes — auth handled by Authelia forwardAuth at ingress level
+	// API routes — auth via JWT (magic link) or static token or Authelia forwardAuth
 	r.Route(apiRoute, func(r chi.Router) {
-		// User identity middleware: extract Remote-User from Authelia forwardAuth header
+		// JWT + static token auth middleware
+		r.Use(middleware.Auth)
+		// Legacy: also extract Remote-User from Authelia forwardAuth header
 		r.Use(middleware.UserIdentity)
 
 		// Trips
