@@ -49,3 +49,7 @@ See [k3s/README.md](k3s/README.md)
 
 ## Frontend
 Separate repo: [rjullien/tripkit-frontend](https://github.com/rjullien/tripkit-frontend)
+
+## ⚠️ Ownership
+
+**Ce repo est géré par Léa (agent IA de René).** Pas besoin de Baptiste pour le backend — Léa a accès complet au repo, peut coder, tester, pusher et releaser. Baptiste gère uniquement l'infra K3s/ArgoCD (`BaptTF/vps-infra`) qui déploie automatiquement les images Docker.
