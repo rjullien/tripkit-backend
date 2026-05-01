@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/rjullien/tripkit-backend/internal/database"
 	"github.com/rjullien/tripkit-backend/internal/handlers"
+	"github.com/rjullien/tripkit-backend/internal/middleware"
 )
 
 func main() {
@@ -66,6 +67,8 @@ func main() {
 
 	// API routes — auth handled by Authelia forwardAuth at ingress level
 	r.Route(apiRoute, func(r chi.Router) {
+		// User identity middleware: extract Remote-User from Authelia forwardAuth header
+		r.Use(middleware.UserIdentity)
 
 		// Trips
 		r.Get("/trips", h.ListTrips)
@@ -91,6 +94,9 @@ func main() {
 		r.Put("/trips/{tripId}/lists/{listId}", h.UpsertList)
 		r.Delete("/trips/{tripId}/lists/{listId}", h.DeleteList)
 		r.Patch("/trips/{tripId}/lists/{listId}/sync", h.SyncList)
+
+		// Weather
+		r.Get("/trips/{tripId}/weather", h.GetWeather)
 	})
 
 	addr := fmt.Sprintf("0.0.0.0:%d", port)

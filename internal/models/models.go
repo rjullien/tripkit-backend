@@ -44,6 +44,7 @@ type List struct {
 	Type      string    `gorm:"not null" json:"type"`
 	Title     string    `gorm:"not null" json:"title"`
 	Data      string    `gorm:"type:json;not null" json:"data"`
+	OwnerUser string    `gorm:"size:255;default:''" json:"owner_user"`
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/models"
 	"gorm.io/gorm"
 )
@@ -93,6 +94,7 @@ func listResponse(l models.List) map[string]any {
 		"type":       l.Type,
 		"title":      l.Title,
 		"data":       parseJSONRaw(&l.Data),
+		"owner_user": l.OwnerUser,
 		"created_at": l.CreatedAt.Format(time.RFC3339),
 		"updated_at": l.UpdatedAt.Format(time.RFC3339),
 	}
@@ -441,8 +443,15 @@ func (h *Handler) ListLists(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Trip not found")
 		return
 	}
+
 	var dbLists []models.List
-	h.db.Where("trip_id = ?", tripID).Order("created_at").Find(&dbLists)
+	owner := r.URL.Query().Get("owner")
+	if owner != "" {
+		// Return lists owned by this user OR shared lists (owner_user = "")
+		h.db.Where("trip_id = ? AND (owner_user = ? OR owner_user = '')", tripID, owner).Order("created_at").Find(&dbLists)
+	} else {
+		h.db.Where("trip_id = ?", tripID).Order("created_at").Find(&dbLists)
+	}
 
 	result := make([]map[string]any, len(dbLists))
 	for i, l := range dbLists {
@@ -477,9 +486,10 @@ func (h *Handler) UpsertList(w http.ResponseWriter, r *http.Request) {
 	listID := chi.URLParam(r, "listId")
 
 	var body struct {
-		Type  string `json:"type"`
-		Title string `json:"title"`
-		Data  any    `json:"data"`
+		Type      string `json:"type"`
+		Title     string `json:"title"`
+		Data      any    `json:"data"`
+		OwnerUser string `json:"owner_user"`
 	}
 	if err := parseBody(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
@@ -503,19 +513,22 @@ func (h *Handler) UpsertList(w http.ResponseWriter, r *http.Request) {
 	result := h.db.Where("id = ?", listID).First(&list)
 	if result.Error != nil {
 		list = models.List{
-			ID:     listID,
-			TripID: tripID,
-			Type:   body.Type,
-			Title:  body.Title,
-			Data:   string(dataBytes),
+			ID:        listID,
+			TripID:    tripID,
+			Type:      body.Type,
+			Title:     body.Title,
+			Data:      string(dataBytes),
+			OwnerUser: body.OwnerUser,
 		}
 		h.db.Create(&list)
 	} else {
-		h.db.Model(&list).Updates(map[string]any{
-			"type":  body.Type,
-			"title": body.Title,
-			"data":  string(dataBytes),
-		})
+		updates := map[string]any{
+			"type":       body.Type,
+			"title":      body.Title,
+			"data":       string(dataBytes),
+			"owner_user": body.OwnerUser,
+		}
+		h.db.Model(&list).Updates(updates)
 		h.db.First(&list, "id = ?", listID)
 	}
 
@@ -530,6 +543,15 @@ func (h *Handler) DeleteList(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.Where("id = ? AND trip_id = ?", listID, tripID).First(&list).Error; err != nil {
 		writeError(w, http.StatusNotFound, "List not found")
 		return
+	}
+
+	// Personal list: only the owner can delete
+	if list.OwnerUser != "" {
+		currentUser := middleware.GetUser(r)
+		if list.OwnerUser != currentUser {
+			writeError(w, http.StatusForbidden, "Cannot delete another user's personal list")
+			return
+		}
 	}
 
 	h.db.Where("list_id = ?", listID).Delete(&models.ListCheck{})
@@ -569,6 +591,15 @@ func (h *Handler) SyncList(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.Where("id = ? AND trip_id = ?", listID, tripID).First(&list).Error; err != nil {
 		writeError(w, http.StatusNotFound, "List not found")
 		return
+	}
+
+	// Personal list: only the owner can sync
+	if list.OwnerUser != "" {
+		currentUser := middleware.GetUser(r)
+		if list.OwnerUser != currentUser {
+			writeError(w, http.StatusForbidden, "Cannot sync another user's personal list")
+			return
+		}
 	}
 
 	var body syncRequest
