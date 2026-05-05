@@ -104,6 +104,11 @@ func main() {
 
 		// Weather
 		r.Get("/trips/{tripId}/weather", h.GetWeather)
+
+		// Assets (map images, etc.)
+		r.Get("/trips/{tripId}/assets", h.ListAssets)
+		r.Get("/trips/{tripId}/assets/{filename}", h.GetAsset)
+		r.Put("/trips/{tripId}/assets/{filename}", h.UploadAsset)
 	})
 
 	addr := fmt.Sprintf("0.0.0.0:%d", port)
