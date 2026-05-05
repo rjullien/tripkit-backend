@@ -4,6 +4,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -103,7 +104,11 @@ func listResponse(l models.List) map[string]any {
 // ── Health ───────────────────────────────────────────────────────────────────
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	version := os.Getenv("APP_VERSION")
+	if version == "" {
+		version = "dev"
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": version})
 }
 
 // ── Trips ────────────────────────────────────────────────────────────────────

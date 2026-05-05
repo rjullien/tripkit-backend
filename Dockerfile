@@ -13,6 +13,9 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o tripkit-api ./cmd/api
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM alpine:3.21
 
+ARG APP_VERSION=dev
+ENV APP_VERSION=${APP_VERSION}
+
 RUN apk add --no-cache ca-certificates
 
 COPY --from=build /app/tripkit-api /usr/local/bin/tripkit-api
