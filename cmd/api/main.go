@@ -79,6 +79,7 @@ func main() {
 
 		// Trips
 		r.Get("/trips", h.ListTrips)
+		r.Get("/me", h.Me)
 		r.Post("/trips", h.CreateTrip)
 		r.Get("/trips/{tripId}", h.GetTrip)
 		r.Put("/trips/{tripId}", h.UpdateTrip)

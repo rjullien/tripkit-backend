@@ -728,3 +728,12 @@ func (h *Handler) getDeviceHidden(listID, deviceID string) []string {
 	}
 	return result
 }
+
+// Me returns the current authenticated user identity (from Authelia Remote-User header).
+// GET /api/me
+func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+	writeJSON(w, http.StatusOK, map[string]string{
+		"user": user,
+	})
+}
