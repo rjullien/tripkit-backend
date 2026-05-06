@@ -290,7 +290,11 @@ func (h *Handler) TripVersion(w http.ResponseWriter, r *http.Request) {
 	version := latestAt.UnixMilli()
 
 	// Set cache headers — short TTL so app checks often but CDN/proxy can cache
-	w.Header().Set("Cache-Control", "public, max-age=30")
+	if os.Getenv("TRIPKIT_NO_CACHE") != "" {
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=30")
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version":    version,

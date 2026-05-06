@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -39,7 +40,11 @@ func (h *Handler) GetAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", asset.ContentType)
-	w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
+	if os.Getenv("TRIPKIT_NO_CACHE") != "" {
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
+	}
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(asset.Data)))
 	w.WriteHeader(http.StatusOK)
 	w.Write(asset.Data)
