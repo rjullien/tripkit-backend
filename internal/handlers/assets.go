@@ -40,7 +40,7 @@ func (h *Handler) GetAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", asset.ContentType)
-	if os.Getenv("TRIPKIT_NO_CACHE") != "" {
+	if os.Getenv("TRIPKIT_NO_CACHE") != "" || r.URL.Query().Get("nocache") == "1" {
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	} else {
 		w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
