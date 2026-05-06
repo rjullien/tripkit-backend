@@ -213,6 +213,79 @@ Max 5MB par asset. Survive aux redeploys.
 
 ---
 
+## 🗄️ Base de données
+
+### Production : PostgreSQL (via CNPG)
+
+**Le backend en prod utilise PostgreSQL, PAS SQLite !**
+
+Le Dockerfile build avec `CGO_ENABLED=0` — le driver SQLite (qui nécessite CGO) n'est PAS inclus dans le binaire prod. Seul le driver PostgreSQL est compilé.
+
+| Env | Driver | Fichier |
+|-----|--------|--------|
+| Dev local | SQLite | `./data/tripkit.db` |
+| Tests CI | SQLite in-memory | `file:memdb_*` |
+| **Prod K3s** | **PostgreSQL** | CloudNativePG cluster |
+
+**Config prod (env vars dans deployment.yaml) :**
+```
+DB_DRIVER=postgres
+DB_HOST=postgres-cluster-rw.cnpg-system.svc.cluster.local
+DB_PORT=5432
+DB_NAME=tripkit
+DB_USER=tripkit
+DB_PASSWORD=<secret>
+```
+
+### ⚠️ Piège critique : types SQL
+
+**NE JAMAIS mettre `gorm:"type:blob"` ou autre type spécifique SQLite dans les modèles !**
+
+GORM gère automatiquement le mapping :
+- `[]byte` → `bytea` (PostgreSQL) / `blob` (SQLite)
+- `string` → `text` (les deux)
+- `int64` → `bigint` (les deux)
+
+Si tu forces un type (`gorm:"type:blob"`), ça marchera en dev (SQLite) mais **crashera en prod** (PostgreSQL) car `blob` n'existe pas en PostgreSQL. Le pod fail au boot sur AutoMigrate, K8s fait un rollback silencieux, et tu restes sur l'ancienne version sans erreur visible.
+
+**Règle :** Pour les champs `[]byte`, laisser GORM choisir :
+```go
+Data []byte `gorm:"" json:"-"`   // ✅ GORM choisit bytea/blob selon le driver
+Data []byte `gorm:"type:blob"`    // ❌ CRASH en PostgreSQL
+```
+
+### PVC et persistance
+
+| Quoi | Où | Persistant ? |
+|------|----|--------------|
+| DB PostgreSQL | CNPG cluster (PVC géré par CNPG) | ✅ Oui |
+| Assets (images) | Table `assets` dans PostgreSQL (BLOB/bytea) | ✅ Oui |
+| `/data/` (PVC tripkit-data) | Monté mais **NON fiable** pour les fichiers | ⚠️ Ne PAS compter dessus |
+
+**Leçon mai 2026 :** Les assets stockés dans `/data/assets/` (filesystem) disparaissaient à chaque redeploy. Fix : tout migré en DB (table `assets`, colonne `data bytea`).
+
+### Backup screenshots local
+
+Les screenshots Google Maps sont aussi sauvegardés dans :
+```
+/home/node/projects/tripkit/route-screenshots/
+├── langon-2026/       (10 fichiers)
+├── canada-ontario-2026/ (8 fichiers)
+├── canada-2026/       (14 fichiers)
+└── usa-2026/          (11 fichiers)
+```
+
+Si la DB perd les assets, re-upload depuis ce dossier :
+```bash
+for f in /home/node/projects/tripkit/route-screenshots/langon-2026/*.jpg; do
+  fn=$(basename "$f")
+  curl -X PUT "http://tripkit-backend...:3001/api/trips/langon-2026/assets/$fn" \
+    -H "Content-Type: image/jpeg" --data-binary @"$f"
+done
+```
+
+---
+
 ## k3s
 See [k3s/README.md](k3s/README.md)
 
