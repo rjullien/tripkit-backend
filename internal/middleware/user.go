@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"strings"
 )
 
 // contextKey is an unexported type for context keys in this package.
@@ -19,7 +20,7 @@ func UserIdentity(next http.Handler) http.Handler {
 	requireUser := os.Getenv("TRIPKIT_REQUIRE_USER") == "true"
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user := r.Header.Get("Remote-User")
+		user := strings.ToLower(r.Header.Get("Remote-User"))
 		if user == "" {
 			if requireUser {
 				w.Header().Set("Content-Type", "application/json")

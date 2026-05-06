@@ -17,7 +17,7 @@ func TripACL(db *gorm.DB) func(http.Handler) http.Handler {
 			user := GetUser(r)
 
 			// Admin bypass
-			if user == "admin" || GetAuthRole(r) == "admin" || user == "Rene" {
+			if user == "admin" || GetAuthRole(r) == "admin" || user == "rene" {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -51,7 +51,7 @@ func TripACL(db *gorm.DB) func(http.Handler) http.Handler {
 			var accessCount int64
 			db.Model(&models.TripAccess{}).
 				Joins("JOIN group_members ON group_members.group_id = trip_accesses.group_id").
-				Where("trip_accesses.trip_id = ? AND group_members.username = ?", tripID, user).
+				Where("trip_accesses.trip_id = ? AND LOWER(group_members.username) = LOWER(?)", tripID, user).
 				Count(&accessCount)
 
 			if accessCount > 0 {
@@ -79,7 +79,7 @@ func AllowedTripIDs(db *gorm.DB, username string) []string {
 	var tripIDs []string
 	db.Model(&models.TripAccess{}).
 		Joins("JOIN group_members ON group_members.group_id = trip_accesses.group_id").
-		Where("group_members.username = ?", username).
+		Where("LOWER(group_members.username) = LOWER(?)", username).
 		Pluck("trip_accesses.trip_id", &tripIDs)
 	return tripIDs
 }
