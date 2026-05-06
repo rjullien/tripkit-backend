@@ -111,3 +111,13 @@ type TripAccess struct {
 	TripID  string `gorm:"primaryKey;size:255" json:"trip_id"`
 	GroupID string `gorm:"primaryKey;size:255" json:"group_id"`
 }
+
+// Asset stores binary files (images, maps) in the database for persistence.
+type Asset struct {
+	ID          uint   `gorm:"primaryKey;autoIncrement" json:"id"`
+	TripID      string `gorm:"not null;uniqueIndex:idx_asset_trip_file" json:"trip_id"`
+	Filename    string `gorm:"not null;uniqueIndex:idx_asset_trip_file;size:255" json:"filename"`
+	ContentType string `gorm:"not null;size:100" json:"content_type"`
+	Size        int64  `gorm:"not null" json:"size"`
+	Data        []byte `gorm:"type:blob" json:"-"`
+}
