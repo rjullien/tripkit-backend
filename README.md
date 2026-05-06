@@ -20,6 +20,7 @@ API REST en Go pour TripKit — gestion de voyages, jours, hébergements, listes
 | `DELETE` | `/api/trips/:id` | Delete trip (cascade) |
 | `GET` | `/api/trips/:id/seed` | Full export |
 | `GET/PUT` | `/api/trips/:id/days[/:num]` | Days CRUD (upsert) |
+| `GET/PUT/DELETE` | `/api/trips/:id/assets[/:file]` | Assets CRUD (map images) |
 | `GET/PUT` | `/api/trips/:id/hotels[/:num]` | Hotels CRUD (upsert) |
 | `GET/PUT/DELETE` | `/api/trips/:id/lists[/:lid]` | Lists CRUD |
 | `PATCH` | `/api/trips/:id/lists/:lid/sync` | Multi-device sync |
@@ -175,7 +176,7 @@ DELETE /api/groups/{groupId}
 Assets stockés en BLOB dans SQLite (pas filesystem) pour persistance.
 
 ```bash
-# Upload
+# Upload (crée ou écrase)
 PUT /api/trips/{id}/assets/{filename}
 Content-Type: image/jpeg
 <binary data>
@@ -183,11 +184,32 @@ Content-Type: image/jpeg
 # Download
 GET /api/trips/{id}/assets/{filename}
 
-# List
+# List (sans data blob)
 GET /api/trips/{id}/assets
+
+# Delete
+DELETE /api/trips/{id}/assets/{filename}
 ```
 
 Max 5MB par asset. Survive aux redeploys.
+
+### 🚨 Findings (mai 2026)
+
+**Problème détecté :** Les assets Langon `day-XX-route.jpg` étaient tous le même fichier (48236 bytes, screenshot du cookie wall Google Maps en allemand). Cause : Playwright n'avait pas accepté les cookies avant de screenshoter.
+
+**Fix :** Script `frontend/scripts/generate-route-maps.cjs` qui :
+1. Lance Playwright headless
+2. Accepte le cookie consent
+3. Attend le rendu complet des tiles Google Maps
+4. Screenshot en JPEG 85% qualité
+
+**Assets actuels (mai 2026) :**
+| Trip | Assets | Status |
+|------|--------|--------|
+| `langon-2026` | `map-overview.jpg` + `day-00` à `day-09` | ✅ Vraies cartes Google Maps |
+| `usa-2026` | `map-overview.jpg` + `day-01` à `day-13` + `day-16` à `day-19` | ✅ Vraies cartes |
+
+**Vérification qualité :** Toujours vérifier visuellement après upload que l'image est une vraie carte (pas un cookie wall, erreur 404, ou placeholder).
 
 ---
 
