@@ -76,10 +76,20 @@ func main() {
 		r.Use(middleware.Auth)
 		// Legacy: also extract Remote-User from Authelia forwardAuth header
 		r.Use(middleware.UserIdentity)
+		// Trip-level ACL (group-based access control)
+		r.Use(middleware.TripACL(db))
+
+		// User info
+		r.Get("/me", h.Me)
+		r.Get("/my/trips", h.MyTrips)
+
+		// Groups (admin only)
+		r.Get("/groups", h.ListGroups)
+		r.Put("/groups/{groupId}", h.UpsertGroup)
+		r.Delete("/groups/{groupId}", h.DeleteGroup)
 
 		// Trips
 		r.Get("/trips", h.ListTrips)
-		r.Get("/me", h.Me)
 		r.Post("/trips", h.CreateTrip)
 		r.Get("/trips/{tripId}", h.GetTrip)
 		r.Put("/trips/{tripId}", h.UpdateTrip)

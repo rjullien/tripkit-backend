@@ -93,3 +93,21 @@ type MagicToken struct {
 func (t MagicToken) IsValid() bool {
 	return t.UsedBy == nil && time.Now().Before(t.ExpiresAt)
 }
+
+// Group represents a user group (family, team, etc.) for trip access control.
+type Group struct {
+	ID   string `gorm:"primaryKey;size:255" json:"id"`
+	Name string `gorm:"not null" json:"name"`
+}
+
+// GroupMember links a user (Authelia username) to a group.
+type GroupMember struct {
+	GroupID  string `gorm:"primaryKey;size:255" json:"group_id"`
+	Username string `gorm:"primaryKey;size:255" json:"username"`
+}
+
+// TripAccess grants a group access to a specific trip.
+type TripAccess struct {
+	TripID  string `gorm:"primaryKey;size:255" json:"trip_id"`
+	GroupID string `gorm:"primaryKey;size:255" json:"group_id"`
+}

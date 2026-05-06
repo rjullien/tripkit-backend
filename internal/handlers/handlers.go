@@ -114,8 +114,16 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 // ── Trips ────────────────────────────────────────────────────────────────────
 
 func (h *Handler) ListTrips(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+	allowedIDs := middleware.AllowedTripIDs(h.db, user)
+
 	var trips []models.Trip
-	h.db.Order("created_at DESC").Find(&trips)
+	if allowedIDs == nil {
+		// Open mode or admin — return all
+		h.db.Order("created_at DESC").Find(&trips)
+	} else {
+		h.db.Where("id IN ?", allowedIDs).Order("created_at DESC").Find(&trips)
+	}
 
 	result := make([]map[string]any, len(trips))
 	for i, t := range trips {
