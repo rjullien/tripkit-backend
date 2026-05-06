@@ -166,4 +166,3 @@ func (h *Handler) DeleteAsset(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// v1.7.1

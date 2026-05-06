@@ -119,5 +119,5 @@ type Asset struct {
 	Filename    string `gorm:"not null;uniqueIndex:idx_asset_trip_file;size:255" json:"filename"`
 	ContentType string `gorm:"not null;size:100" json:"content_type"`
 	Size        int64  `gorm:"not null" json:"size"`
-	Data        []byte `gorm:"type:blob" json:"-"`
+	Data        []byte `gorm:"" json:"-"`
 }
