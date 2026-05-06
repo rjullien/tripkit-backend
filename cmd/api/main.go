@@ -120,6 +120,7 @@ func main() {
 		r.Get("/trips/{tripId}/assets", h.ListAssets)
 		r.Get("/trips/{tripId}/assets/{filename}", h.GetAsset)
 		r.Put("/trips/{tripId}/assets/{filename}", h.UploadAsset)
+		r.Delete("/trips/{tripId}/assets/{filename}", h.DeleteAsset)
 	})
 
 	addr := fmt.Sprintf("0.0.0.0:%d", port)

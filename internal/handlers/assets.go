@@ -138,3 +138,31 @@ func (h *Handler) ListAssets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// DeleteAsset removes a single asset from the database.
+// DELETE /trips/{tripId}/assets/{filename}
+func (h *Handler) DeleteAsset(w http.ResponseWriter, r *http.Request) {
+	tripID := chi.URLParam(r, "tripId")
+	filename := chi.URLParam(r, "filename")
+
+	if !safeFilename.MatchString(filename) {
+		writeError(w, http.StatusBadRequest, "Invalid filename")
+		return
+	}
+
+	if !h.tripExists(tripID) {
+		writeError(w, http.StatusNotFound, "Trip not found")
+		return
+	}
+
+	result := h.db.Where("trip_id = ? AND filename = ?", tripID, filename).Delete(&models.Asset{})
+	if result.RowsAffected == 0 {
+		writeError(w, http.StatusNotFound, "Asset not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted":  filename,
+		"trip_id":  tripID,
+	})
+}
+
