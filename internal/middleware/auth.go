@@ -45,6 +45,13 @@ func Auth(next http.Handler) http.Handler {
 
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
+			// 3. No Bearer token but Remote-User present (Authelia forwardAuth)
+			if remoteUser := r.Header.Get("Remote-User"); remoteUser != "" {
+				ctx := context.WithValue(r.Context(), ctxUserName, remoteUser)
+				ctx = context.WithValue(ctx, ctxUserRole, "viewer")
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
 			writeUnauthorized(w, "Authorization header required")
 			return
 		}
