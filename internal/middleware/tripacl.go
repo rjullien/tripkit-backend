@@ -69,7 +69,13 @@ func TripACL(db *gorm.DB) func(http.Handler) http.Handler {
 
 // AllowedTripIDs returns the list of trip IDs a user can access.
 // If no access rules exist, returns nil (meaning all trips visible).
+// Admin users always get nil (all trips visible).
 func AllowedTripIDs(db *gorm.DB, username string) []string {
+	// Admin bypass — same users as TripACL middleware
+	if username == "admin" || username == "rene" {
+		return nil
+	}
+
 	var count int64
 	db.Model(&models.TripAccess{}).Count(&count)
 	if count == 0 {
