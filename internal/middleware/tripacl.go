@@ -3,10 +3,32 @@ package middleware
 
 import (
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/rjullien/tripkit-backend/internal/models"
 	"gorm.io/gorm"
 )
+
+// adminUsers returns the list of admin usernames from TRIPKIT_ADMIN_USERS env var.
+// Format: comma-separated lowercase usernames. Always includes "admin".
+func adminUsers() map[string]bool {
+	admins := map[string]bool{"admin": true}
+	env := os.Getenv("TRIPKIT_ADMIN_USERS")
+	if env != "" {
+		for _, u := range strings.Split(env, ",") {
+			u = strings.TrimSpace(strings.ToLower(u))
+			if u != "" {
+				admins[u] = true
+			}
+		}
+	}
+	return admins
+}
+
+func isAdmin(username string) bool {
+	return adminUsers()[strings.ToLower(username)]
+}
 
 // TripACL checks if the current user has access to the requested trip.
 // Admin users bypass the check. If no groups/access are configured, all trips are visible (open mode).
@@ -17,7 +39,7 @@ func TripACL(db *gorm.DB) func(http.Handler) http.Handler {
 			user := GetUser(r)
 
 			// Admin bypass
-			if user == "admin" || GetAuthRole(r) == "admin" || user == "rene" {
+			if isAdmin(user) || GetAuthRole(r) == "admin" {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -72,7 +94,7 @@ func TripACL(db *gorm.DB) func(http.Handler) http.Handler {
 // Admin users always get nil (all trips visible).
 func AllowedTripIDs(db *gorm.DB, username string) []string {
 	// Admin bypass — same users as TripACL middleware
-	if username == "admin" || username == "rene" {
+	if isAdmin(username) {
 		return nil
 	}
 

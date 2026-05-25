@@ -44,23 +44,23 @@ for users to see it in the listing.
 
 **Without this step, the trip is created but INVISIBLE in the frontend listing.**
 
-Even admin users (rene) will see all trips (admin bypass in `AllowedTripIDs`),
+Even admin users will see all trips (admin bypass in `AllowedTripIDs`),
 but non-admin users will only see trips assigned to their groups.
 
 #### Steps to grant access:
 
 ```bash
 # 1. Check existing groups
-curl -s $API/api/groups -H "Remote-User: rene"
+curl -s $API/api/groups -H "Remote-User: <admin-user>"
 
 # 2. Add the new trip to the appropriate group
-curl -s $API/api/groups/jullien -X PUT \
+curl -s $API/api/groups/<group-id> -X PUT \
   -H "Content-Type: application/json" \
-  -H "Remote-User: rene" \
+  -H "Remote-User: <admin-user>" \
   -d '{
-    "name": "Famille Jullien",
-    "members": ["rene", "nicole", "baptiste", "alexandre", "camille", "dinah", "emma"],
-    "trips": ["usa-2026", "canada-2026", "ecosse-2026", "NEW-TRIP-ID"]
+    "name": "<Group Name>",
+    "members": ["user1", "user2"],
+    "trips": ["existing-trip-1", "existing-trip-2", "NEW-TRIP-ID"]
   }'
 ```
 
@@ -70,7 +70,7 @@ curl -s $API/api/groups/jullien -X PUT \
 - `group_members` table links `group_id` → `username`
 - `AllowedTripIDs(db, username)`: 
   - If table is empty → nil (open mode, all visible)
-  - If user is admin ("rene", "admin") → nil (all visible) *(fixed in v1.10.0)*
+  - If user is admin → nil (all visible) *(fixed in v1.10.0)*
   - Otherwise → returns only trip IDs where user has group membership
 - `TripACL` middleware: per-request check on single-trip endpoints
 
@@ -320,6 +320,8 @@ If the frontend is already configured with the trip in localStorage (from a prev
 | `DB_NAME` | Yes (pg) | — | Postgres database name |
 | `DB_SSLMODE` | No (pg) | `disable` | Postgres SSL mode |
 | `TRIPKIT_API_TOKEN` | Prod | — | Bearer token (unset = dev/no-auth mode) |
+| `TRIPKIT_ADMIN_USERS` | No | `admin` | Comma-separated admin usernames (bypass ACL) |
+| `TRIPKIT_REQUIRE_USER` | No | `false` | Require Remote-User header (401 if missing) |
 
 ## Environment Variables (Frontend)
 
@@ -336,8 +338,8 @@ If the frontend is already configured with the trip in localStorage (from a prev
 - [ ] Create seed file following `DATA-MODEL.md` schema (in frontend repo)
 - [ ] Run 10-point zero-duplication audit
 - [ ] Import: `node seed-import.cjs --api <url> --seed <file>`
-- [ ] **⚠️ Add trip to group ACL:** `PUT /api/groups/jullien` with the new trip ID in `trips` array
-- [ ] Verify: `curl <url>/api/trips -H "Remote-User: rene"` → new trip appears in list
+- [ ] **⚠️ Add trip to group ACL:** `PUT /api/groups/<group-id>` with the new trip ID in `trips` array
+- [ ] Verify: `curl <url>/api/trips -H "Remote-User: <admin-user>"` → new trip appears in list
 - [ ] Verify: `curl <url>/api/trips/<id>/seed` returns full data
 - [ ] Test: open browser, clear localStorage, reload → trip should appear in selector
 
@@ -354,8 +356,8 @@ If the frontend is already configured with the trip in localStorage (from a prev
 
 ```sql
 CREATE TABLE groups (
-  id   TEXT PRIMARY KEY,   -- "jullien", "rolland"
-  name TEXT NOT NULL       -- "Famille Jullien"
+  id   TEXT PRIMARY KEY,   -- "family", "friends"
+  name TEXT NOT NULL       -- "My Family"
 );
 
 CREATE TABLE group_members (
@@ -371,9 +373,9 @@ CREATE TABLE trip_accesses (
 );
 ```
 
-### Existing Groups (as of May 2026)
+### Example Groups
 
 | Group | Members | Trips |
 |-------|---------|-------|
-| `jullien` | rene, nicole, baptiste, alexandre, camille, dinah, emma | usa-2026, canada-ontario-2026, canada-2026, langon-2026, ecosse-2026 |
-| `rolland` | laurine | usa-2026 |
+| `family` | user1, user2, user3 | trip-a, trip-b |
+| `friends` | user4 | trip-a |
