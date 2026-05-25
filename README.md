@@ -32,8 +32,6 @@ API REST en Go pour TripKit — gestion de voyages, jours, hébergements, listes
 | `PORT` | No | `3001` | HTTP listen port |
 | `DB_PATH` | No | `data/tripkit.db` | SQLite database path |
 | `TRIPKIT_API_TOKEN` | Prod | — | Bearer token. Unset = dev mode |
-| `TRIPKIT_ADMIN_USERS` | No | `admin` | Comma-separated admin usernames (bypass ACL) |
-| `TRIPKIT_REQUIRE_USER` | No | `false` | Require Remote-User header (401 if missing) |
 
 ## Quick Start
 ```bash

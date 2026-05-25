@@ -3,31 +3,14 @@ package middleware
 
 import (
 	"net/http"
-	"os"
-	"strings"
 
 	"github.com/rjullien/tripkit-backend/internal/models"
 	"gorm.io/gorm"
 )
 
-// adminUsers returns the list of admin usernames from TRIPKIT_ADMIN_USERS env var.
-// Format: comma-separated lowercase usernames. Always includes "admin".
-func adminUsers() map[string]bool {
-	admins := map[string]bool{"admin": true}
-	env := os.Getenv("TRIPKIT_ADMIN_USERS")
-	if env != "" {
-		for _, u := range strings.Split(env, ",") {
-			u = strings.TrimSpace(strings.ToLower(u))
-			if u != "" {
-				admins[u] = true
-			}
-		}
-	}
-	return admins
-}
-
+// isAdmin returns true for users who bypass ACL checks.
 func isAdmin(username string) bool {
-	return adminUsers()[strings.ToLower(username)]
+	return username == "admin" || username == "rene"
 }
 
 // TripACL checks if the current user has access to the requested trip.

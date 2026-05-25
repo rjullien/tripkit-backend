@@ -320,8 +320,6 @@ If the frontend is already configured with the trip in localStorage (from a prev
 | `DB_NAME` | Yes (pg) | — | Postgres database name |
 | `DB_SSLMODE` | No (pg) | `disable` | Postgres SSL mode |
 | `TRIPKIT_API_TOKEN` | Prod | — | Bearer token (unset = dev/no-auth mode) |
-| `TRIPKIT_ADMIN_USERS` | No | `admin` | Comma-separated admin usernames (bypass ACL) |
-| `TRIPKIT_REQUIRE_USER` | No | `false` | Require Remote-User header (401 if missing) |
 
 ## Environment Variables (Frontend)
 
