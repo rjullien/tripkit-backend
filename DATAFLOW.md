@@ -37,6 +37,47 @@
 2. Renders immediately from localStorage cache
 3. Background: version check → if changed, re-fetches seed
 
+### ⚠️ Critical: ACL & Group Access (MUST DO for new trips)
+
+The backend uses **group-based ACL**. A trip MUST be assigned to a group
+for users to see it in the listing.
+
+**Without this step, the trip is created but INVISIBLE in the frontend listing.**
+
+Even admin users (rene) will see all trips (admin bypass in `AllowedTripIDs`),
+but non-admin users will only see trips assigned to their groups.
+
+#### Steps to grant access:
+
+```bash
+# 1. Check existing groups
+curl -s $API/api/groups -H "Remote-User: rene"
+
+# 2. Add the new trip to the appropriate group
+curl -s $API/api/groups/jullien -X PUT \
+  -H "Content-Type: application/json" \
+  -H "Remote-User: rene" \
+  -d '{
+    "name": "Famille Jullien",
+    "members": ["rene", "nicole", "baptiste", "alexandre", "camille", "dinah", "emma"],
+    "trips": ["usa-2026", "canada-2026", "ecosse-2026", "NEW-TRIP-ID"]
+  }'
+```
+
+#### How the ACL works (middleware/tripacl.go):
+
+- `trip_accesses` table links `trip_id` → `group_id`
+- `group_members` table links `group_id` → `username`
+- `AllowedTripIDs(db, username)`: 
+  - If table is empty → nil (open mode, all visible)
+  - If user is admin ("rene", "admin") → nil (all visible) *(fixed in v1.10.0)*
+  - Otherwise → returns only trip IDs where user has group membership
+- `TripACL` middleware: per-request check on single-trip endpoints
+
+#### Gotcha:
+The `seed-import.cjs` does NOT add the trip to any group.
+You MUST manually add it via `PUT /api/groups/:groupId` after import.
+
 ## Key Insight: Why a Trip Might Not Show
 
 The frontend expects `GET /api/trips` to return a **flat JSON array**:
@@ -292,9 +333,47 @@ If the frontend is already configured with the trip in localStorage (from a prev
 
 ## Quick Checklist: New Trip End-to-End
 
-- [ ] Create seed file following `DATA-MODEL.md` schema
+- [ ] Create seed file following `DATA-MODEL.md` schema (in frontend repo)
 - [ ] Run 10-point zero-duplication audit
 - [ ] Import: `node seed-import.cjs --api <url> --seed <file>`
+- [ ] **⚠️ Add trip to group ACL:** `PUT /api/groups/jullien` with the new trip ID in `trips` array
+- [ ] Verify: `curl <url>/api/trips -H "Remote-User: rene"` → new trip appears in list
 - [ ] Verify: `curl <url>/api/trips/<id>/seed` returns full data
-- [ ] Configure FE: set `DEFAULT_TRIP_ID` if single-trip, or fix listing endpoint
-- [ ] Test: open browser, clear localStorage, reload → trip should appear
+- [ ] Test: open browser, clear localStorage, reload → trip should appear in selector
+
+---
+
+## Database: PostgreSQL (prod)
+
+- **Driver:** Postgres (CGO_ENABLED=0 build excludes SQLite)
+- **Connection:** env vars `DB_DRIVER=postgres`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
+- **JSON fields:** `trips.data` is stored as `json` type (not jsonb) — freeform JSON blob
+- **ACL tables:** `groups`, `group_members`, `trip_accesses`
+
+### ACL Schema
+
+```sql
+CREATE TABLE groups (
+  id   TEXT PRIMARY KEY,   -- "jullien", "rolland"
+  name TEXT NOT NULL       -- "Famille Jullien"
+);
+
+CREATE TABLE group_members (
+  group_id TEXT NOT NULL REFERENCES groups(id),
+  username TEXT NOT NULL,
+  PRIMARY KEY (group_id, username)
+);
+
+CREATE TABLE trip_accesses (
+  trip_id  TEXT NOT NULL REFERENCES trips(id),
+  group_id TEXT NOT NULL REFERENCES groups(id),
+  PRIMARY KEY (trip_id, group_id)
+);
+```
+
+### Existing Groups (as of May 2026)
+
+| Group | Members | Trips |
+|-------|---------|-------|
+| `jullien` | rene, nicole, baptiste, alexandre, camille, dinah, emma | usa-2026, canada-ontario-2026, canada-2026, langon-2026, ecosse-2026 |
+| `rolland` | laurine | usa-2026 |
