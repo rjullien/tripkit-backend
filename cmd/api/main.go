@@ -101,6 +101,7 @@ func main() {
 		r.Get("/trips/{tripId}/days", h.ListDays)
 		r.Get("/trips/{tripId}/days/{dayNum}", h.GetDay)
 		r.Put("/trips/{tripId}/days/{dayNum}", h.UpsertDay)
+		r.Delete("/trips/{tripId}/days/{dayNum}", h.DeleteDay)
 
 		// Hotels
 		r.Get("/trips/{tripId}/hotels", h.ListHotels)
