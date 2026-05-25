@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tripkit-backend
+  namespace: tripkit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tripkit-backend
+  template:
+    metadata:
+      labels:
+        app: tripkit-backend
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/rjullien/tripkit-backend:latest
+          ports: [{containerPort: 3001}]
+          envFrom: [{configMapRef: {name: tripkit-config}}]
+          env:
+            - name: TRIPKIT_API_TOKEN
+              valueFrom:
+                secretKeyRef: {name: tripkit-secrets, key: api-token}
+          volumeMounts: [{name: data, mountPath: /data}]
+          resources:
+            requests: {memory: "32Mi", cpu: "50m"}
+            limits: {memory: "128Mi", cpu: "250m"}
+          livenessProbe:
+            httpGet: {path: /health, port: 3001}
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet: {path: /health, port: 3001}
+            initialDelaySeconds: 3
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: tripkit-data}
