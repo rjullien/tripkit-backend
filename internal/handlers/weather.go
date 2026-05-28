@@ -79,7 +79,7 @@ func (h *Handler) GetWeather(w http.ResponseWriter, r *http.Request) {
 	if provider == "nws" {
 		// NWS: 2-step — get the forecast URL first
 		data, err := fetchJSON(client, apiURL, map[string]string{
-			"User-Agent": "TripKit/1.0",
+			"User-Agent": "TripKit/1.0 (tripkit.bapttf.com)",
 			"Accept":     "application/geo+json",
 		})
 		if err != nil {
@@ -101,7 +101,7 @@ func (h *Handler) GetWeather(w http.ResponseWriter, r *http.Request) {
 
 		// Fetch the actual forecast
 		forecast, err := fetchJSON(client, forecastURL, map[string]string{
-			"User-Agent": "TripKit/1.0",
+			"User-Agent": "TripKit/1.0 (tripkit.bapttf.com)",
 			"Accept":     "application/geo+json",
 		})
 		if err != nil {
