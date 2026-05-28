@@ -9,7 +9,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`tripkit.bapttf.com`)
+    - match: Host(`tripkit.example.com`)
       kind: Rule
       middlewares:
         - name: forwardauth-authelia
