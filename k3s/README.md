@@ -7,9 +7,9 @@ Internet
     ▼
 Traefik (k3s built-in)
     │
-    ├── auth.juju.bapttf.com ──→ Authelia (login portal)
+    ├── auth.example.com ──→ Authelia (login portal)
     │
-    └── tripkit.bapttf.com ──→ [forwardAuth middleware]
+    └── tripkit.example.com ──→ [forwardAuth middleware]
                                     │
                                     ├── /* ──→ Frontend (nginx :80)
                                     └── /api/* ──→ Backend (Go :3001)  [via nginx proxy_pass]
@@ -20,7 +20,7 @@ Traefik (k3s built-in)
 ## Prerequisites
 - k3s cluster with Traefik
 - cert-manager (for TLS) or manual TLS secrets
-- Domains: `tripkit.bapttf.com`, `auth.juju.bapttf.com`
+- Domains: `tripkit.example.com`, `auth.example.com`
 
 ## Deploy Order
 
@@ -80,7 +80,7 @@ kubectl -n authelia rollout restart deployment/authelia
 ```
 
 ### WebAuthn / Passkeys
-After first login with password, users can register WebAuthn devices (Face ID, fingerprint, security key) at `https://auth.juju.bapttf.com/settings`. After that → passwordless login.
+After first login with password, users can register WebAuthn devices (Face ID, fingerprint, security key) at `https://auth.example.com/settings`. After that → passwordless login.
 
 ## Secrets Summary
 

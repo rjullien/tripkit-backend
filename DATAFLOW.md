@@ -100,7 +100,7 @@ The frontend code does `if (trips && trips.length)` — this fails on an object.
 
 2. **Fix the backend response** — make `ListTrips` return a flat array
    
-3. **Access directly via URL** — `https://tripkit.bapttf.com/#programme` 
+3. **Access directly via URL** — `https://tripkit.example.com/#programme` 
    (only works if the FE can resolve the trip ID through config)
 
 ---
@@ -275,7 +275,7 @@ var SEED_ECOSSE_2026 = {
 ```bash
 node seed-import.cjs --api http://tripkit-backend:3001 --seed path/to/seed.js
 # With auth token:
-node seed-import.cjs --api https://tripkit.bapttf.com --token $TRIPKIT_API_TOKEN --seed seed.js
+node seed-import.cjs --api https://tripkit.example.com --token $TRIPKIT_API_TOKEN --seed seed.js
 ```
 
 ### What seed-import Does
@@ -335,7 +335,7 @@ The frontend expects a flat array. Fix the handler or update the image.
 
 ### Option C: Direct URL access
 
-If the frontend is already configured with the trip in localStorage (from a previous seed-import + page visit), it loads directly. Users can share `https://tripkit.bapttf.com/#programme` after first successful load.
+If the frontend is already configured with the trip in localStorage (from a previous seed-import + page visit), it loads directly. Users can share `https://tripkit.example.com/#programme` after first successful load.
 
 ---
 
@@ -358,7 +358,7 @@ If the frontend is already configured with the trip in localStorage (from a prev
 
 | Variable | Description |
 |----------|-------------|
-| `API_URL` | Backend URL (e.g. `https://tripkit.bapttf.com`) |
+| `API_URL` | Backend URL (e.g. `https://tripkit.example.com`) |
 | `API_PREFIX` | API path prefix (default `/api`) |
 | `DEFAULT_TRIP_ID` | Trip slug to load on first visit |
 
