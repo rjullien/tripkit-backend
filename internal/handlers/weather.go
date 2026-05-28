@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -22,6 +23,21 @@ func (h *Handler) GetWeather(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "lat and lon query parameters are required")
 		return
 	}
+
+	// Validate lat/lon are valid numbers
+	latF, err := strconv.ParseFloat(lat, 64)
+	if err != nil || latF < -90 || latF > 90 {
+		writeError(w, http.StatusBadRequest, "lat must be a number between -90 and 90")
+		return
+	}
+	lonF, err := strconv.ParseFloat(lon, 64)
+	if err != nil || lonF < -180 || lonF > 180 {
+		writeError(w, http.StatusBadRequest, "lon must be a number between -180 and 180")
+		return
+	}
+	// Use validated formatted values to avoid injection
+	lat = strconv.FormatFloat(latF, 'f', -1, 64)
+	lon = strconv.FormatFloat(lonF, 'f', -1, 64)
 
 	// Look up trip
 	var trip models.Trip
@@ -144,11 +160,4 @@ func fetchJSON(client *http.Client, url string, headers map[string]string) (map[
 		return nil, fmt.Errorf("decode JSON: %w", err)
 	}
 	return result, nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

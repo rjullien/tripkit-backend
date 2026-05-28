@@ -9,16 +9,13 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/rjullien/tripkit-backend/internal/config"
 	"github.com/rjullien/tripkit-backend/internal/models"
 )
 
-// jwtSecret returns the signing key (from env or fallback for dev).
+// jwtSecret returns the signing key from shared config.
 func jwtSecret() []byte {
-	s := os.Getenv("TRIPKIT_JWT_SECRET")
-	if s == "" {
-		s = "tripkit-dev-secret-change-me"
-	}
-	return []byte(s)
+	return config.JWTSecret()
 }
 
 // CreateInvite generates a magic link token (admin only).
@@ -26,12 +23,14 @@ func jwtSecret() []byte {
 func (h *Handler) CreateInvite(w http.ResponseWriter, r *http.Request) {
 	// Only admin can create invites (checked via existing TRIPKIT_API_TOKEN)
 	adminToken := os.Getenv("TRIPKIT_API_TOKEN")
-	if adminToken != "" {
-		auth := r.Header.Get("Authorization")
-		if auth != "Bearer "+adminToken {
-			writeError(w, http.StatusForbidden, "Admin token required to create invites")
-			return
-		}
+	if adminToken == "" {
+		writeError(w, http.StatusForbidden, "Admin endpoint disabled: TRIPKIT_API_TOKEN not configured")
+		return
+	}
+	auth := r.Header.Get("Authorization")
+	if auth != "Bearer "+adminToken {
+		writeError(w, http.StatusForbidden, "Admin token required to create invites")
+		return
 	}
 
 	var req struct {
@@ -140,12 +139,14 @@ func (h *Handler) LoginMagicLink(w http.ResponseWriter, r *http.Request) {
 // GET /auth/invites
 func (h *Handler) ListInvites(w http.ResponseWriter, r *http.Request) {
 	adminToken := os.Getenv("TRIPKIT_API_TOKEN")
-	if adminToken != "" {
-		auth := r.Header.Get("Authorization")
-		if auth != "Bearer "+adminToken {
-			writeError(w, http.StatusForbidden, "Admin token required")
-			return
-		}
+	if adminToken == "" {
+		writeError(w, http.StatusForbidden, "Admin endpoint disabled: TRIPKIT_API_TOKEN not configured")
+		return
+	}
+	auth := r.Header.Get("Authorization")
+	if auth != "Bearer "+adminToken {
+		writeError(w, http.StatusForbidden, "Admin token required")
+		return
 	}
 
 	var tokens []models.MagicToken

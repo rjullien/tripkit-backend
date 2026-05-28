@@ -4,13 +4,14 @@ package middleware
 import (
 	"net/http"
 
+	"github.com/rjullien/tripkit-backend/internal/config"
 	"github.com/rjullien/tripkit-backend/internal/models"
 	"gorm.io/gorm"
 )
 
 // isAdmin returns true for users who bypass ACL checks.
 func isAdmin(username string) bool {
-	return username == "admin" || username == "rene"
+	return config.IsAdmin(username)
 }
 
 // TripACL checks if the current user has access to the requested trip.
