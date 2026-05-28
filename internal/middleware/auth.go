@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/rjullien/tripkit-backend/internal/config"
 )
 
 type authContextKey string
@@ -18,13 +19,9 @@ const (
 	ctxTripID   authContextKey = "auth-trip-id"
 )
 
-// jwtSecret returns the signing key.
+// jwtSecret returns the signing key from shared config.
 func jwtSecret() []byte {
-	s := os.Getenv("TRIPKIT_JWT_SECRET")
-	if s == "" {
-		s = "tripkit-dev-secret-change-me"
-	}
-	return []byte(s)
+	return config.JWTSecret()
 }
 
 // Auth is a chi middleware that supports three auth modes:

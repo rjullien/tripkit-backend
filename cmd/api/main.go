@@ -38,8 +38,13 @@ func main() {
 	r.Use(chiMiddleware.Logger)
 	r.Use(chiMiddleware.Recoverer)
 	r.Use(chiMiddleware.RealIP)
+	// CORS — use explicit origins in production
+	allowedOrigins := []string{"*"}
+	if origins := os.Getenv("TRIPKIT_CORS_ORIGINS"); origins != "" {
+		allowedOrigins = strings.Split(origins, ",")
+	}
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"*"},
+		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		AllowCredentials: true,

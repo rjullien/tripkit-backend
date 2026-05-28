@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/rjullien/tripkit-backend/internal/config"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/models"
 )
@@ -12,6 +13,11 @@ import (
 // ListGroups returns all groups with their members and trip access.
 // GET /api/groups
 func (h *Handler) ListGroups(w http.ResponseWriter, r *http.Request) {
+	if !isRequestAdmin(r) {
+		writeError(w, http.StatusForbidden, "Admin access required")
+		return
+	}
+
 	var groups []models.Group
 	h.db.Find(&groups)
 
@@ -52,6 +58,11 @@ func (h *Handler) ListGroups(w http.ResponseWriter, r *http.Request) {
 // UpsertGroup creates or updates a group with members and trip access.
 // PUT /api/groups/{groupId}
 func (h *Handler) UpsertGroup(w http.ResponseWriter, r *http.Request) {
+	if !isRequestAdmin(r) {
+		writeError(w, http.StatusForbidden, "Admin access required")
+		return
+	}
+
 	type request struct {
 		Name    string   `json:"name"`
 		Members []string `json:"members"`
@@ -92,6 +103,11 @@ func (h *Handler) UpsertGroup(w http.ResponseWriter, r *http.Request) {
 // DeleteGroup removes a group and its associations.
 // DELETE /api/groups/{groupId}
 func (h *Handler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
+	if !isRequestAdmin(r) {
+		writeError(w, http.StatusForbidden, "Admin access required")
+		return
+	}
+
 	groupID := extractPathParam(r, "groupId")
 	if groupID == "" {
 		writeError(w, http.StatusBadRequest, "Missing group ID")
@@ -108,7 +124,11 @@ func (h *Handler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 // MyTrips returns trips the current user has access to.
 // GET /api/my/trips
 func (h *Handler) MyTrips(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r)
+	// Prefer JWT auth user, fallback to Authelia Remote-User
+	user := middleware.GetAuthUser(r)
+	if user == "anonymous" {
+		user = middleware.GetUser(r)
+	}
 
 	allowedIDs := middleware.AllowedTripIDs(h.db, user)
 
@@ -127,4 +147,18 @@ func (h *Handler) MyTrips(w http.ResponseWriter, r *http.Request) {
 func extractPathParam(r *http.Request, param string) string {
 	// Use chi URLParam
 	return chi.URLParam(r, param)
+}
+
+// isRequestAdmin checks if the current request is from an admin user.
+func isRequestAdmin(r *http.Request) bool {
+	// Check JWT role first
+	if middleware.GetAuthRole(r) == "admin" {
+		return true
+	}
+	// Check username-based admin list
+	user := middleware.GetAuthUser(r)
+	if user == "anonymous" {
+		user = middleware.GetUser(r)
+	}
+	return config.IsAdmin(user)
 }

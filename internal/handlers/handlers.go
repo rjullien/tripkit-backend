@@ -114,7 +114,11 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 // ── Trips ────────────────────────────────────────────────────────────────────
 
 func (h *Handler) ListTrips(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r)
+	// Prefer JWT auth user, fallback to Authelia Remote-User
+	user := middleware.GetAuthUser(r)
+	if user == "anonymous" {
+		user = middleware.GetUser(r)
+	}
 	allowedIDs := middleware.AllowedTripIDs(h.db, user)
 
 	var trips []models.Trip
