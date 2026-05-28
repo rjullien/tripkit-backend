@@ -32,8 +32,8 @@ type Day struct {
 // Hotel represents accommodation for a day.
 type Hotel struct {
 	ID     uint   `gorm:"primaryKey;autoIncrement" json:"id"`
-	TripID string `gorm:"not null;index:idx_hotel_trip_day" json:"trip_id"`
-	DayNum int    `gorm:"not null;index:idx_hotel_trip_day" json:"day_num"`
+	TripID string `gorm:"not null;uniqueIndex:idx_hotel_trip_day" json:"trip_id"`
+	DayNum int    `gorm:"not null;uniqueIndex:idx_hotel_trip_day" json:"day_num"`
 	Data   string `gorm:"type:json;not null" json:"data"`
 }
 

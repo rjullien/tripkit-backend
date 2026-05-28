@@ -3,6 +3,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -13,7 +14,10 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+var _LOGGER = log.Default()
 
 // Handler holds a reference to the database.
 type Handler struct {
@@ -248,18 +252,41 @@ func (h *Handler) DeleteTrip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cascade: delete list-related data, then lists, hotels, days, trip
-	var lists []models.List
-	h.db.Where("trip_id = ?", tripID).Find(&lists)
-	for _, l := range lists {
-		h.db.Where("list_id = ?", l.ID).Delete(&models.ListCheck{})
-		h.db.Where("list_id = ?", l.ID).Delete(&models.ListCustomItem{})
-		h.db.Where("list_id = ?", l.ID).Delete(&models.ListHidden{})
+	// Cascade delete in a transaction for atomicity
+	err := h.db.Transaction(func(tx *gorm.DB) error {
+		var lists []models.List
+		tx.Where("trip_id = ?", tripID).Find(&lists)
+		for _, l := range lists {
+			if err := tx.Where("list_id = ?", l.ID).Delete(&models.ListCheck{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("list_id = ?", l.ID).Delete(&models.ListCustomItem{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("list_id = ?", l.ID).Delete(&models.ListHidden{}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("trip_id = ?", tripID).Delete(&models.List{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("trip_id = ?", tripID).Delete(&models.Hotel{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("trip_id = ?", tripID).Delete(&models.Day{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Delete(&trip).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+
+	if err != nil {
+		_LOGGER.Printf("DeleteTrip transaction failed for %s: %v", tripID, err)
+		writeError(w, http.StatusInternalServerError, "Failed to delete trip")
+		return
 	}
-	h.db.Where("trip_id = ?", tripID).Delete(&models.List{})
-	h.db.Where("trip_id = ?", tripID).Delete(&models.Hotel{})
-	h.db.Where("trip_id = ?", tripID).Delete(&models.Day{})
-	h.db.Delete(&trip)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -399,9 +426,18 @@ func (h *Handler) UpsertDay(w http.ResponseWriter, r *http.Request) {
 	result := h.db.Where("trip_id = ? AND day_num = ?", tripID, dayNum).First(&day)
 	if result.Error != nil {
 		day = models.Day{TripID: tripID, DayNum: dayNum, Data: string(dataBytes)}
-		h.db.Create(&day)
+		if err := h.db.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "trip_id"}, {Name: "day_num"}},
+			DoUpdates: clause.AssignmentColumns([]string{"data"}),
+		}).Create(&day).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to save day")
+			return
+		}
 	} else {
-		h.db.Model(&day).Update("data", string(dataBytes))
+		if err := h.db.Model(&day).Update("data", string(dataBytes)).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to update day")
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, dayResponse(day))
@@ -467,9 +503,18 @@ func (h *Handler) UpsertHotel(w http.ResponseWriter, r *http.Request) {
 	result := h.db.Where("trip_id = ? AND day_num = ?", tripID, dayNum).First(&hotel)
 	if result.Error != nil {
 		hotel = models.Hotel{TripID: tripID, DayNum: dayNum, Data: string(dataBytes)}
-		h.db.Create(&hotel)
+		if err := h.db.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "trip_id"}, {Name: "day_num"}},
+			DoUpdates: clause.AssignmentColumns([]string{"data"}),
+		}).Create(&hotel).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to save hotel")
+			return
+		}
 	} else {
-		h.db.Model(&hotel).Update("data", string(dataBytes))
+		if err := h.db.Model(&hotel).Update("data", string(dataBytes)).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to update hotel")
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, hotelResponse(hotel))
@@ -560,7 +605,13 @@ func (h *Handler) UpsertList(w http.ResponseWriter, r *http.Request) {
 			Data:      string(dataBytes),
 			OwnerUser: body.OwnerUser,
 		}
-		h.db.Create(&list)
+		if err := h.db.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"type", "title", "data", "owner_user"}),
+		}).Create(&list).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to save list")
+			return
+		}
 	} else {
 		updates := map[string]any{
 			"type":       body.Type,
@@ -568,7 +619,10 @@ func (h *Handler) UpsertList(w http.ResponseWriter, r *http.Request) {
 			"data":       string(dataBytes),
 			"owner_user": body.OwnerUser,
 		}
-		h.db.Model(&list).Updates(updates)
+		if err := h.db.Model(&list).Updates(updates).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to update list")
+			return
+		}
 		h.db.First(&list, "id = ?", listID)
 	}
 
@@ -594,10 +648,26 @@ func (h *Handler) DeleteList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.db.Where("list_id = ?", listID).Delete(&models.ListCheck{})
-	h.db.Where("list_id = ?", listID).Delete(&models.ListCustomItem{})
-	h.db.Where("list_id = ?", listID).Delete(&models.ListHidden{})
-	h.db.Delete(&list)
+	err := h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("list_id = ?", listID).Delete(&models.ListCheck{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("list_id = ?", listID).Delete(&models.ListCustomItem{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("list_id = ?", listID).Delete(&models.ListHidden{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Delete(&list).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		_LOGGER.Printf("DeleteList transaction failed for %s: %v", listID, err)
+		writeError(w, http.StatusInternalServerError, "Failed to delete list")
+		return
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -654,57 +724,83 @@ func (h *Handler) SyncList(w http.ResponseWriter, r *http.Request) {
 
 	conflicts := 0
 
-	// Step 1: Merge checks (last-write-wins by updatedAt)
-	for itemID, incoming := range body.Checks {
-		var existing models.ListCheck
-		err := h.db.Where("list_id = ? AND item_id = ?", listID, itemID).First(&existing).Error
-		if err != nil {
-			h.db.Create(&models.ListCheck{
+	// All sync writes in a single transaction for atomicity
+	err := h.db.Transaction(func(tx *gorm.DB) error {
+		// Step 1: Merge checks (last-write-wins by updatedAt)
+		for itemID, incoming := range body.Checks {
+			check := models.ListCheck{
 				ListID:    listID,
 				ItemID:    itemID,
 				Checked:   incoming.Checked,
 				UpdatedAt: incoming.UpdatedAt,
-			})
-		} else if incoming.UpdatedAt > existing.UpdatedAt {
-			conflicts++
-			h.db.Model(&existing).Updates(map[string]any{
-				"checked":    incoming.Checked,
-				"updated_at": incoming.UpdatedAt,
-			})
-		} else if incoming.UpdatedAt == existing.UpdatedAt {
-			h.db.Model(&existing).Update("checked", incoming.Checked)
-		}
-	}
-
-	// Step 2: Merge custom items (union — never delete)
-	for itemID, incoming := range body.Custom {
-		var existing models.ListCustomItem
-		if h.db.Where("id = ? AND list_id = ?", itemID, listID).First(&existing).Error != nil {
-			createdAt := incoming.CreatedAt
-			if createdAt == 0 {
-				createdAt = time.Now().UnixMilli()
 			}
-			h.db.Create(&models.ListCustomItem{
-				ID:           itemID,
-				ListID:       listID,
-				Text:         incoming.Text,
-				SectionIndex: incoming.Section,
-				CreatedAt:    createdAt,
-			})
+			// Try to find existing
+			var existing models.ListCheck
+			findErr := tx.Where("list_id = ? AND item_id = ?", listID, itemID).First(&existing).Error
+			if findErr != nil {
+				// New item — insert
+				if err := tx.Create(&check).Error; err != nil {
+					return err
+				}
+			} else if incoming.UpdatedAt > existing.UpdatedAt {
+				conflicts++
+				if err := tx.Model(&existing).Updates(map[string]any{
+					"checked":    incoming.Checked,
+					"updated_at": incoming.UpdatedAt,
+				}).Error; err != nil {
+					return err
+				}
+			} else if incoming.UpdatedAt == existing.UpdatedAt && incoming.Checked != existing.Checked {
+				if err := tx.Model(&existing).Update("checked", incoming.Checked).Error; err != nil {
+					return err
+				}
+			}
 		}
+
+		// Step 2: Merge custom items (union — never delete)
+		for itemID, incoming := range body.Custom {
+			var existing models.ListCustomItem
+			if tx.Where("id = ? AND list_id = ?", itemID, listID).First(&existing).Error != nil {
+				createdAt := incoming.CreatedAt
+				if createdAt == 0 {
+					createdAt = time.Now().UnixMilli()
+				}
+				if err := tx.Create(&models.ListCustomItem{
+					ID:           itemID,
+					ListID:       listID,
+					Text:         incoming.Text,
+					SectionIndex: incoming.Section,
+					CreatedAt:    createdAt,
+				}).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		// Step 3: Hidden items — replace per device (atomic delete+re-insert)
+		if err := tx.Where("list_id = ? AND device_id = ?", listID, body.DeviceID).Delete(&models.ListHidden{}).Error; err != nil {
+			return err
+		}
+		for _, itemID := range body.Hidden {
+			if err := tx.Create(&models.ListHidden{
+				ListID:   listID,
+				DeviceID: body.DeviceID,
+				ItemID:   itemID,
+			}).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		_LOGGER.Printf("SyncList transaction failed for list %s: %v", listID, err)
+		writeError(w, http.StatusInternalServerError, "Sync failed")
+		return
 	}
 
-	// Step 3: Hidden items — replace per device
-	h.db.Where("list_id = ? AND device_id = ?", listID, body.DeviceID).Delete(&models.ListHidden{})
-	for _, itemID := range body.Hidden {
-		h.db.Create(&models.ListHidden{
-			ListID:   listID,
-			DeviceID: body.DeviceID,
-			ItemID:   itemID,
-		})
-	}
-
-	// Step 4: Return merged state
+	// Step 4: Return merged state (read outside tx — consistent after commit)
 	mergedState := h.getListState(listID)
 	deviceHidden := h.getDeviceHidden(listID, body.DeviceID)
 	serverSyncAt := time.Now().UnixMilli()
