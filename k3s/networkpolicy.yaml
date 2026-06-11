@@ -1,0 +1,30 @@
+# SECURITY: restrict who can reach the backend. The backend trusts the
+# Remote-User header and must only ever be called by the frontend pod (which
+# sits behind Traefik + Authelia). Without this policy any pod in the cluster
+# could call tripkit-backend:3001 directly and bypass authentication.
+#
+# NOTE on health probes: kubelet liveness/readiness probes originate from the
+# node, not from a pod. On most k3s CNIs they are still allowed, but if your
+# backend pods start failing their probes after applying this, uncomment the
+# ipBlock below and set it to your node/pod CIDR.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tripkit-backend-ingress
+  namespace: tripkit
+spec:
+  podSelector:
+    matchLabels:
+      app: tripkit-backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: tripkit-frontend
+        # - ipBlock:
+        #     cidr: 10.42.0.0/16   # <-- your k3s pod/node CIDR, for kubelet probes
+      ports:
+        - protocol: TCP
+          port: 3001

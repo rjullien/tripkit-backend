@@ -22,6 +22,15 @@ func UserIdentity(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user := strings.ToLower(r.Header.Get("Remote-User"))
 		if user == "" {
+			// Fall back to the identity already established by the Auth
+			// middleware (JWT subject or static-token admin). This keeps
+			// Bearer-token / magic-link users working even when
+			// TRIPKIT_REQUIRE_USER=true (they have no Remote-User header).
+			if authUser := GetAuthUser(r); authUser != "" && authUser != "anonymous" {
+				user = strings.ToLower(authUser)
+			}
+		}
+		if user == "" {
 			if requireUser {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)

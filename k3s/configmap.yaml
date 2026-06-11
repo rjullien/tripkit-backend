@@ -6,3 +6,11 @@ metadata:
 data:
   DB_PATH: "/data/tripkit.db"
   PORT: "3001"
+  # Production hardening — see internal/middleware/auth.go & config.go:
+  # - TRIPKIT_ENV=production disables the permissive dev-mode fallback and makes
+  #   a missing JWT secret a fatal startup error (no insecure signing key).
+  # - TRIPKIT_REQUIRE_USER rejects requests with no resolved identity.
+  # - TRIPKIT_CORS_ORIGINS replaces the unsafe "*" default.
+  TRIPKIT_ENV: "production"
+  TRIPKIT_REQUIRE_USER: "true"
+  TRIPKIT_CORS_ORIGINS: "https://tripkit.bapttf.com"

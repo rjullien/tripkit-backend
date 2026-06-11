@@ -12,6 +12,9 @@ spec:
     - match: Host(`tripkit.bapttf.com`)
       kind: Rule
       middlewares:
+        # Order matters: strip client-supplied Remote-* headers FIRST, then
+        # let Authelia inject the authenticated identity.
+        - name: strip-remote-headers
         - name: forwardauth-authelia
       services:
         - name: tripkit-frontend

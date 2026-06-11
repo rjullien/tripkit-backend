@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/rjullien/tripkit-backend/internal/config"
 	"github.com/rjullien/tripkit-backend/internal/database"
 	"github.com/rjullien/tripkit-backend/internal/handlers"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
@@ -30,6 +31,13 @@ func main() {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 
+	// Fail-closed: outside dev mode, refuse to start if no authentication
+	// mechanism is configured. This prevents an accidental "everyone is admin"
+	// deployment (e.g. a missing/empty secret).
+	if !config.IsDevMode() && os.Getenv("TRIPKIT_API_TOKEN") == "" && os.Getenv("TRIPKIT_JWT_SECRET") == "" {
+		log.Fatal("FATAL: no auth configured (set TRIPKIT_API_TOKEN and/or TRIPKIT_JWT_SECRET) — refusing to start outside dev mode")
+	}
+
 	h := handlers.New(db)
 
 	r := chi.NewRouter()
@@ -43,11 +51,20 @@ func main() {
 	if origins := os.Getenv("TRIPKIT_CORS_ORIGINS"); origins != "" {
 		allowedOrigins = strings.Split(origins, ",")
 	}
+	// A wildcard origin combined with credentials is invalid and unsafe;
+	// disable credentials whenever "*" is in the allow-list.
+	allowCredentials := true
+	for _, o := range allowedOrigins {
+		if strings.TrimSpace(o) == "*" {
+			allowCredentials = false
+			break
+		}
+	}
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
-		AllowCredentials: true,
+		AllowCredentials: allowCredentials,
 		MaxAge:           300,
 	}))
 

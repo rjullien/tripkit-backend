@@ -22,6 +22,12 @@ spec:
             - name: TRIPKIT_API_TOKEN
               valueFrom:
                 secretKeyRef: {name: tripkit-secrets, key: api-token}
+            # Required in production (TRIPKIT_ENV=production): without it the
+            # server refuses to start rather than signing JWTs with an insecure
+            # hardcoded fallback key. Generate with: openssl rand -hex 32
+            - name: TRIPKIT_JWT_SECRET
+              valueFrom:
+                secretKeyRef: {name: tripkit-secrets, key: jwt-secret}
           volumeMounts: [{name: data, mountPath: /data}]
           resources:
             requests: {memory: "32Mi", cpu: "50m"}

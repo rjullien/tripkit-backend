@@ -3,6 +3,7 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"strings"
@@ -32,8 +33,10 @@ func Auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		staticToken := os.Getenv("TRIPKIT_API_TOKEN")
 
-		// Dev mode: no token required
-		if staticToken == "" && os.Getenv("TRIPKIT_JWT_SECRET") == "" {
+		// Dev mode: no token required — ONLY in development.
+		// Outside dev (TRIPKIT_ENV set to anything other than "dev") we never
+		// grant implicit admin access, even if no token/secret is configured.
+		if config.IsDevMode() && staticToken == "" && os.Getenv("TRIPKIT_JWT_SECRET") == "" {
 			ctx := context.WithValue(r.Context(), ctxUserName, "dev")
 			ctx = context.WithValue(ctx, ctxUserRole, "admin")
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -100,7 +103,7 @@ func Auth(next http.Handler) http.Handler {
 func writeUnauthorized(w http.ResponseWriter, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
-	w.Write([]byte(`{"error":"` + msg + `"}`))
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 // GetAuthUser returns the authenticated user name from context.
