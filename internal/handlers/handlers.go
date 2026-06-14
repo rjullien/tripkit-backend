@@ -126,12 +126,11 @@ func (h *Handler) ListTrips(w http.ResponseWriter, r *http.Request) {
 	allowedIDs := middleware.AllowedTripIDs(h.db, user)
 
 	var trips []models.Trip
-	if allowedIDs == nil {
-		// Open mode or admin — return all
-		h.db.Order("created_at DESC").Find(&trips)
-	} else {
-		h.db.Where("id IN ?", allowedIDs).Order("created_at DESC").Find(&trips)
+	query := h.db.Session(&gorm.Session{}).Model(&models.Trip{})
+	if allowedIDs != nil {
+		query = query.Where("id IN ?", allowedIDs)
 	}
+	query.Order("created_at DESC").Find(&trips)
 
 	result := make([]map[string]any, len(trips))
 	for i, t := range trips {
@@ -502,13 +501,16 @@ func (h *Handler) UpsertHotel(w http.ResponseWriter, r *http.Request) {
 	var hotel models.Hotel
 	result := h.db.Where("trip_id = ? AND day_num = ?", tripID, dayNum).First(&hotel)
 	if result.Error != nil {
+		// Not found — create new hotel entry
 		hotel = models.Hotel{TripID: tripID, DayNum: dayNum, Data: string(dataBytes)}
-		if err := h.db.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "trip_id"}, {Name: "day_num"}},
-			DoUpdates: clause.AssignmentColumns([]string{"data"}),
-		}).Create(&hotel).Error; err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to save hotel")
-			return
+		if err := h.db.Create(&hotel).Error; err != nil {
+			// Retry with update in case of race condition (unique constraint violation)
+			if err2 := h.db.Where("trip_id = ? AND day_num = ?", tripID, dayNum).First(&hotel).Error; err2 == nil {
+				h.db.Model(&hotel).Update("data", string(dataBytes))
+			} else {
+				writeError(w, http.StatusInternalServerError, "Failed to save hotel")
+				return
+			}
 		}
 	} else {
 		if err := h.db.Model(&hotel).Update("data", string(dataBytes)).Error; err != nil {
