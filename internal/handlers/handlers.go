@@ -128,9 +128,10 @@ func (h *Handler) ListTrips(w http.ResponseWriter, r *http.Request) {
 	var trips []models.Trip
 	if allowedIDs == nil {
 		// Open mode or admin — return all
-		h.db.Order("created_at DESC").Find(&trips)
+		// Use Omit to prevent GORM from joining associations on Postgres
+		h.db.Omit("Days", "Hotels", "Lists").Order("created_at DESC").Find(&trips)
 	} else {
-		h.db.Where("id IN ?", allowedIDs).Order("created_at DESC").Find(&trips)
+		h.db.Omit("Days", "Hotels", "Lists").Where("id IN ?", allowedIDs).Order("created_at DESC").Find(&trips)
 	}
 
 	result := make([]map[string]any, len(trips))
