@@ -127,22 +127,46 @@ func (h *Handler) ListTrips(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[ListTrips] user=%q allowedIDs=%v", user, allowedIDs)
 
-	var trips []models.Trip
-	var err error
-	if allowedIDs == nil {
-		// Admin or open mode — raw SQL to avoid any GORM session issues
-		err = h.db.Raw("SELECT * FROM trips ORDER BY created_at DESC").Scan(&trips).Error
-	} else if len(allowedIDs) == 0 {
-		// No access
-		trips = []models.Trip{}
-	} else {
-		err = h.db.Raw("SELECT * FROM trips WHERE id IN ? ORDER BY created_at DESC", allowedIDs).Scan(&trips).Error
+	// Use explicit Table + simple struct to avoid GORM association/json scanning issues
+	type tripRow struct {
+		ID        string     `gorm:"column:id"`
+		Name      string     `gorm:"column:name"`
+		Emoji     *string    `gorm:"column:emoji"`
+		StartDate *string    `gorm:"column:start_date"`
+		EndDate   *string    `gorm:"column:end_date"`
+		Data      *string    `gorm:"column:data"`
+		CreatedAt time.Time  `gorm:"column:created_at"`
+		UpdatedAt time.Time  `gorm:"column:updated_at"`
 	}
 
-	if err != nil {
+	var rows []tripRow
+	query := h.db.Table("trips").Order("created_at DESC")
+	if allowedIDs != nil {
+		if len(allowedIDs) == 0 {
+			writeJSON(w, http.StatusOK, []any{})
+			return
+		}
+		query = query.Where("id IN ?", allowedIDs)
+	}
+	if err := query.Find(&rows).Error; err != nil {
 		log.Printf("[ListTrips] ERROR: %v", err)
 	}
-	log.Printf("[ListTrips] found %d trips", len(trips))
+	log.Printf("[ListTrips] found %d trips (table query)", len(rows))
+
+	// Also try count for diagnosis
+	var count int64
+	h.db.Table("trips").Count(&count)
+	log.Printf("[ListTrips] total trips in table: %d", count)
+
+	// Convert to Trip model for response
+	trips := make([]models.Trip, len(rows))
+	for i, r := range rows {
+		trips[i] = models.Trip{
+			ID: r.ID, Name: r.Name, Emoji: r.Emoji,
+			StartDate: r.StartDate, EndDate: r.EndDate,
+			Data: r.Data, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		}
+	}
 
 	result := make([]map[string]any, len(trips))
 	for i, t := range trips {
