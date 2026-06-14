@@ -125,83 +125,12 @@ func (h *Handler) ListTrips(w http.ResponseWriter, r *http.Request) {
 	}
 	allowedIDs := middleware.AllowedTripIDs(h.db, user)
 
-	log.Printf("[ListTrips] user=%q allowedIDs=%v", user, allowedIDs)
-
-	// Use explicit Table + simple struct to avoid GORM association/json scanning issues
-	type tripRow struct {
-		ID        string     `gorm:"column:id"`
-		Name      string     `gorm:"column:name"`
-		Emoji     *string    `gorm:"column:emoji"`
-		StartDate *string    `gorm:"column:start_date"`
-		EndDate   *string    `gorm:"column:end_date"`
-		Data      *string    `gorm:"column:data"`
-		CreatedAt time.Time  `gorm:"column:created_at"`
-		UpdatedAt time.Time  `gorm:"column:updated_at"`
-	}
-
-	var rows []tripRow
-	query := h.db.Table("trips").Order("created_at DESC")
-	if allowedIDs != nil {
-		if len(allowedIDs) == 0 {
-			writeJSON(w, http.StatusOK, []any{})
-			return
-		}
-		query = query.Where("id IN ?", allowedIDs)
-	}
-	if err := query.Find(&rows).Error; err != nil {
-		log.Printf("[ListTrips] ERROR: %v", err)
-	}
-	log.Printf("[ListTrips] found %d trips (table query)", len(rows))
-
-	// Also try count for diagnosis
-	var count int64
-	h.db.Table("trips").Count(&count)
-	log.Printf("[ListTrips] total trips in table: %d", count)
-
-	// Convert to Trip model for response
-	trips := make([]models.Trip, len(rows))
-	for i, r := range rows {
-		trips[i] = models.Trip{
-			ID: r.ID, Name: r.Name, Emoji: r.Emoji,
-			StartDate: r.StartDate, EndDate: r.EndDate,
-			Data: r.Data, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-		}
-	}
-
-	// If query returned empty, try individual lookups of known trips as diagnostic
-	if len(rows) == 0 && count == 0 {
-		// Try First on a known trip to prove db works
-		var probe models.Trip
-		probeErr := h.db.First(&probe, "id = ?", "usa-2026").Error
-		log.Printf("[ListTrips] DIAGNOSTIC: First('usa-2026') err=%v found=%v", probeErr, probe.ID)
-		if probeErr == nil {
-			// First works but Find doesn't — return individual lookups as workaround
-			var allTrips []models.Trip
-			var ids []string
-			h.db.Raw("SELECT id FROM trips").Scan(&ids)
-			log.Printf("[ListTrips] DIAGNOSTIC: raw id scan got %d ids: %v", len(ids), ids)
-			if len(ids) == 0 {
-				// Try model-based approach
-				h.db.Select("id").Find(&allTrips)
-				for _, t := range allTrips {
-					ids = append(ids, t.ID)
-				}
-				log.Printf("[ListTrips] DIAGNOSTIC: model id scan got %d ids: %v", len(ids), ids)
-			}
-			// Fallback: load each trip individually
-			for _, id := range ids {
-				var t models.Trip
-				if h.db.First(&t, "id = ?", id).Error == nil {
-					allTrips = append(allTrips, t)
-				}
-			}
-			result := make([]map[string]any, len(allTrips))
-			for i, t := range allTrips {
-				result[i] = tripResponse(t, nil)
-			}
-			writeJSON(w, http.StatusOK, result)
-			return
-		}
+	var trips []models.Trip
+	if allowedIDs == nil {
+		// Open mode or admin — return all
+		h.db.Order("created_at DESC").Find(&trips)
+	} else {
+		h.db.Where("id IN ?", allowedIDs).Order("created_at DESC").Find(&trips)
 	}
 
 	result := make([]map[string]any, len(trips))
@@ -573,16 +502,13 @@ func (h *Handler) UpsertHotel(w http.ResponseWriter, r *http.Request) {
 	var hotel models.Hotel
 	result := h.db.Where("trip_id = ? AND day_num = ?", tripID, dayNum).First(&hotel)
 	if result.Error != nil {
-		// Not found — create new hotel entry
 		hotel = models.Hotel{TripID: tripID, DayNum: dayNum, Data: string(dataBytes)}
-		if err := h.db.Create(&hotel).Error; err != nil {
-			// Retry with update in case of race condition (unique constraint violation)
-			if err2 := h.db.Where("trip_id = ? AND day_num = ?", tripID, dayNum).First(&hotel).Error; err2 == nil {
-				h.db.Model(&hotel).Update("data", string(dataBytes))
-			} else {
-				writeError(w, http.StatusInternalServerError, "Failed to save hotel")
-				return
-			}
+		if err := h.db.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "trip_id"}, {Name: "day_num"}},
+			DoUpdates: clause.AssignmentColumns([]string{"data"}),
+		}).Create(&hotel).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to save hotel")
+			return
 		}
 	} else {
 		if err := h.db.Model(&hotel).Update("data", string(dataBytes)).Error; err != nil {
