@@ -123,9 +123,17 @@ func (h *Handler) ListTrips(w http.ResponseWriter, r *http.Request) {
 	if user == "anonymous" {
 		user = middleware.GetUser(r)
 	}
-	allowedIDs := middleware.AllowedTripIDs(h.db, user)
+	role := middleware.GetAuthRole(r)
 
-	log.Printf("[ListTrips] user=%q allowedIDs=%v", user, allowedIDs)
+	// Admin bypass: if role=admin (e.g. dev mode) or user is in admin list
+	var allowedIDs []string
+	if role == "admin" {
+		allowedIDs = nil
+	} else {
+		allowedIDs = middleware.AllowedTripIDs(h.db, user)
+	}
+
+	log.Printf("[ListTrips] user=%q role=%q allowedIDs=%v", user, role, allowedIDs)
 
 	// Step 1: Get all trip IDs (proven to work in debug endpoint)
 	var ids []string
