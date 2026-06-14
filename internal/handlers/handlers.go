@@ -139,11 +139,13 @@ func (h *Handler) ListTrips(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var rows []tripRow
-	query := h.db.Table("trips").Select("id, name, emoji, start_date, end_date, created_at").Order("created_at DESC")
+	var err error
 	if allowedIDs != nil {
-		query = query.Where("id IN ?", allowedIDs)
+		err = h.db.Raw("SELECT id, name, emoji, start_date, end_date, created_at FROM trips WHERE id IN ? ORDER BY created_at DESC", allowedIDs).Scan(&rows).Error
+	} else {
+		err = h.db.Raw("SELECT id, name, emoji, start_date, end_date, created_at FROM trips ORDER BY created_at DESC").Scan(&rows).Error
 	}
-	if err := query.Find(&rows).Error; err != nil {
+	if err != nil {
 		log.Printf("[ListTrips] ERROR: %v", err)
 		writeError(w, http.StatusInternalServerError, "Failed to list trips")
 		return
@@ -895,4 +897,46 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"user": user,
 	})
+}
+
+// DebugListTrips is a temporary diagnostic endpoint.
+func (h *Handler) DebugListTrips(w http.ResponseWriter, r *http.Request) {
+	results := map[string]any{}
+
+	// Method 1: Raw SQL
+	var ids1 []string
+	h.db.Raw("SELECT id FROM trips").Scan(&ids1)
+	results["raw_ids"] = ids1
+
+	// Method 2: Count
+	var count int64
+	h.db.Table("trips").Count(&count)
+	results["count"] = count
+
+	// Method 3: First with known ID
+	var trip models.Trip
+	err := h.db.First(&trip, "id = ?", "usa-2026").Error
+	if err != nil {
+		results["first_usa"] = err.Error()
+	} else {
+		results["first_usa"] = trip.ID
+	}
+
+	// Method 4: Direct Raw with rows
+	var rawRows []map[string]any
+	h.db.Raw("SELECT id, name FROM trips LIMIT 10").Scan(&rawRows)
+	results["raw_rows"] = rawRows
+
+	// Method 5: DB stats
+	sqlDB, _ := h.db.DB()
+	if sqlDB != nil {
+		stats := sqlDB.Stats()
+		results["db_stats"] = map[string]any{
+			"open": stats.OpenConnections,
+			"idle": stats.Idle,
+			"inUse": stats.InUse,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, results)
 }
