@@ -938,5 +938,27 @@ func (h *Handler) DebugListTrips(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Method 6: bypass GORM entirely — raw database/sql
+	if sqlDB != nil {
+		rows, err := sqlDB.Query("SELECT id, name FROM trips")
+		if err != nil {
+			results["bypass_gorm_err"] = err.Error()
+		} else {
+			var rawList []map[string]string
+			for rows.Next() {
+				var id, name string
+				rows.Scan(&id, &name)
+				rawList = append(rawList, map[string]string{"id": id, "name": name})
+			}
+			rows.Close()
+			results["bypass_gorm"] = rawList
+			results["bypass_gorm_count"] = len(rawList)
+		}
+	}
+
+	// Method 7: Check DB driver name
+	results["db_driver"] = os.Getenv("DB_DRIVER")
+	results["db_name"] = os.Getenv("DB_NAME")
+
 	writeJSON(w, http.StatusOK, results)
 }
