@@ -125,18 +125,45 @@ func (h *Handler) ListTrips(w http.ResponseWriter, r *http.Request) {
 	}
 	allowedIDs := middleware.AllowedTripIDs(h.db, user)
 
-	var trips []models.Trip
-	if allowedIDs == nil {
-		// Open mode or admin — return all
-		// Use Omit to prevent GORM from joining associations on Postgres
-		h.db.Omit("Days", "Hotels", "Lists").Order("created_at DESC").Find(&trips)
-	} else {
-		h.db.Omit("Days", "Hotels", "Lists").Where("id IN ?", allowedIDs).Order("created_at DESC").Find(&trips)
+	log.Printf("[ListTrips] user=%q allowedIDs=%v", user, allowedIDs)
+
+	// Use raw table scan with explicit columns to avoid any GORM/Postgres driver
+	// issues with json columns or model associations.
+	type tripRow struct {
+		ID        string  `gorm:"column:id"`
+		Name      string  `gorm:"column:name"`
+		Emoji     *string `gorm:"column:emoji"`
+		StartDate *string `gorm:"column:start_date"`
+		EndDate   *string `gorm:"column:end_date"`
+		CreatedAt time.Time `gorm:"column:created_at"`
 	}
 
-	result := make([]map[string]any, len(trips))
-	for i, t := range trips {
-		result[i] = tripResponse(t, nil)
+	var rows []tripRow
+	query := h.db.Table("trips").Select("id, name, emoji, start_date, end_date, created_at").Order("created_at DESC")
+	if allowedIDs != nil {
+		query = query.Where("id IN ?", allowedIDs)
+	}
+	if err := query.Find(&rows).Error; err != nil {
+		log.Printf("[ListTrips] ERROR: %v", err)
+		writeError(w, http.StatusInternalServerError, "Failed to list trips")
+		return
+	}
+
+	log.Printf("[ListTrips] found %d trips", len(rows))
+
+	result := make([]map[string]any, 0, len(rows))
+	for _, r := range rows {
+		var count int64
+		h.db.Model(&models.Day{}).Where("trip_id = ?", r.ID).Count(&count)
+		result = append(result, map[string]any{
+			"id":         r.ID,
+			"name":       r.Name,
+			"emoji":      r.Emoji,
+			"start_date": r.StartDate,
+			"end_date":   r.EndDate,
+			"daysCount":  count,
+			"created_at": r.CreatedAt,
+		})
 	}
 	writeJSON(w, http.StatusOK, result)
 }
