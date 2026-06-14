@@ -127,45 +127,27 @@ func (h *Handler) ListTrips(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[ListTrips] user=%q allowedIDs=%v", user, allowedIDs)
 
-	// Use raw table scan with explicit columns to avoid any GORM/Postgres driver
-	// issues with json columns or model associations.
-	type tripRow struct {
-		ID        string  `gorm:"column:id"`
-		Name      string  `gorm:"column:name"`
-		Emoji     *string `gorm:"column:emoji"`
-		StartDate *string `gorm:"column:start_date"`
-		EndDate   *string `gorm:"column:end_date"`
-		CreatedAt time.Time `gorm:"column:created_at"`
-	}
-
-	var rows []tripRow
-	var err error
+	// Step 1: Get all trip IDs (proven to work in debug endpoint)
+	var ids []string
 	if allowedIDs != nil {
-		err = h.db.Raw("SELECT id, name, emoji, start_date, end_date, created_at FROM trips WHERE id IN ? ORDER BY created_at DESC", allowedIDs).Scan(&rows).Error
+		ids = allowedIDs
 	} else {
-		err = h.db.Raw("SELECT id, name, emoji, start_date, end_date, created_at FROM trips ORDER BY created_at DESC").Scan(&rows).Error
-	}
-	if err != nil {
-		log.Printf("[ListTrips] ERROR: %v", err)
-		writeError(w, http.StatusInternalServerError, "Failed to list trips")
-		return
+		h.db.Raw("SELECT id FROM trips").Scan(&ids)
 	}
 
-	log.Printf("[ListTrips] found %d trips", len(rows))
+	log.Printf("[ListTrips] found %d trip IDs", len(ids))
 
-	result := make([]map[string]any, 0, len(rows))
-	for _, r := range rows {
+	// Step 2: Load each trip individually (First works reliably)
+	result := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		var trip models.Trip
+		if err := h.db.First(&trip, "id = ?", id).Error; err != nil {
+			log.Printf("[ListTrips] skip %s: %v", id, err)
+			continue
+		}
 		var count int64
-		h.db.Model(&models.Day{}).Where("trip_id = ?", r.ID).Count(&count)
-		result = append(result, map[string]any{
-			"id":         r.ID,
-			"name":       r.Name,
-			"emoji":      r.Emoji,
-			"start_date": r.StartDate,
-			"end_date":   r.EndDate,
-			"daysCount":  count,
-			"created_at": r.CreatedAt,
-		})
+		h.db.Model(&models.Day{}).Where("trip_id = ?", id).Count(&count)
+		result = append(result, tripResponse(trip, &count))
 	}
 	writeJSON(w, http.StatusOK, result)
 }
