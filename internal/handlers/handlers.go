@@ -125,12 +125,24 @@ func (h *Handler) ListTrips(w http.ResponseWriter, r *http.Request) {
 	}
 	allowedIDs := middleware.AllowedTripIDs(h.db, user)
 
+	log.Printf("[ListTrips] user=%q allowedIDs=%v", user, allowedIDs)
+
 	var trips []models.Trip
-	query := h.db.Session(&gorm.Session{}).Model(&models.Trip{})
-	if allowedIDs != nil {
-		query = query.Where("id IN ?", allowedIDs)
+	var err error
+	if allowedIDs == nil {
+		// Admin or open mode — raw SQL to avoid any GORM session issues
+		err = h.db.Raw("SELECT * FROM trips ORDER BY created_at DESC").Scan(&trips).Error
+	} else if len(allowedIDs) == 0 {
+		// No access
+		trips = []models.Trip{}
+	} else {
+		err = h.db.Raw("SELECT * FROM trips WHERE id IN ? ORDER BY created_at DESC", allowedIDs).Scan(&trips).Error
 	}
-	query.Order("created_at DESC").Find(&trips)
+
+	if err != nil {
+		log.Printf("[ListTrips] ERROR: %v", err)
+	}
+	log.Printf("[ListTrips] found %d trips", len(trips))
 
 	result := make([]map[string]any, len(trips))
 	for i, t := range trips {
