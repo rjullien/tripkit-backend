@@ -168,6 +168,42 @@ func (h *Handler) ListTrips(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// If query returned empty, try individual lookups of known trips as diagnostic
+	if len(rows) == 0 && count == 0 {
+		// Try First on a known trip to prove db works
+		var probe models.Trip
+		probeErr := h.db.First(&probe, "id = ?", "usa-2026").Error
+		log.Printf("[ListTrips] DIAGNOSTIC: First('usa-2026') err=%v found=%v", probeErr, probe.ID)
+		if probeErr == nil {
+			// First works but Find doesn't — return individual lookups as workaround
+			var allTrips []models.Trip
+			var ids []string
+			h.db.Raw("SELECT id FROM trips").Scan(&ids)
+			log.Printf("[ListTrips] DIAGNOSTIC: raw id scan got %d ids: %v", len(ids), ids)
+			if len(ids) == 0 {
+				// Try model-based approach
+				h.db.Select("id").Find(&allTrips)
+				for _, t := range allTrips {
+					ids = append(ids, t.ID)
+				}
+				log.Printf("[ListTrips] DIAGNOSTIC: model id scan got %d ids: %v", len(ids), ids)
+			}
+			// Fallback: load each trip individually
+			for _, id := range ids {
+				var t models.Trip
+				if h.db.First(&t, "id = ?", id).Error == nil {
+					allTrips = append(allTrips, t)
+				}
+			}
+			result := make([]map[string]any, len(allTrips))
+			for i, t := range allTrips {
+				result[i] = tripResponse(t, nil)
+			}
+			writeJSON(w, http.StatusOK, result)
+			return
+		}
+	}
+
 	result := make([]map[string]any, len(trips))
 	for i, t := range trips {
 		result[i] = tripResponse(t, nil)
