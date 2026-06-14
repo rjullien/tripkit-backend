@@ -73,5 +73,14 @@ func autoMigrate(db *gorm.DB) (*gorm.DB, error) {
 	); err != nil {
 		return nil, err
 	}
+	ensureUniqueHotelIndex(db)
 	return db, nil
+}
+
+// ensureUniqueHotelIndex creates or replaces the hotel unique index.
+// Needed because GORM AutoMigrate won't alter existing non-unique indexes.
+func ensureUniqueHotelIndex(db *gorm.DB) {
+	// Drop old non-unique index if it exists, then create unique one
+	db.Exec("DROP INDEX IF EXISTS idx_hotel_trip_day")
+	db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_hotel_trip_day ON hotels(trip_id, day_num)")
 }
