@@ -410,3 +410,32 @@ CREATE TABLE trip_accesses (
 |-------|---------|-------|
 | `family` | user1, user2, user3 | trip-a, trip-b |
 | `friends` | user4 | trip-a |
+
+---
+
+## Known Gotchas
+
+### Dev Mode ACL Bypass (fixed v1.12.6)
+
+When `TRIPKIT_JWT_SECRET` and `TRIPKIT_API_TOKEN` are **not set**, the backend
+runs in "dev mode". Auth middleware sets `user="dev"`, `role="admin"`.
+
+The `ListTrips` handler now checks **both** the auth role AND the username:
+- If `role == "admin"` → bypass ACL (all trips visible)
+- If `isAdmin(username)` → bypass ACL
+
+Previously only the username was checked, and `"dev"` wasn't in the admin list,
+causing `AllowedTripIDs` to return an empty filter → 0 trips.
+
+### Hotel OnConflict Upsert (fixed v1.12.0)
+
+GORM's `AutoMigrate` doesn't alter existing non-unique indexes to unique.
+The `ensureUniqueHotelIndex()` function runs on startup to force the unique
+constraint on `hotels(trip_id, day_num)`. Without this, `PUT /hotels/:dayNum`
+fails with 500 for new trips.
+
+### nil vs empty slice in AllowedTripIDs
+
+- `nil` = "no restrictions, show all trips" (admin or open mode)
+- `[]string{}` = "user has access to zero trips" (legitimate filter)
+- `len(s) == 0 && s != nil` is the dangerous case — looks empty but triggers WHERE IN ()
