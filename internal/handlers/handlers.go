@@ -678,6 +678,9 @@ func (h *Handler) DeleteList(w http.ResponseWriter, r *http.Request) {
 		if err := tx.Where("list_id = ?", listID).Delete(&models.ListHidden{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("list_id = ?", listID).Delete(&models.ListCustomDeleted{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Delete(&list).Error; err != nil {
 			return err
 		}
@@ -695,11 +698,12 @@ func (h *Handler) DeleteList(w http.ResponseWriter, r *http.Request) {
 // ── Sync (the critical endpoint) ─────────────────────────────────────────────
 
 type syncRequest struct {
-	DeviceID   string                    `json:"deviceId"`
-	LastSyncAt int64                     `json:"lastSyncAt"`
-	Checks     map[string]syncCheckItem  `json:"checks"`
-	Custom     map[string]syncCustomItem `json:"custom"`
-	Hidden     []string                  `json:"hidden"`
+	DeviceID      string                    `json:"deviceId"`
+	LastSyncAt    int64                     `json:"lastSyncAt"`
+	Checks        map[string]syncCheckItem  `json:"checks"`
+	Custom        map[string]syncCustomItem `json:"custom"`
+	DeletedCustom map[string]int64          `json:"deletedCustom"` // itemID -> deletedAt (tombstones)
+	Hidden        []string                  `json:"hidden"`
 }
 
 type syncCheckItem struct {
@@ -777,14 +781,26 @@ func (h *Handler) SyncList(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Step 2: Merge custom items (union — never delete)
+		// Step 2: Merge custom items (union — but respect tombstones)
 		for itemID, incoming := range body.Custom {
+			// If a tombstone exists and is newer than this item's creation,
+			// the item was deleted after being created → do NOT resurrect it.
+			var tomb models.ListCustomDeleted
+			createdAt := incoming.CreatedAt
+			if createdAt == 0 {
+				createdAt = time.Now().UnixMilli()
+			}
+			if tx.Where("list_id = ? AND item_id = ?", listID, itemID).First(&tomb).Error == nil {
+				if tomb.DeletedAt >= createdAt {
+					continue // stale create — keep it deleted
+				}
+				// Genuine re-creation after the delete → clear the tombstone.
+				if err := tx.Where("list_id = ? AND item_id = ?", listID, itemID).Delete(&models.ListCustomDeleted{}).Error; err != nil {
+					return err
+				}
+			}
 			var existing models.ListCustomItem
 			if tx.Where("id = ? AND list_id = ?", itemID, listID).First(&existing).Error != nil {
-				createdAt := incoming.CreatedAt
-				if createdAt == 0 {
-					createdAt = time.Now().UnixMilli()
-				}
 				if err := tx.Create(&models.ListCustomItem{
 					ID:           itemID,
 					ListID:       listID,
@@ -793,6 +809,39 @@ func (h *Handler) SyncList(w http.ResponseWriter, r *http.Request) {
 					CreatedAt:    createdAt,
 				}).Error; err != nil {
 					return err
+				}
+			}
+		}
+
+		// Step 2b: Apply custom-item deletions (tombstones).
+		for itemID, deletedAt := range body.DeletedCustom {
+			if deletedAt == 0 {
+				deletedAt = time.Now().UnixMilli()
+			}
+			// Upsert tombstone keeping the latest deletedAt.
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "list_id"}, {Name: "item_id"}},
+				DoUpdates: clause.Assignments(map[string]any{"deleted_at": gorm.Expr("MAX(list_custom_deleteds.deleted_at, excluded.deleted_at)")}),
+			}).Create(&models.ListCustomDeleted{ListID: listID, ItemID: itemID, DeletedAt: deletedAt}).Error; err != nil {
+				// Fallback for drivers without MAX(...excluded) support: plain upsert.
+				if err2 := tx.Clauses(clause.OnConflict{
+					Columns:   []clause.Column{{Name: "list_id"}, {Name: "item_id"}},
+					DoUpdates: clause.AssignmentColumns([]string{"deleted_at"}),
+				}).Create(&models.ListCustomDeleted{ListID: listID, ItemID: itemID, DeletedAt: deletedAt}).Error; err2 != nil {
+					return err2
+				}
+			}
+			// Remove the item itself (only if not re-created more recently).
+			var existing models.ListCustomItem
+			if tx.Where("id = ? AND list_id = ?", itemID, listID).First(&existing).Error == nil {
+				if existing.CreatedAt <= deletedAt {
+					if err := tx.Where("id = ? AND list_id = ?", itemID, listID).Delete(&models.ListCustomItem{}).Error; err != nil {
+						return err
+					}
+					// Also drop its check row.
+					if err := tx.Where("list_id = ? AND item_id = ?", listID, "custom-"+itemID).Delete(&models.ListCheck{}).Error; err != nil {
+						return err
+					}
 				}
 			}
 		}

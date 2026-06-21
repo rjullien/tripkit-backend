@@ -77,6 +77,15 @@ type ListHidden struct {
 	ItemID   string `gorm:"primaryKey;size:255" json:"item_id"`
 }
 
+// ListCustomDeleted is a tombstone for a deleted custom item.
+// It lets deletions propagate across devices and prevents a stale device
+// from resurrecting an item it still has locally (compare DeletedAt vs createdAt).
+type ListCustomDeleted struct {
+	ListID    string `gorm:"primaryKey;size:255" json:"list_id"`
+	ItemID    string `gorm:"primaryKey;size:255" json:"item_id"`
+	DeletedAt int64  `gorm:"not null" json:"deleted_at"`
+}
+
 // MagicToken is a one-time invite link token.
 type MagicToken struct {
 	Token     string    `gorm:"primaryKey;size:64" json:"token"`
