@@ -446,10 +446,7 @@ func (h *Handler) UpsertDay(w http.ResponseWriter, r *http.Request) {
 	result := h.db.Where("trip_id = ? AND day_num = ?", tripID, dayNum).First(&day)
 	if result.Error != nil {
 		day = models.Day{TripID: tripID, DayNum: dayNum, Data: string(dataBytes)}
-		if err := h.db.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "trip_id"}, {Name: "day_num"}},
-			DoUpdates: clause.AssignmentColumns([]string{"data"}),
-		}).Create(&day).Error; err != nil {
+		if err := h.db.Create(&day).Error; err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to save day")
 			return
 		}
@@ -522,11 +519,9 @@ func (h *Handler) UpsertHotel(w http.ResponseWriter, r *http.Request) {
 	var hotel models.Hotel
 	result := h.db.Where("trip_id = ? AND day_num = ?", tripID, dayNum).First(&hotel)
 	if result.Error != nil {
+		// Row doesn't exist — simple Create (no OnConflict needed, avoids SQLite ID=0 bug)
 		hotel = models.Hotel{TripID: tripID, DayNum: dayNum, Data: string(dataBytes)}
-		if err := h.db.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "trip_id"}, {Name: "day_num"}},
-			DoUpdates: clause.AssignmentColumns([]string{"data"}),
-		}).Create(&hotel).Error; err != nil {
+		if err := h.db.Create(&hotel).Error; err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to save hotel")
 			return
 		}
@@ -625,10 +620,7 @@ func (h *Handler) UpsertList(w http.ResponseWriter, r *http.Request) {
 			Data:      string(dataBytes),
 			OwnerUser: body.OwnerUser,
 		}
-		if err := h.db.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "id"}},
-			DoUpdates: clause.AssignmentColumns([]string{"type", "title", "data", "owner_user"}),
-		}).Create(&list).Error; err != nil {
+		if err := h.db.Create(&list).Error; err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to save list")
 			return
 		}
