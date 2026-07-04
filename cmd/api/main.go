@@ -112,6 +112,7 @@ func main() {
 		// Hotels
 		r.Get("/trips/{tripId}/hotels", h.ListHotels)
 		r.Put("/trips/{tripId}/hotels/{dayNum}", h.UpsertHotel)
+		r.Delete("/trips/{tripId}/hotels/{dayNum}", h.DeleteHotel)
 
 		// Lists
 		r.Get("/trips/{tripId}/lists", h.ListLists)

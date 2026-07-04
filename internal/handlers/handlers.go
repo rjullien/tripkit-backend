@@ -535,6 +535,26 @@ func (h *Handler) UpsertHotel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, hotelResponse(hotel))
 }
 
+func (h *Handler) DeleteHotel(w http.ResponseWriter, r *http.Request) {
+	tripID := chi.URLParam(r, "tripId")
+	if !h.tripExists(tripID) {
+		writeError(w, http.StatusNotFound, "Trip not found")
+		return
+	}
+	dayNum, err := strconv.Atoi(chi.URLParam(r, "dayNum"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid day number")
+		return
+	}
+
+	result := h.db.Where("trip_id = ? AND day_num = ?", tripID, dayNum).Delete(&models.Hotel{})
+	if result.RowsAffected == 0 {
+		writeError(w, http.StatusNotFound, "Hotel not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "day_num": dayNum})
+}
+
 // ── Lists ────────────────────────────────────────────────────────────────────
 
 func (h *Handler) ListLists(w http.ResponseWriter, r *http.Request) {
