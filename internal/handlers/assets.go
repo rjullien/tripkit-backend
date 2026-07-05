@@ -89,6 +89,14 @@ func (h *Handler) UploadAsset(w http.ResponseWriter, r *http.Request) {
 		ct = "image/gif"
 	case ".svg":
 		ct = "image/svg+xml"
+	case ".html", ".htm":
+		ct = "text/html; charset=utf-8"
+	case ".css":
+		ct = "text/css; charset=utf-8"
+	case ".js":
+		ct = "text/javascript; charset=utf-8"
+	case ".json":
+		ct = "application/json"
 	}
 
 	// Upsert asset
