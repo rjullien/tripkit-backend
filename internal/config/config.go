@@ -61,6 +61,53 @@ func ACLStrict() bool {
 	return env != "" && env != "dev"
 }
 
+// minServiceTokenLen is the minimum length accepted for a service token.
+// `openssl rand -hex 32` produces 64 characters, well above this floor.
+const minServiceTokenLen = 16
+
+// ServiceTokens returns the configured machine credentials as a
+// username -> token map, parsed from TRIPKIT_SERVICE_TOKENS.
+//
+// Format: "user1:token1,user2:token2". Entries are separated by ',' and each
+// entry is split on its FIRST ':' only, so a token may itself contain ':'.
+// Usernames are trimmed and lowercased.
+//
+// An entry is skipped with a warning when it is malformed, when its token is
+// shorter than minServiceTokenLen characters, or when its username is an admin
+// (see IsAdmin): a service token authenticates as an ordinary non-admin user
+// subject to the group ACL and must never be able to authenticate as an admin.
+func ServiceTokens() map[string]string {
+	raw := os.Getenv("TRIPKIT_SERVICE_TOKENS")
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+
+	tokens := make(map[string]string)
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		name, token, found := strings.Cut(entry, ":")
+		name = strings.ToLower(strings.TrimSpace(name))
+		token = strings.TrimSpace(token)
+		if !found || name == "" || token == "" {
+			log.Println("WARNING: TRIPKIT_SERVICE_TOKENS: ignoring malformed entry (expected \"username:token\")")
+			continue
+		}
+		if len(token) < minServiceTokenLen {
+			log.Printf("WARNING: TRIPKIT_SERVICE_TOKENS: ignoring service token for %q — shorter than %d characters", name, minServiceTokenLen)
+			continue
+		}
+		if IsAdmin(name) {
+			log.Printf("WARNING: TRIPKIT_SERVICE_TOKENS: ignoring service token for %q — a service token must not authenticate as an admin", name)
+			continue
+		}
+		tokens[name] = token
+	}
+	return tokens
+}
+
 // IsAdmin checks if a username is in the admin list.
 func IsAdmin(username string) bool {
 	for _, u := range AdminUsers() {
