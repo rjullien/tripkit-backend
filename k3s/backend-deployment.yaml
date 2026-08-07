@@ -22,6 +22,13 @@ spec:
             - name: TRIPKIT_API_TOKEN
               valueFrom:
                 secretKeyRef: {name: tripkit-secrets, key: api-token}
+            - name: TRIPKIT_JWT_SECRET
+              valueFrom:
+                secretKeyRef: {name: tripkit-secrets, key: jwt-secret}
+            # "user1:token1,user2:token2" — identités machine non-admin (CI de seed)
+            - name: TRIPKIT_SERVICE_TOKENS
+              valueFrom:
+                secretKeyRef: {name: tripkit-secrets, key: service-tokens}
           volumeMounts: [{name: data, mountPath: /data}]
           resources:
             requests: {memory: "32Mi", cpu: "50m"}
