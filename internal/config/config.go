@@ -40,6 +40,27 @@ func AdminUsers() []string {
 	return users
 }
 
+// ACLStrict reports whether the group-based trip ACL must fail closed.
+//
+// In strict mode a non-admin identity only reaches a trip when one of its
+// groups explicitly grants access to it: an empty trip_accesses table or a
+// trip without any access rule no longer opens the data to everyone.
+//
+// It is driven by TRIPKIT_ACL_MODE ("strict" or "open"). When that variable is
+// not set it falls back to TRIPKIT_ENV: any non-empty value other than "dev"
+// means strict. With nothing configured at all the legacy open behaviour is
+// kept, so existing deployments and local dev are unaffected.
+func ACLStrict() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("TRIPKIT_ACL_MODE"))) {
+	case "strict":
+		return true
+	case "open":
+		return false
+	}
+	env := strings.ToLower(strings.TrimSpace(os.Getenv("TRIPKIT_ENV")))
+	return env != "" && env != "dev"
+}
+
 // IsAdmin checks if a username is in the admin list.
 func IsAdmin(username string) bool {
 	for _, u := range AdminUsers() {

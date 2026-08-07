@@ -124,19 +124,20 @@ func (h *Handler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 // MyTrips returns trips the current user has access to.
 // GET /api/my/trips
 func (h *Handler) MyTrips(w http.ResponseWriter, r *http.Request) {
-	// Prefer JWT auth user, fallback to Authelia Remote-User
-	user := middleware.GetAuthUser(r)
-	if user == "anonymous" {
-		user = middleware.GetUser(r)
-	}
+	// Single source of truth for the caller identity (token first, Remote-User fallback)
+	user := middleware.EffectiveUser(r)
 
 	allowedIDs := middleware.AllowedTripIDs(h.db, user)
 
-	var trips []models.Trip
-	if allowedIDs == nil {
-		// Open mode — return all
+	trips := make([]models.Trip, 0)
+	switch {
+	case allowedIDs == nil:
+		// No restriction — return all
 		h.db.Find(&trips)
-	} else {
+	case len(allowedIDs) == 0:
+		// Nothing allowed — return an empty array without querying (an empty
+		// slice would produce `IN (NULL)` in GORM).
+	default:
 		h.db.Where("id IN ?", allowedIDs).Find(&trips)
 	}
 
@@ -156,9 +157,5 @@ func isRequestAdmin(r *http.Request) bool {
 		return true
 	}
 	// Check username-based admin list
-	user := middleware.GetAuthUser(r)
-	if user == "anonymous" {
-		user = middleware.GetUser(r)
-	}
-	return config.IsAdmin(user)
+	return config.IsAdmin(middleware.EffectiveUser(r))
 }

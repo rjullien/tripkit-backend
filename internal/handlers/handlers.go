@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/rjullien/tripkit-backend/internal/config"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/models"
 	"gorm.io/gorm"
@@ -118,11 +120,8 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 // ── Trips ────────────────────────────────────────────────────────────────────
 
 func (h *Handler) ListTrips(w http.ResponseWriter, r *http.Request) {
-	// Prefer JWT auth user, fallback to Authelia Remote-User
-	user := middleware.GetAuthUser(r)
-	if user == "anonymous" {
-		user = middleware.GetUser(r)
-	}
+	// Single source of truth for the caller identity (token first, Remote-User fallback)
+	user := middleware.EffectiveUser(r)
 	role := middleware.GetAuthRole(r)
 
 	// Admin bypass: if role=admin (e.g. dev mode) or user is in admin list
@@ -134,6 +133,13 @@ func (h *Handler) ListTrips(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[ListTrips] user=%q role=%q allowedIDs=%v", user, role, allowedIDs)
+
+	// Nothing allowed: return an empty array without querying (an empty slice
+	// would produce `IN (NULL)` in GORM).
+	if allowedIDs != nil && len(allowedIDs) == 0 {
+		writeJSON(w, http.StatusOK, []map[string]any{})
+		return
+	}
 
 	// Step 1: Get all trip IDs (proven to work in debug endpoint)
 	var ids []string
@@ -183,6 +189,28 @@ func (h *Handler) CreateTrip(w http.ResponseWriter, r *http.Request) {
 		tripID = uuid.NewString()
 	}
 
+	// POST /trips carries the trip id in the body, so the TripACL middleware
+	// cannot authorize it (extractTripID returns "" for this path): do it here.
+	if !isRequestAdmin(r) {
+		user := middleware.EffectiveUser(r)
+		allowed := middleware.AllowedTripIDs(h.db, user)
+		if config.ACLStrict() {
+			// A scoped caller may only (re)create trips it already has access
+			// to, which requires an explicit id in the body.
+			if body.ID == "" {
+				writeError(w, http.StatusForbidden, "Explicit trip id required")
+				return
+			}
+			if allowed == nil || !containsFold(allowed, tripID) {
+				writeError(w, http.StatusForbidden, "Access denied to this trip")
+				return
+			}
+		} else if allowed != nil && !containsFold(allowed, tripID) {
+			writeError(w, http.StatusForbidden, "Access denied to this trip")
+			return
+		}
+	}
+
 	var dataStr *string
 	if body.Data != nil {
 		b, _ := json.Marshal(body.Data)
@@ -204,6 +232,17 @@ func (h *Handler) CreateTrip(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, tripResponse(trip, nil))
+}
+
+// containsFold reports whether values contains target, case-insensitively,
+// consistent with the LOWER() comparisons used by the ACL queries.
+func containsFold(values []string, target string) bool {
+	for _, v := range values {
+		if strings.EqualFold(v, target) {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) GetTrip(w http.ResponseWriter, r *http.Request) {
