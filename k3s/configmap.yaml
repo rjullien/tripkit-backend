@@ -6,3 +6,5 @@ metadata:
 data:
   DB_PATH: "/data/tripkit.db"
   PORT: "3001"
+  # strict = le ACL groupes échoue en fermé (voir README « Auth & ACL »)
+  TRIPKIT_ACL_MODE: "strict"

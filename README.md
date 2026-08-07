@@ -30,8 +30,18 @@ API REST en Go pour TripKit — gestion de voyages, jours, hébergements, listes
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `PORT` | No | `3001` | HTTP listen port |
+| `BASE_PATH` | No | — (root) | Route prefix, ex. `/api` → `GET /api/trips` |
 | `DB_PATH` | No | `data/tripkit.db` | SQLite database path |
-| `TRIPKIT_API_TOKEN` | Prod | — | Bearer token. Unset = dev mode |
+| `TRIPKIT_API_TOKEN` | Prod | — | Bearer token **admin** (accès total). Unset = dev mode |
+| `TRIPKIT_JWT_SECRET` | Prod | dev fallback | Clé HMAC des liens magiques. Fatal si absent et `TRIPKIT_ENV` ≠ `dev` |
+| `TRIPKIT_SERVICE_TOKENS` | No | — | Tokens machine non-admin : `user1:token1,user2:token2` (token ≥ 16 car., username admin refusé) |
+| `TRIPKIT_ACL_MODE` | Prod | — | `strict` = ACL fail-closed, `open` = comportement historique. Non défini → suit `TRIPKIT_ENV` |
+| `TRIPKIT_ENV` | No | — | `dev` = tolérant ; toute autre valeur non vide = strict par défaut |
+| `TRIPKIT_ADMIN_USERS` | No | `admin,rene` | Usernames qui bypassent le ACL trips |
+| `TRIPKIT_REQUIRE_USER` | No | `false` | `true` = refuse les requêtes sans `Remote-User` |
+| `TRIPKIT_CORS_ORIGINS` | No | `*` | Origines CORS autorisées, séparées par `,` |
+| `TRIPKIT_NO_CACHE` | No | — | Non vide = désactive le cache météo |
+| `APP_VERSION` | No | `dev` | Version renvoyée par `/health` |
 
 ## Quick Start
 ```bash
@@ -146,10 +156,62 @@ gh api repos/BaptTF/vps-infra/contents/workloads/tripkit-backend/.argocd-source-
 
 | Mode | Condition | Résultat |
 |------|-----------|----------|
-| Dev mode | Ni `TRIPKIT_API_TOKEN` ni `TRIPKIT_JWT_SECRET` set | Tout le monde = admin |
-| Admin token | `Authorization: Bearer <TRIPKIT_API_TOKEN>` | Full access |
+| Admin token | `Authorization: Bearer <TRIPKIT_API_TOKEN>` | Full access (bypass ACL) |
+| Service token | `Authorization: Bearer <token de TRIPKIT_SERVICE_TOKENS>` | user = le username configuré, role = `service` (**non-admin**, soumis au ACL groupes) |
 | JWT (magic link) | `Authorization: Bearer <jwt>` | Scopé par trip_id |
-| Authelia | Header `Remote-User` (sans Bearer) | role = viewer |
+| Authelia | Header `Remote-User` (sans Bearer) | role = viewer, soumis au ACL groupes |
+| Dev mode (`TRIPKIT_ACL_MODE` ≠ `strict`) | Aucun de `TRIPKIT_API_TOKEN` / `TRIPKIT_JWT_SECRET` / `TRIPKIT_SERVICE_TOKENS` | Tout le monde = admin ⚠️ |
+| Dev mode en `strict` | idem, mais `TRIPKIT_ACL_MODE=strict` | Plus de bypass admin : `Remote-User` → viewer, sinon **401** |
+
+L'identité prouvée par un token gagne toujours sur le header `Remote-User` : un client
+qui n'entre pas par le forwardAuth Authelia peut envoyer ce header lui-même.
+
+### Mode strict (`TRIPKIT_ACL_MODE=strict`)
+
+| Situation | Mode `open` (historique) | Mode `strict` |
+|-----------|--------------------------|---------------|
+| Table `trip_accesses` vide | tout ouvert à tous | non-admin bloqué (403) |
+| Trip sans règle d'accès | ouvert à tous | 403 |
+| Utilisateur sans aucun groupe | voit tous les trips | ne voit rien (`[]`) |
+| `POST /trips` | libre | id explicite obligatoire **et** déjà autorisé pour l'appelant |
+| Aucune variable d'auth configurée | tout le monde = admin | 401 (ou viewer si `Remote-User`) |
+
+### Onboarding d'un contributeur externe (seed automatique)
+
+Objectif : quelqu'un d'extérieur pousse son propre seed dans **son** dépôt et sa CI
+l'importe, sans jamais pouvoir lire ni écrire les autres trips.
+
+```bash
+# 1. Créer son groupe et son (ses) trip(s) — avec une identité ADMIN
+curl -X PUT https://tripkit.example.com/api/groups/nadia \
+  -H "Authorization: Bearer $TRIPKIT_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Nadia","members":["nadia"],"trips":["nadia-2026"]}'
+
+# 2. Générer son token de service
+openssl rand -hex 32
+
+# 3. L'ajouter à TRIPKIT_SERVICE_TOKENS (secret du backend), puis redéployer
+#    TRIPKIT_SERVICE_TOKENS="nadia:<token>,autre:<token2>"
+
+# 4. Donner le token à sa CI comme secret. Elle l'envoie tel quel :
+#    Authorization: Bearer <token>   (aucun header Remote-User nécessaire)
+```
+
+Garanties côté serveur (aucune confiance requise envers sa CI) :
+
+- le **group id** et la **liste de trips** sont fixés par l'admin ; le contributeur ne
+  peut pas élargir son périmètre : `GET /api/groups` et `PUT /api/groups/{id}` → 403 ;
+- un username présent dans `TRIPKIT_ADMIN_USERS` est **ignoré** dans
+  `TRIPKIT_SERVICE_TOKENS` (un token de service ne peut jamais être admin), idem pour
+  un token de moins de 16 caractères ;
+- `Remote-User` forgé → ignoré, l'identité reste celle du token ;
+- toutes les routes d'un autre trip (`GET`/`PUT` trip, days, hotels, lists, assets) → 403,
+  et `POST /trips` avec un id non autorisé → 403.
+
+Le token couvre toute la séquence d'import : `GET /trips/{id}`, `POST /trips` ou
+`PUT /trips/{id}`, puis `PUT /trips/{id}/days/{n}`, `/hotels/{n}`, `/lists/{listId}`
+et `/assets/{filename}`.
 
 ### Groupes ACL (v1.6.0+)
 
