@@ -4,9 +4,9 @@ API REST en Go pour TripKit — gestion de voyages, jours, hébergements, listes
 
 ## Stack
 - **Go 1.24** + chi router
-- **GORM** + SQLite
-- **47 tests** avec DB in-memory isolée
-- **Docker** — image Alpine légère (~15 Mo)
+- **GORM** — **PostgreSQL (CloudNativePG)** en prod (`BaptTF/vps-infra`) ; SQLite en local / tests CI
+- Tests avec DB in-memory isolée
+- **Docker** — image Alpine légère (~15 Mo), `CGO_ENABLED=0` (driver Postgres only)
 
 ## API
 
