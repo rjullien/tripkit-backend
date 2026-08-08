@@ -13,3 +13,21 @@ spec:
       - Remote-Groups
       - Remote-Email
       - Remote-Name
+---
+# SECURITY: strip any client-supplied Remote-* identity headers BEFORE Authelia
+# runs. Without this, a client could send `Remote-User: rene` and — because the
+# backend trusts Remote-User — escalate privileges. Authelia re-injects the
+# genuine values via authResponseHeaders above.
+# This middleware MUST be chained before forwardauth-authelia in the IngressRoute.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-remote-headers
+  namespace: tripkit
+spec:
+  headers:
+    customRequestHeaders:
+      Remote-User: ""
+      Remote-Groups: ""
+      Remote-Email: ""
+      Remote-Name: ""

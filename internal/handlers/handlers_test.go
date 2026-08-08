@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
@@ -779,5 +780,50 @@ func TestWeather_TripNotFound(t *testing.T) {
 	w := doReq(r, "GET", "/api/trips/nonexistent-trip/weather?lat=48.85&lon=2.35", nil)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// touchTrip must bump /version when child resources change, otherwise the FE
+// polls a stale trip.UpdatedAt and never refreshes day/hotel/list edits.
+func TestTripVersion_BumpsOnChildUpsert(t *testing.T) {
+	r := setupRouter(t)
+	doReq(r, "POST", "/api/trips", map[string]any{"id": "trip-ver", "name": "Version Trip"})
+
+	before := parseResp(doReq(r, "GET", "/api/trips/trip-ver/version", nil))
+	v0, _ := before["version"].(float64)
+	if v0 == 0 {
+		t.Fatalf("expected non-zero version, got %v", before)
+	}
+
+	time.Sleep(5 * time.Millisecond)
+	if w := doReq(r, "PUT", "/api/trips/trip-ver/days/1", map[string]any{"label": "Day 1"}); w.Code != http.StatusOK {
+		t.Fatalf("upsert day: %d %s", w.Code, w.Body.String())
+	}
+	afterDay := parseResp(doReq(r, "GET", "/api/trips/trip-ver/version", nil))
+	v1, _ := afterDay["version"].(float64)
+	if v1 <= v0 {
+		t.Fatalf("version did not bump after day upsert: before=%v after=%v", v0, v1)
+	}
+
+	time.Sleep(5 * time.Millisecond)
+	if w := doReq(r, "PUT", "/api/trips/trip-ver/hotels/1", map[string]any{"name": "Hotel"}); w.Code != http.StatusOK {
+		t.Fatalf("upsert hotel: %d %s", w.Code, w.Body.String())
+	}
+	afterHotel := parseResp(doReq(r, "GET", "/api/trips/trip-ver/version", nil))
+	v2, _ := afterHotel["version"].(float64)
+	if v2 <= v1 {
+		t.Fatalf("version did not bump after hotel upsert: before=%v after=%v", v1, v2)
+	}
+
+	time.Sleep(5 * time.Millisecond)
+	if w := doReq(r, "PUT", "/api/trips/trip-ver/lists/lst-ver", map[string]any{
+		"type": "packing", "title": "Bag", "data": map[string]any{},
+	}); w.Code != http.StatusOK {
+		t.Fatalf("upsert list: %d %s", w.Code, w.Body.String())
+	}
+	afterList := parseResp(doReq(r, "GET", "/api/trips/trip-ver/version", nil))
+	v3, _ := afterList["version"].(float64)
+	if v3 <= v2 {
+		t.Fatalf("version did not bump after list upsert: before=%v after=%v", v2, v3)
 	}
 }

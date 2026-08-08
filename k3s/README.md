@@ -9,12 +9,15 @@ Traefik (k3s built-in)
     │
     ├── auth.juju.bapttf.com ──→ Authelia (login portal)
     │
-    └── tripkit.bapttf.com ──→ [forwardAuth middleware]
+    └── tripkit.bapttf.com ──→ [strip-remote-headers → forwardAuth]
                                     │
                                     ├── /* ──→ Frontend (nginx :80)
                                     └── /api/* ──→ Backend (Go :3001)  [via nginx proxy_pass]
                                                      │
                                                 SQLite (PVC)
+
+`strip-remote-headers` clears client-supplied `Remote-*` headers before Authelia
+re-injects the real identity. Apply `middleware-authelia.yaml` before the IngressRoute.
 ```
 
 ## Prerequisites
