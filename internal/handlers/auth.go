@@ -101,16 +101,26 @@ func (h *Handler) LoginMagicLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !mt.IsValid() {
+	if time.Now().After(mt.ExpiresAt) {
 		writeError(w, http.StatusGone, "Token already used or expired")
 		return
 	}
 
-	// Mark token as used
+	// Atomically mark the token as used. The `used_at IS NULL` guard makes the
+	// token genuinely single-use even under concurrent requests: only one
+	// UPDATE can win the race.
 	now := time.Now()
-	mt.UsedBy = &mt.Name
-	mt.UsedAt = &now
-	h.db.Save(&mt)
+	res := h.db.Model(&models.MagicToken{}).
+		Where("token = ? AND used_by IS NULL AND used_at IS NULL", req.Token).
+		Updates(map[string]any{"used_by": mt.Name, "used_at": now})
+	if res.Error != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to consume token")
+		return
+	}
+	if res.RowsAffected == 0 {
+		writeError(w, http.StatusGone, "Token already used or expired")
+		return
+	}
 
 	// Generate JWT (30 days)
 	claims := jwt.MapClaims{

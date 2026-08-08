@@ -360,23 +360,10 @@ func (h *Handler) TripVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Compute version = max updated_at across trip + all days
-	// Trip.UpdatedAt is already set by GORM on every update.
-	// For days, we pick the max of the trip's last day upsert.
+	// Version = last-update timestamp of the trip. Child upserts (days, hotels,
+	// lists) bump trip.UpdatedAt via touchTrip(), so this value changes whenever
+	// any trip content changes — which is what the client polls on.
 	latestAt := trip.UpdatedAt
-
-	var maxDayRow struct {
-		MaxID uint
-	}
-	// Day has no UpdatedAt, so we use max(id) as proxy (auto-increment = latest upsert)
-	// Better: we use the trip's own UpdatedAt which we bump on seed-import
-
-	// Also check max hotel update
-	var hotelCount int64
-	h.db.Model(&models.Hotel{}).Where("trip_id = ?", tripID).Count(&hotelCount)
-	_ = maxDayRow
-
-	// Version = unix timestamp of last update (stable, monotonic)
 	version := latestAt.UnixMilli()
 
 	// Set cache headers — short TTL so app checks often but CDN/proxy can cache
@@ -496,6 +483,7 @@ func (h *Handler) UpsertDay(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	h.touchTrip(tripID)
 	writeJSON(w, http.StatusOK, dayResponse(day))
 }
 
@@ -571,6 +559,7 @@ func (h *Handler) UpsertHotel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	h.touchTrip(tripID)
 	writeJSON(w, http.StatusOK, hotelResponse(hotel))
 }
 
@@ -697,6 +686,7 @@ func (h *Handler) UpsertList(w http.ResponseWriter, r *http.Request) {
 		h.db.First(&list, "id = ?", listID)
 	}
 
+	h.touchTrip(tripID)
 	writeJSON(w, http.StatusOK, listResponse(list))
 }
 
@@ -939,6 +929,14 @@ func (h *Handler) tripExists(tripID string) bool {
 	var count int64
 	h.db.Model(&models.Trip{}).Where("id = ?", tripID).Count(&count)
 	return count > 0
+}
+
+// touchTrip bumps the trip's UpdatedAt timestamp so that GET /trips/{id}/version
+// reflects changes to child resources (days, hotels, lists). Without this, the
+// client polling /version would never detect day/hotel/list edits and would
+// serve stale data.
+func (h *Handler) touchTrip(tripID string) {
+	h.db.Model(&models.Trip{}).Where("id = ?", tripID).Update("updated_at", time.Now())
 }
 
 func (h *Handler) getListState(listID string) map[string]any {
