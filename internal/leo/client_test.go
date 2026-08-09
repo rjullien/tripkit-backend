@@ -29,6 +29,25 @@ func TestStatusPayload_MissingKey(t *testing.T) {
 	}
 }
 
+func TestExtractHermesError(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want string
+	}{
+		{`{"error":"invalid_api_key"}`, "invalid_api_key"},
+		{`{"error":{"message":"model overloaded","code":"overloaded"}}`, "model overloaded"},
+		{`{"message":"nope"}`, "nope"},
+		{`plain failure`, "plain failure"},
+		{``, ""},
+	}
+	for _, tc := range cases {
+		got := extractHermesError([]byte(tc.raw))
+		if got != tc.want {
+			t.Fatalf("raw=%q got=%q want=%q", tc.raw, got, tc.want)
+		}
+	}
+}
+
 func TestChat_RequiresMessages(t *testing.T) {
 	cfg := Config{BaseURL: "http://example", APIKey: "k"}
 	_, err := cfg.Chat("rene", ChatRequest{})

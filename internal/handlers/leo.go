@@ -43,14 +43,22 @@ func (h *Handler) LeoChat(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		msg := err.Error()
 		status := http.StatusBadGateway
+		hint := "Vérifie Hermes (clé, DNS in-cluster, /v1/chat/completions)."
 		if strings.Contains(msg, "not configured") {
 			status = http.StatusServiceUnavailable
+			hint = "Ajoute hermes-api-key dans Infisical → secret tripkit-secrets."
 		} else if strings.Contains(msg, "required") || strings.Contains(msg, "must be") {
 			status = http.StatusBadRequest
+			hint = "Corps invalide: messages[{role,content}] requis."
+		} else if strings.Contains(msg, "unreachable") {
+			hint = "Le backend n’atteint pas hermes-leo (service / réseau)."
+		} else if strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "unauthorized") {
+			hint = "Clé Hermes refusée (API_SERVER_KEY ≠ hermes-api-key)."
 		}
 		writeJSON(w, status, map[string]any{
 			"error": msg,
 			"code":  "leo_chat_failed",
+			"hint":  hint,
 		})
 		return
 	}
