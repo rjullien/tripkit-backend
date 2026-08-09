@@ -15,9 +15,11 @@ import (
 const (
 	defaultBaseURL      = "http://hermes-leo.openclaw.svc.cluster.local:8642"
 	defaultDashboardURL = "https://hermes-leo.bapttf.com"
-	// Stay under Cloudflare's ~100s proxy limit so the FE gets a JSON error
-	// instead of a raw connection abort (« Fetch is aborted »).
-	defaultTimeout = 85 * time.Second
+	// Plus chat is for short asks. Fail well under Cloudflare (~100s) with JSON.
+	// Long seed work belongs on the Hermes dashboard / Telegram.
+	defaultTimeout = 40 * time.Second
+	maxChatHistory  = 12
+	maxReplyTokens  = 800
 )
 
 // Config is loaded from env (never exposed to the browser).
@@ -96,8 +98,9 @@ type ChatResponse struct {
 }
 
 type openAIReq struct {
-	Model    string        `json:"model"`
-	Messages []ChatMessage `json:"messages"`
+	Model     string        `json:"model"`
+	Messages  []ChatMessage `json:"messages"`
+	MaxTokens int           `json:"max_tokens,omitempty"`
 }
 
 type openAIResp struct {
@@ -179,7 +182,8 @@ func SystemPrompt(ctx PromptContext) string {
 	b.WriteString("(économie de tokens).\n")
 	b.WriteString("- Reseed prod sans modif fichier → rappelle « Publier depuis git » dans Plus.\n")
 	b.WriteString("- Ne révèle jamais secrets / tokens / URLs cluster.\n")
-	b.WriteString("- Français, très concis.\n")
+	b.WriteString("- Français, très concis (≤4 phrases). Pas de monologue.\n")
+	b.WriteString("- Si la tâche est longue : une phrase de statut, puis agis — ne raconte pas chaque étape.\n")
 	return b.String()
 }
 
@@ -188,34 +192,16 @@ func (c Config) Chat(ctx PromptContext, req ChatRequest) (*ChatResponse, error) 
 	if !c.Ready() {
 		return nil, fmt.Errorf("TRIPKIT_HERMES_API_KEY not configured")
 	}
-	if len(req.Messages) == 0 {
-		return nil, fmt.Errorf("messages required")
-	}
-	// Cap history to avoid huge payloads
-	msgs := req.Messages
-	if len(msgs) > 40 {
-		msgs = msgs[len(msgs)-40:]
-	}
-	for i := range msgs {
-		msgs[i].Role = strings.TrimSpace(msgs[i].Role)
-		msgs[i].Content = strings.TrimSpace(msgs[i].Content)
-		if msgs[i].Role == "" || msgs[i].Content == "" {
-			return nil, fmt.Errorf("each message needs role and content")
-		}
-		if msgs[i].Role != "user" && msgs[i].Role != "assistant" {
-			return nil, fmt.Errorf("role must be user or assistant")
-		}
+	out, err := prepareMessages(ctx, req)
+	if err != nil {
+		return nil, err
 	}
 
-	promptCtx := ctx
-	if strings.TrimSpace(promptCtx.TripID) == "" {
-		promptCtx.TripID = strings.TrimSpace(req.TripID)
-	}
-	out := make([]ChatMessage, 0, len(msgs)+1)
-	out = append(out, ChatMessage{Role: "system", Content: SystemPrompt(promptCtx)})
-	out = append(out, msgs...)
-
-	body, err := json.Marshal(openAIReq{Model: "default", Messages: out})
+	body, err := json.Marshal(openAIReq{
+		Model:     "default",
+		Messages:  out,
+		MaxTokens: maxReplyTokens,
+	})
 	if err != nil {
 		return nil, err
 	}

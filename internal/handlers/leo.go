@@ -46,24 +46,33 @@ func (h *Handler) LeoChat(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		msg := err.Error()
 		status := http.StatusBadGateway
-		hint := "Vérifie Hermes (clé, DNS in-cluster, /v1/chat/completions)."
+		code := "leo_chat_failed"
+		// Short user-facing error — FE shows this alone (no code+hint concat).
+		userErr := "Échec Léo. Réessaie."
 		if strings.Contains(msg, "not configured") {
 			status = http.StatusServiceUnavailable
-			hint = "Ajoute hermes-api-key dans Infisical → secret tripkit-secrets."
+			code = "missing_hermes_key"
+			userErr = "Léo non configuré (clé Hermes)."
 		} else if strings.Contains(msg, "required") || strings.Contains(msg, "must be") {
 			status = http.StatusBadRequest
-			hint = "Corps invalide: messages[{role,content}] requis."
+			userErr = "Message invalide."
+		} else if strings.Contains(msg, "Timeout") || strings.Contains(msg, "deadline exceeded") ||
+			strings.Contains(msg, "Client.Timeout") || strings.Contains(msg, "context deadline") {
+			status = http.StatusGatewayTimeout
+			code = "timeout"
+			userErr = "Léo met trop longtemps. Demande plus courte, ou Dashboard."
 		} else if strings.Contains(msg, "unreachable") {
-			hint = "Le backend n’atteint pas hermes-leo (service / réseau)."
+			userErr = "Hermes injoignable. Réessaie plus tard."
 		} else if strings.Contains(msg, "HTML error page") || strings.Contains(msg, "HTTP 502") || strings.Contains(msg, "HTTP 503") {
-			hint = "Hermes/proxy en 502 — vérifie pod hermes-leo, TRIPKIT_HERMES_BASE_URL et hermes-api-key."
+			userErr = "Hermes injoignable. Réessaie plus tard."
 		} else if strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "unauthorized") {
-			hint = "Clé Hermes refusée (API_SERVER_KEY ≠ hermes-api-key)."
+			userErr = "Clé Hermes refusée."
 		}
 		writeJSON(w, status, map[string]any{
-			"error": msg,
-			"code":  "leo_chat_failed",
-			"hint":  hint,
+			"error": userErr,
+			"code":  code,
+			// Keep raw for logs/debug UIs — FE must not dump this by default.
+			"detail": msg,
 		})
 		return
 	}
