@@ -115,6 +115,7 @@ func main() {
 		// Léo / Hermes chat proxy (secrets stay on the server).
 		r.Get("/leo/status", h.LeoStatus)
 		r.Post("/leo/chat", h.LeoChat)
+		r.Post("/leo/chat/stream", h.LeoChatStream)
 
 		// Trips
 		r.Get("/trips", h.ListTrips)

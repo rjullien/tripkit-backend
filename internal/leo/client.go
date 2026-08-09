@@ -192,32 +192,10 @@ func (c Config) Chat(ctx PromptContext, req ChatRequest) (*ChatResponse, error) 
 	if !c.Ready() {
 		return nil, fmt.Errorf("TRIPKIT_HERMES_API_KEY not configured")
 	}
-	if len(req.Messages) == 0 {
-		return nil, fmt.Errorf("messages required")
+	out, err := prepareMessages(ctx, req)
+	if err != nil {
+		return nil, err
 	}
-	// Cap history — Plus chat is short-turn, not a long agent session.
-	msgs := req.Messages
-	if len(msgs) > maxChatHistory {
-		msgs = msgs[len(msgs)-maxChatHistory:]
-	}
-	for i := range msgs {
-		msgs[i].Role = strings.TrimSpace(msgs[i].Role)
-		msgs[i].Content = strings.TrimSpace(msgs[i].Content)
-		if msgs[i].Role == "" || msgs[i].Content == "" {
-			return nil, fmt.Errorf("each message needs role and content")
-		}
-		if msgs[i].Role != "user" && msgs[i].Role != "assistant" {
-			return nil, fmt.Errorf("role must be user or assistant")
-		}
-	}
-
-	promptCtx := ctx
-	if strings.TrimSpace(promptCtx.TripID) == "" {
-		promptCtx.TripID = strings.TrimSpace(req.TripID)
-	}
-	out := make([]ChatMessage, 0, len(msgs)+1)
-	out = append(out, ChatMessage{Role: "system", Content: SystemPrompt(promptCtx)})
-	out = append(out, msgs...)
 
 	body, err := json.Marshal(openAIReq{
 		Model:     "default",
