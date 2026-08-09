@@ -15,6 +15,7 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/config"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/models"
+	"github.com/rjullien/tripkit-backend/internal/publish"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -23,12 +24,18 @@ var _LOGGER = log.Default()
 
 // Handler holds a reference to the database.
 type Handler struct {
-	db *gorm.DB
+	db         *gorm.DB
+	publishReg *publish.Registry
 }
 
 // New creates a new Handler with the given DB.
 func New(db *gorm.DB) *Handler {
 	return &Handler{db: db}
+}
+
+// SetPublishRegistry attaches the trusted publish source registry.
+func (h *Handler) SetPublishRegistry(reg *publish.Registry) {
+	h.publishReg = reg
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

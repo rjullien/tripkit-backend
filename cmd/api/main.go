@@ -15,6 +15,7 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/database"
 	"github.com/rjullien/tripkit-backend/internal/handlers"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
+	"github.com/rjullien/tripkit-backend/internal/publish"
 )
 
 func main() {
@@ -31,6 +32,18 @@ func main() {
 	}
 
 	h := handlers.New(db)
+
+	reg, err := publish.LoadRegistry()
+	if err != nil {
+		log.Fatalf("Failed to load publish registry: %v", err)
+	}
+	h.SetPublishRegistry(reg)
+
+	// Progressive V1: in-process worker (off unless TRIPKIT_PUBLISH_WORKER=1)
+	if os.Getenv("TRIPKIT_PUBLISH_WORKER") == "1" {
+		w := &publish.Worker{DB: db, Reg: reg}
+		w.Start()
+	}
 
 	r := chi.NewRouter()
 
@@ -92,6 +105,11 @@ func main() {
 		r.Get("/groups", h.ListGroups)
 		r.Put("/groups/{groupId}", h.UpsertGroup)
 		r.Delete("/groups/{groupId}", h.DeleteGroup)
+
+		// Publish (family seed → prod). Not under /trips/{id} (ACL chicken/egg).
+		r.Get("/publish/sources", h.ListPublishSources)
+		r.Post("/publish/jobs", h.CreatePublishJob)
+		r.Get("/publish/jobs/{jobId}", h.GetPublishJob)
 
 		// Trips
 		r.Get("/trips", h.ListTrips)
