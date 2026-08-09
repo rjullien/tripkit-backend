@@ -184,15 +184,28 @@ func (c Config) Chat(username string, req ChatRequest) (*ChatResponse, error) {
 	defer res.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(res.Body, 4<<20))
 
+	// Prefer structured OpenAI errors; also accept {"error":"string"} / plain text.
+	if hermesMsg := extractHermesError(raw); hermesMsg != "" && (res.StatusCode < 200 || res.StatusCode >= 300) {
+		return nil, fmt.Errorf("hermes HTTP %d: %s", res.StatusCode, hermesMsg)
+	}
+
 	var parsed openAIResp
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return nil, fmt.Errorf("hermes invalid JSON (HTTP %d): %s", res.StatusCode, truncate(string(raw), 200))
+		body := truncate(string(raw), 200)
+		if body == "" {
+			body = "(empty body)"
+		}
+		return nil, fmt.Errorf("hermes invalid JSON (HTTP %d): %s", res.StatusCode, body)
 	}
 	if parsed.Error != nil && parsed.Error.Message != "" {
 		return nil, fmt.Errorf("hermes: %s", parsed.Error.Message)
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return nil, fmt.Errorf("hermes HTTP %d: %s", res.StatusCode, truncate(string(raw), 200))
+		body := truncate(string(raw), 200)
+		if body == "" {
+			body = "(empty body)"
+		}
+		return nil, fmt.Errorf("hermes HTTP %d: %s", res.StatusCode, body)
 	}
 	if len(parsed.Choices) == 0 {
 		return nil, fmt.Errorf("hermes returned no choices")
@@ -211,4 +224,44 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// extractHermesError pulls a useful message from Hermes error payloads.
+func extractHermesError(raw []byte) string {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return ""
+	}
+	var asObj struct {
+		Error   json.RawMessage `json:"error"`
+		Message string          `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &asObj); err != nil {
+		return truncate(string(raw), 200)
+	}
+	if len(asObj.Error) > 0 {
+		// "error": "…"
+		var s string
+		if json.Unmarshal(asObj.Error, &s) == nil && strings.TrimSpace(s) != "" {
+			return truncate(s, 200)
+		}
+		// "error": {"message":"…"}
+		var obj struct {
+			Message string `json:"message"`
+			Code    string `json:"code"`
+		}
+		if json.Unmarshal(asObj.Error, &obj) == nil {
+			if strings.TrimSpace(obj.Message) != "" {
+				return truncate(obj.Message, 200)
+			}
+			if strings.TrimSpace(obj.Code) != "" {
+				return truncate(obj.Code, 200)
+			}
+		}
+		return truncate(string(asObj.Error), 200)
+	}
+	if strings.TrimSpace(asObj.Message) != "" {
+		return truncate(asObj.Message, 200)
+	}
+	return ""
 }
