@@ -48,9 +48,43 @@ func TestExtractHermesError(t *testing.T) {
 	}
 }
 
+func TestSystemPrompt_ScopedUser(t *testing.T) {
+	p := SystemPrompt(PromptContext{
+		Username:     "nadia",
+		AllowedRepos: []string{"rjullien/tripkit-seeds-nadia"},
+		TripID:       "sicile-2026",
+	})
+	for _, needle := range []string{
+		"utilisateur Authelia : nadia",
+		"UNIQUEMENT le repo : rjullien/tripkit-seeds-nadia",
+		"REJETÉE poliment",
+		"Voyage actif",
+		"sicile-2026",
+		"PÉRIMÈTRE STRICT",
+	} {
+		if !strings.Contains(p, needle) {
+			t.Fatalf("prompt missing %q\n%s", needle, p)
+		}
+	}
+	if strings.Contains(p, "rjullien/tripkit-seeds-laurine") {
+		t.Fatal("scoped prompt must not mention laurine repo")
+	}
+	// Exact jullien repo line (not the -nadia suffix).
+	if strings.Contains(p, "UNIQUEMENT le repo : rjullien/tripkit-seeds\n") {
+		t.Fatal("scoped prompt must not authorize jullien repo for Nadia")
+	}
+}
+
+func TestSystemPrompt_NoRepos(t *testing.T) {
+	p := SystemPrompt(PromptContext{Username: "guest"})
+	if !strings.Contains(p, "AUCUN") {
+		t.Fatalf("expected AUCUN repos:\n%s", p)
+	}
+}
+
 func TestChat_RequiresMessages(t *testing.T) {
 	cfg := Config{BaseURL: "http://example", APIKey: "k"}
-	_, err := cfg.Chat("rene", ChatRequest{})
+	_, err := cfg.Chat(PromptContext{Username: "rene"}, ChatRequest{})
 	if err == nil || !strings.Contains(err.Error(), "messages required") {
 		t.Fatalf("err=%v", err)
 	}
@@ -71,8 +105,12 @@ func TestChat_Success(t *testing.T) {
 		if len(body.Messages) < 2 || body.Messages[0].Role != "system" {
 			t.Fatalf("messages=%+v", body.Messages)
 		}
-		if !strings.Contains(body.Messages[0].Content, "Username Authelia: rene") {
-			t.Fatalf("system prompt missing user: %s", body.Messages[0].Content)
+		sys := body.Messages[0].Content
+		if !strings.Contains(sys, "utilisateur Authelia : rene") {
+			t.Fatalf("system prompt missing user: %s", sys)
+		}
+		if !strings.Contains(sys, "rjullien/tripkit-seeds") {
+			t.Fatalf("system prompt missing allowed repo: %s", sys)
 		}
 		_ = json.NewEncoder(w).Encode(openAIResp{
 			Model: "test-model",
@@ -88,7 +126,11 @@ func TestChat_Success(t *testing.T) {
 		APIKey:     "secret",
 		HTTPClient: srv.Client(),
 	}
-	resp, err := cfg.Chat("rene", ChatRequest{
+	resp, err := cfg.Chat(PromptContext{
+		Username:     "rene",
+		AllowedRepos: []string{"rjullien/tripkit-seeds"},
+		IsAdmin:      true,
+	}, ChatRequest{
 		TripID:   "quebec-2026",
 		Messages: []ChatMessage{{Role: "user", Content: "Ajoute un jour à Québec"}},
 	})
