@@ -73,11 +73,11 @@ func (c Config) StreamChat(ctx context.Context, pctx PromptContext, req ChatRequ
 		return err
 	}
 
+	// No max_tokens on stream — seed edits need room; sync Chat still caps replies.
 	body, err := json.Marshal(openAIStreamReq{
-		Model:     "default",
-		Messages:  msgs,
-		MaxTokens: maxReplyTokens,
-		Stream:    true,
+		Model:    "default",
+		Messages: msgs,
+		Stream:   true,
 	})
 	if err != nil {
 		return err
