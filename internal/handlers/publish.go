@@ -92,6 +92,8 @@ func (h *Handler) CreatePublishJob(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "already_running", "code": "already_running"})
 		case publish.ErrConfirmCreate:
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "confirmCreate required for new trips", "code": "confirm_create_required"})
+		case publish.ErrNoGitHubToken:
+			writeError(w, http.StatusServiceUnavailable, "Publish unavailable: TRIPKIT_GITHUB_TOKEN not configured")
 		default:
 			writeError(w, http.StatusBadRequest, err.Error())
 		}

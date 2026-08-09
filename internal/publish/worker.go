@@ -3,6 +3,7 @@ package publish
 import (
 	"encoding/json"
 	"log"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -10,6 +11,25 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/models"
 	"gorm.io/gorm"
 )
+
+// WorkerEnabled reports whether the in-process publish worker should start.
+// Default: on when TRIPKIT_GITHUB_TOKEN is set.
+// Override with TRIPKIT_PUBLISH_WORKER=1/0 (also true/false/on/off/yes/no).
+func WorkerEnabled() bool {
+	token := strings.TrimSpace(os.Getenv("TRIPKIT_GITHUB_TOKEN"))
+	raw := strings.TrimSpace(os.Getenv("TRIPKIT_PUBLISH_WORKER"))
+	if raw == "" {
+		return token != ""
+	}
+	switch strings.ToLower(raw) {
+	case "1", "true", "on", "yes":
+		return true
+	case "0", "false", "off", "no":
+		return false
+	default:
+		return token != ""
+	}
+}
 
 // Worker processes queued publish jobs in-process (progressive V1).
 type Worker struct {

@@ -3,6 +3,7 @@ package publish
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -69,6 +70,9 @@ func CreateJob(db *gorm.DB, reg *Registry, req CreateJobRequest, username string
 	req.TripID = strings.TrimSpace(req.TripID)
 	if req.SourceID == "" || req.TripID == "" {
 		return nil, fmt.Errorf("sourceId and tripId required")
+	}
+	if strings.TrimSpace(os.Getenv("TRIPKIT_GITHUB_TOKEN")) == "" {
+		return nil, ErrNoGitHubToken
 	}
 	if !reg.CanPublish(req.SourceID, username, isAdmin) {
 		return nil, ErrForbidden
@@ -172,4 +176,5 @@ var (
 	ErrAlreadyRunning = fmt.Errorf("already_running")
 	ErrConfirmCreate  = fmt.Errorf("confirm_create_required")
 	ErrSourceChanged  = fmt.Errorf("source_changed")
+	ErrNoGitHubToken  = fmt.Errorf("TRIPKIT_GITHUB_TOKEN not configured")
 )

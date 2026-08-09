@@ -39,8 +39,8 @@ func main() {
 	}
 	h.SetPublishRegistry(reg)
 
-	// Progressive V1: in-process worker (off unless TRIPKIT_PUBLISH_WORKER=1)
-	if os.Getenv("TRIPKIT_PUBLISH_WORKER") == "1" {
+	// In-process worker: auto-on when TRIPKIT_GITHUB_TOKEN is set; override via TRIPKIT_PUBLISH_WORKER.
+	if publish.WorkerEnabled() {
 		w := &publish.Worker{DB: db, Reg: reg}
 		w.Start()
 	}
