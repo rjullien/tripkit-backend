@@ -150,8 +150,10 @@ func containsFold(values []string, target string) bool {
 }
 
 // DefaultDogfoodRegistry returns the progressive dogfood config.
-// jullien is enabled; trip list comes from each repo's publish-manifest.json.
-// nadia/laurine stay off until their turn.
+// Trip allowlist source of truth = repo publish-manifest.json (when GitHub token works).
+// Seeds below are a catalogue FALLBACK only (no token / GitHub down) so the FE
+// still shows Créer / Mettre à jour — keep in sync with tripkit-seeds/publish-manifest.json.
+// nadia/laurine stay off until their turn (their Seeds empty → they need token+manifest).
 func DefaultDogfoodRegistry() *Registry {
 	return NewRegistry([]Source{
 		{
@@ -162,6 +164,19 @@ func DefaultDogfoodRegistry() *Registry {
 			PublisherLogins: []string{"rene", "nicole"},
 			OwnerLogins:     []string{"rene", "nicole"},
 			Enabled:         true,
+			Seeds: []SeedRef{
+				{
+					TripID: "quebec-2026",
+					Path:   "quebec-2026.js",
+					Title:  "Québec 2026",
+					Assets: []string{"quebec-map.html", "quebec-meteo.html"},
+				},
+				{
+					TripID: "publish-demo-2026",
+					Path:   "publish-demo-2026.js",
+					Title:  "Démo Publish (test FE)",
+				},
+			},
 		},
 		{
 			ID:              "nadia",

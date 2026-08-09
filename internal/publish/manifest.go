@@ -3,7 +3,6 @@ package publish
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path"
 	"regexp"
 	"strings"
@@ -166,10 +165,9 @@ func (r *ManifestResolver) SeedsForSource(src Source) ([]SeedRef, error) {
 	r.mu.Unlock()
 
 	if err != nil && len(fallbackSeeds(src)) > 0 {
-		// Dev / missing token: registry Seeds still usable for local tests.
-		if strings.Contains(err.Error(), "TRIPKIT_GITHUB_TOKEN") || os.Getenv("TRIPKIT_PUBLISH_ALLOW_REGISTRY_SEEDS") == "1" {
-			return fallbackSeeds(src), nil
-		}
+		// Catalogue must stay usable without Infisical token / when GitHub blips.
+		// Worker still re-reads publish-manifest.json from the zip at apply time.
+		return fallbackSeeds(src), nil
 	}
 	return seeds, err
 }
