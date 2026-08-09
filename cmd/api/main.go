@@ -114,8 +114,9 @@ func main() {
 
 		// Léo / Hermes chat proxy (secrets stay on the server).
 		r.Get("/leo/status", h.LeoStatus)
+		// Deprecated for Plus UI — keep for curl/debug (same SystemPrompt as stream).
 		r.Post("/leo/chat", h.LeoChat)
-		r.Post("/leo/chat/stream", h.LeoChatStream)
+		r.Post("/leo/chat/stream", h.LeoChatStream) // Plus UI
 
 		// Trips
 		r.Get("/trips", h.ListTrips)

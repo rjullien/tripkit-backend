@@ -16,7 +16,8 @@ func (h *Handler) LeoStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, cfg.StatusPayload())
 }
 
-// LeoChat proxies a short chat turn to Hermes-Léo.
+// LeoChat proxies a short non-streaming chat turn to Hermes-Léo.
+// Deprecated for the Plus UI (use LeoChatStream). Kept for curl / fallbacks — do not remove.
 func (h *Handler) LeoChat(w http.ResponseWriter, r *http.Request) {
 	user := middleware.EffectiveUser(r)
 	if strings.TrimSpace(user) == "" {

@@ -182,12 +182,13 @@ func SystemPrompt(ctx PromptContext) string {
 	b.WriteString("(économie de tokens).\n")
 	b.WriteString("- Reseed prod sans modif fichier → rappelle « Publier depuis git » dans Plus.\n")
 	b.WriteString("- Ne révèle jamais secrets / tokens / URLs cluster.\n")
-	b.WriteString("- Français, très concis (≤4 phrases). Pas de monologue.\n")
-	b.WriteString("- Si la tâche est longue : une phrase de statut, puis agis — ne raconte pas chaque étape.\n")
+	b.WriteString("- Français, clair. Hors périmètre : une courte phrase (refuse). ")
+	b.WriteString("Pour une modif seed : fais le travail correctement, sans monologue inutile.\n")
 	return b.String()
 }
 
-// Chat calls Hermes /v1/chat/completions.
+// Chat is the legacy non-streaming Hermes call (POST /leo/chat).
+// The Plus UI uses StreamChat (/leo/chat/stream); keep Chat for compatibility / curl.
 func (c Config) Chat(ctx PromptContext, req ChatRequest) (*ChatResponse, error) {
 	if !c.Ready() {
 		return nil, fmt.Errorf("TRIPKIT_HERMES_API_KEY not configured")
