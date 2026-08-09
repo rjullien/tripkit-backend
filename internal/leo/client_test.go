@@ -55,12 +55,13 @@ func TestSystemPrompt_ScopedUser(t *testing.T) {
 		TripID:       "sicile-2026",
 	})
 	for _, needle := range []string{
-		"utilisateur Authelia : nadia",
-		"UNIQUEMENT le repo : rjullien/tripkit-seeds-nadia",
-		"REJETÉE poliment",
+		"Utilisateur Authelia : nadia",
+		"Repo seed autorisé UNIQUEMENT : rjullien/tripkit-seeds-nadia",
+		"Je suis Léo, ton agent de planification de voyage",
+		"je ne peux pas répondre à d'autres questions",
 		"Voyage actif",
 		"sicile-2026",
-		"PÉRIMÈTRE STRICT",
+		"économie de tokens",
 	} {
 		if !strings.Contains(p, needle) {
 			t.Fatalf("prompt missing %q\n%s", needle, p)
@@ -69,8 +70,7 @@ func TestSystemPrompt_ScopedUser(t *testing.T) {
 	if strings.Contains(p, "rjullien/tripkit-seeds-laurine") {
 		t.Fatal("scoped prompt must not mention laurine repo")
 	}
-	// Exact jullien repo line (not the -nadia suffix).
-	if strings.Contains(p, "UNIQUEMENT le repo : rjullien/tripkit-seeds\n") {
+	if strings.Contains(p, "Repo seed autorisé UNIQUEMENT : rjullien/tripkit-seeds\n") {
 		t.Fatal("scoped prompt must not authorize jullien repo for Nadia")
 	}
 }
@@ -106,7 +106,7 @@ func TestChat_Success(t *testing.T) {
 			t.Fatalf("messages=%+v", body.Messages)
 		}
 		sys := body.Messages[0].Content
-		if !strings.Contains(sys, "utilisateur Authelia : rene") {
+		if !strings.Contains(sys, "Utilisateur Authelia : rene") {
 			t.Fatalf("system prompt missing user: %s", sys)
 		}
 		if !strings.Contains(sys, "rjullien/tripkit-seeds") {
