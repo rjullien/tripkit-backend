@@ -22,13 +22,20 @@ type GitHubClient struct {
 
 // NewGitHubClientFromEnv uses TRIPKIT_GITHUB_TOKEN (optional).
 func NewGitHubClientFromEnv() *GitHubClient {
-	tok := strings.TrimSpace(os.Getenv("TRIPKIT_GITHUB_TOKEN"))
 	return &GitHubClient{
-		Token: tok,
+		Token: sanitizeGitHubToken(os.Getenv("TRIPKIT_GITHUB_TOKEN")),
 		Client: &http.Client{
 			Timeout: 60 * time.Second,
 		},
 	}
+}
+
+// sanitizeGitHubToken trims whitespace/newlines and accidental surrounding quotes
+// (common when pasting a PAT into Infisical).
+func sanitizeGitHubToken(tok string) string {
+	tok = strings.TrimSpace(tok)
+	tok = strings.Trim(tok, "\"'")
+	return strings.TrimSpace(tok)
 }
 
 // FetchFile downloads a single file from owner/repo@ref via the Contents API.
@@ -60,7 +67,7 @@ func (g *GitHubClient) FetchFile(repo, ref, filePath string) ([]byte, error) {
 	defer res.Body.Close()
 	if res.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
-		return nil, fmt.Errorf("github contents %s/%s: %s (%s)", repo, filePath, res.Status, strings.TrimSpace(string(body)))
+		return nil, formatGitHubHTTPError("contents", repo+"/"+filePath, res.StatusCode, body)
 	}
 	limited := io.LimitReader(res.Body, 1<<20+1)
 	data, err := io.ReadAll(limited)
@@ -98,7 +105,7 @@ func (g *GitHubClient) FetchRepoZip(repo, ref string) (zipBytes []byte, resolved
 	defer res.Body.Close()
 	if res.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
-		return nil, "", fmt.Errorf("github zipball %s: %s (%s)", repo, res.Status, strings.TrimSpace(string(body)))
+		return nil, "", formatGitHubHTTPError("zipball", repo, res.StatusCode, body)
 	}
 	// GitHub redirects; final URL often contains the commit SHA.
 	resolvedSHA = extractSHAFromURL(res.Request.URL.String())
@@ -111,6 +118,34 @@ func (g *GitHubClient) FetchRepoZip(repo, ref string) (zipBytes []byte, resolved
 		return nil, "", fmt.Errorf("archive exceeds %d bytes", maxArchiveBytes)
 	}
 	return data, resolvedSHA, nil
+}
+
+func formatGitHubHTTPError(op, repo string, status int, body []byte) error {
+	snippet := strings.TrimSpace(string(body))
+	if len(snippet) > 280 {
+		snippet = snippet[:280] + "…"
+	}
+	switch status {
+	case http.StatusUnauthorized:
+		return fmt.Errorf(
+			"github %s %s: 401 Unauthorized — TRIPKIT_GITHUB_TOKEN invalide/expiré "+
+				"(Infisical /tripkit → github-token → secret tripkit-secrets, puis restart pod). %s",
+			op, repo, snippet,
+		)
+	case http.StatusForbidden:
+		return fmt.Errorf(
+			"github %s %s: 403 Forbidden — le PAT n'a pas Contents:read sur ce repo "+
+				"(fine-grained: ajouter rjullien/tripkit-seeds*). %s",
+			op, repo, snippet,
+		)
+	case http.StatusNotFound:
+		return fmt.Errorf(
+			"github %s %s: 404 Not Found — repo/ref introuvable ou PAT sans accès. %s",
+			op, repo, snippet,
+		)
+	default:
+		return fmt.Errorf("github %s %s: HTTP %d (%s)", op, repo, status, snippet)
+	}
 }
 
 func extractSHAFromURL(u string) string {
