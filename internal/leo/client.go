@@ -280,17 +280,35 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
+// looksLikeHTML reports nginx/Cloudflare/Traefik error pages.
+func looksLikeHTML(raw []byte) bool {
+	s := strings.TrimSpace(string(raw))
+	if s == "" {
+		return false
+	}
+	lower := strings.ToLower(s)
+	return strings.HasPrefix(lower, "<!doctype") ||
+		strings.HasPrefix(lower, "<html") ||
+		strings.Contains(lower, "<html") && strings.Contains(lower, "</html>")
+}
+
 // extractHermesError pulls a useful message from Hermes error payloads.
 func extractHermesError(raw []byte) string {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 {
 		return ""
 	}
+	if looksLikeHTML(raw) {
+		return "HTML error page from proxy (Hermes down, wrong TRIPKIT_HERMES_BASE_URL, or ingress 502)"
+	}
 	var asObj struct {
 		Error   json.RawMessage `json:"error"`
 		Message string          `json:"message"`
 	}
 	if err := json.Unmarshal(raw, &asObj); err != nil {
+		if looksLikeHTML(raw) {
+			return "HTML error page from proxy (Hermes down or ingress 502)"
+		}
 		return truncate(string(raw), 200)
 	}
 	if len(asObj.Error) > 0 {

@@ -46,6 +46,10 @@ func TestExtractHermesError(t *testing.T) {
 			t.Fatalf("raw=%q got=%q want=%q", tc.raw, got, tc.want)
 		}
 	}
+	html := extractHermesError([]byte("<!DOCTYPE html><html><body>Bad gateway</body></html>"))
+	if !strings.Contains(html, "HTML error page") {
+		t.Fatalf("html got=%q", html)
+	}
 }
 
 func TestSystemPrompt_ScopedUser(t *testing.T) {
