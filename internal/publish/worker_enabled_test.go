@@ -48,3 +48,14 @@ func TestDefaultDogfoodRegistry_JullienEnabled(t *testing.T) {
 		t.Fatal("nadia must stay disabled")
 	}
 }
+
+func TestCreateJob_RequiresGitHubToken(t *testing.T) {
+	t.Setenv("TRIPKIT_GITHUB_TOKEN", "")
+	reg := publish.DefaultDogfoodRegistry()
+	_, err := publish.CreateJob(nil, reg, publish.CreateJobRequest{
+		SourceID: "jullien", TripID: "quebec-2026", ConfirmCreate: true,
+	}, "rene", false)
+	if err != publish.ErrNoGitHubToken {
+		t.Fatalf("want ErrNoGitHubToken, got %v", err)
+	}
+}
