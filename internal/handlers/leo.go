@@ -55,6 +55,8 @@ func (h *Handler) LeoChat(w http.ResponseWriter, r *http.Request) {
 			hint = "Corps invalide: messages[{role,content}] requis."
 		} else if strings.Contains(msg, "unreachable") {
 			hint = "Le backend n’atteint pas hermes-leo (service / réseau)."
+		} else if strings.Contains(msg, "HTML error page") || strings.Contains(msg, "HTTP 502") || strings.Contains(msg, "HTTP 503") {
+			hint = "Hermes/proxy en 502 — vérifie pod hermes-leo, TRIPKIT_HERMES_BASE_URL et hermes-api-key."
 		} else if strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "unauthorized") {
 			hint = "Clé Hermes refusée (API_SERVER_KEY ≠ hermes-api-key)."
 		}
