@@ -1,0 +1,214 @@
+// Package leo proxies TripKit users to the Hermes-Léo OpenAI-compatible API.
+package leo
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+)
+
+const (
+	defaultBaseURL      = "http://hermes-leo.openclaw.svc.cluster.local:8642"
+	defaultDashboardURL = "https://hermes-leo.bapttf.com"
+	defaultTimeout      = 90 * time.Second
+)
+
+// Config is loaded from env (never exposed to the browser).
+type Config struct {
+	BaseURL      string
+	APIKey       string
+	DashboardURL string
+	TelegramURL  string
+	HTTPClient   *http.Client
+}
+
+// LoadConfigFromEnv reads TRIPKIT_HERMES_* / TRIPKIT_LEO_* vars.
+func LoadConfigFromEnv() Config {
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv("TRIPKIT_HERMES_BASE_URL")), "/")
+	if base == "" {
+		base = defaultBaseURL
+	}
+	dash := strings.TrimSpace(os.Getenv("TRIPKIT_LEO_DASHBOARD_URL"))
+	if dash == "" {
+		dash = defaultDashboardURL
+	}
+	return Config{
+		BaseURL:      base,
+		APIKey:       strings.TrimSpace(os.Getenv("TRIPKIT_HERMES_API_KEY")),
+		DashboardURL: dash,
+		TelegramURL:  strings.TrimSpace(os.Getenv("TRIPKIT_LEO_TELEGRAM_URL")),
+		HTTPClient:   &http.Client{Timeout: defaultTimeout},
+	}
+}
+
+// Ready reports whether the proxy can call Hermes.
+func (c Config) Ready() bool {
+	return c.APIKey != "" && c.BaseURL != ""
+}
+
+// Status is returned by GET /leo/status.
+type Status struct {
+	Ready        bool   `json:"ready"`
+	Reason       string `json:"reason,omitempty"`
+	DashboardURL string `json:"dashboardUrl,omitempty"`
+	TelegramURL  string `json:"telegramUrl,omitempty"`
+}
+
+// StatusPayload builds the public status (no secrets).
+func (c Config) StatusPayload() Status {
+	s := Status{
+		DashboardURL: c.DashboardURL,
+		TelegramURL:  c.TelegramURL,
+	}
+	if !c.Ready() {
+		s.Ready = false
+		s.Reason = "missing_hermes_key"
+		return s
+	}
+	s.Ready = true
+	return s
+}
+
+// ChatMessage is one OpenAI-style message.
+type ChatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// ChatRequest is the FE → BE body (restricted).
+type ChatRequest struct {
+	Messages []ChatMessage `json:"messages"`
+	TripID   string        `json:"tripId,omitempty"`
+}
+
+// ChatResponse is what the FE consumes.
+type ChatResponse struct {
+	Reply   string `json:"reply"`
+	Model   string `json:"model,omitempty"`
+	RawRole string `json:"role,omitempty"`
+}
+
+type openAIReq struct {
+	Model    string        `json:"model"`
+	Messages []ChatMessage `json:"messages"`
+}
+
+type openAIResp struct {
+	Model   string `json:"model"`
+	Choices []struct {
+		Message ChatMessage `json:"message"`
+	} `json:"choices"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// SystemPrompt builds the fixed ops prompt injected by the BE (not the FE).
+func SystemPrompt(username, tripID string) string {
+	var b strings.Builder
+	b.WriteString("Tu es Léo, agent Hermes ops TripKit pour la famille.\n")
+	b.WriteString("L'utilisateur te parle depuis l'app TripKit (PWA).\n")
+	b.WriteString("Il te demande des modifications dans les repos seed GitHub ")
+	b.WriteString("(rjullien/tripkit-seeds, tripkit-seeds-nadia, tripkit-seeds-laurine).\n")
+	b.WriteString("Règles:\n")
+	b.WriteString("- Propose ou applique des changements de seed (JS data-only), people.js, checklist-config.js.\n")
+	b.WriteString("- Pour un simple reseed prod, rappelle le bouton « Publier depuis git » dans Plus.\n")
+	b.WriteString("- Ne révèle jamais de secrets, tokens, ni URLs cluster internes.\n")
+	b.WriteString("- Réponds en français, concis, avec des étapes concrètes.\n")
+	b.WriteString("- Username Authelia: ")
+	b.WriteString(username)
+	b.WriteByte('\n')
+	if tripID != "" {
+		b.WriteString("- Voyage actif hint: ")
+		b.WriteString(tripID)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// Chat calls Hermes /v1/chat/completions.
+func (c Config) Chat(username string, req ChatRequest) (*ChatResponse, error) {
+	if !c.Ready() {
+		return nil, fmt.Errorf("TRIPKIT_HERMES_API_KEY not configured")
+	}
+	if len(req.Messages) == 0 {
+		return nil, fmt.Errorf("messages required")
+	}
+	// Cap history to avoid huge payloads
+	msgs := req.Messages
+	if len(msgs) > 40 {
+		msgs = msgs[len(msgs)-40:]
+	}
+	for i := range msgs {
+		msgs[i].Role = strings.TrimSpace(msgs[i].Role)
+		msgs[i].Content = strings.TrimSpace(msgs[i].Content)
+		if msgs[i].Role == "" || msgs[i].Content == "" {
+			return nil, fmt.Errorf("each message needs role and content")
+		}
+		if msgs[i].Role != "user" && msgs[i].Role != "assistant" {
+			return nil, fmt.Errorf("role must be user or assistant")
+		}
+	}
+
+	out := make([]ChatMessage, 0, len(msgs)+1)
+	out = append(out, ChatMessage{Role: "system", Content: SystemPrompt(username, strings.TrimSpace(req.TripID))})
+	out = append(out, msgs...)
+
+	body, err := json.Marshal(openAIReq{Model: "default", Messages: out})
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequest(http.MethodPost, c.BaseURL+"/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("User-Agent", "tripkit-backend-leo-proxy")
+
+	client := c.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: defaultTimeout}
+	}
+	res, err := client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("hermes unreachable: %w", err)
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(res.Body, 4<<20))
+
+	var parsed openAIResp
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("hermes invalid JSON (HTTP %d): %s", res.StatusCode, truncate(string(raw), 200))
+	}
+	if parsed.Error != nil && parsed.Error.Message != "" {
+		return nil, fmt.Errorf("hermes: %s", parsed.Error.Message)
+	}
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, fmt.Errorf("hermes HTTP %d: %s", res.StatusCode, truncate(string(raw), 200))
+	}
+	if len(parsed.Choices) == 0 {
+		return nil, fmt.Errorf("hermes returned no choices")
+	}
+	msg := parsed.Choices[0].Message
+	return &ChatResponse{
+		Reply:   msg.Content,
+		Model:   parsed.Model,
+		RawRole: msg.Role,
+	}, nil
+}
+
+func truncate(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}

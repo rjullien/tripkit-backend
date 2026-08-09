@@ -112,6 +112,10 @@ func main() {
 		r.Post("/publish/jobs", h.CreatePublishJob)
 		r.Get("/publish/jobs/{jobId}", h.GetPublishJob)
 
+		// Léo / Hermes chat proxy (secrets stay on the server).
+		r.Get("/leo/status", h.LeoStatus)
+		r.Post("/leo/chat", h.LeoChat)
+
 		// Trips
 		r.Get("/trips", h.ListTrips)
 		r.Get("/debug/trips", h.DebugListTrips)
