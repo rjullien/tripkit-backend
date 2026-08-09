@@ -15,7 +15,9 @@ import (
 const (
 	defaultBaseURL      = "http://hermes-leo.openclaw.svc.cluster.local:8642"
 	defaultDashboardURL = "https://hermes-leo.bapttf.com"
-	defaultTimeout      = 90 * time.Second
+	// Stay under Cloudflare's ~100s proxy limit so the FE gets a JSON error
+	// instead of a raw connection abort (« Fetch is aborted »).
+	defaultTimeout = 85 * time.Second
 )
 
 // Config is loaded from env (never exposed to the browser).
