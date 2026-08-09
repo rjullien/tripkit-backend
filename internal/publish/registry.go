@@ -146,8 +146,9 @@ func containsFold(values []string, target string) bool {
 	return false
 }
 
-// DefaultDogfoodRegistry returns the progressive dogfood config (all disabled).
-// Used when TRIPKIT_PUBLISH_SOURCES is unset so the API still exposes the shape.
+// DefaultDogfoodRegistry returns the progressive dogfood config.
+// jullien/quebec-2026 is enabled; nadia/laurine stay off until their turn.
+// Used when TRIPKIT_PUBLISH_SOURCES is unset (preferred over ops JSON in vps-infra).
 func DefaultDogfoodRegistry() *Registry {
 	return NewRegistry([]Source{
 		{
@@ -157,7 +158,7 @@ func DefaultDogfoodRegistry() *Registry {
 			ExpectedFamily:  "jullien",
 			PublisherLogins: []string{"rene", "nicole"},
 			OwnerLogins:     []string{"rene", "nicole"},
-			Enabled:         false,
+			Enabled:         true,
 			Seeds: []SeedRef{{
 				TripID: "quebec-2026",
 				Path:   "quebec-2026.js",
