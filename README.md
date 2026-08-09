@@ -46,6 +46,10 @@ API REST en Go pour TripKit — gestion de voyages, jours, hébergements, listes
 | `TRIPKIT_PUBLISH_WORKER` | No | auto when `TRIPKIT_GITHUB_TOKEN` set | `1`/`0` to force worker on/off |
 | `TRIPKIT_GITHUB_TOKEN` | Prod (publish) | — | Fine-grained PAT / App token, Contents:read on seed repos (`github-token` in Infisical → Secret `tripkit-secrets`) |
 | `TRIPKIT_PUBLISH_ALLOW_REGISTRY_SEEDS` | Dev | off | `1` = allow `Source.Seeds` fallback when manifest fetch fails |
+| `TRIPKIT_HERMES_BASE_URL` | No | `http://hermes-leo.openclaw.svc.cluster.local:8642` | Hermes-Léo API (cluster) |
+| `TRIPKIT_HERMES_API_KEY` | For `/leo/chat` | — | Same logical key as Hermes `API_SERVER_KEY` (Infisical) |
+| `TRIPKIT_LEO_DASHBOARD_URL` | No | `https://hermes-leo.bapttf.com` | Public dashboard link for FE fallback |
+| `TRIPKIT_LEO_TELEGRAM_URL` | No | — | Optional `https://t.me/…` deep-link for FE fallback |
 
 ## Quick Start
 ```bash

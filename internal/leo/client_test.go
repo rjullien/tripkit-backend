@@ -1,0 +1,82 @@
+package leo
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestStatusPayload_MissingKey(t *testing.T) {
+	cfg := Config{
+		BaseURL:      defaultBaseURL,
+		DashboardURL: defaultDashboardURL,
+		TelegramURL:  "https://t.me/example",
+	}
+	st := cfg.StatusPayload()
+	if st.Ready {
+		t.Fatal("expected ready=false without API key")
+	}
+	if st.Reason != "missing_hermes_key" {
+		t.Fatalf("reason=%q", st.Reason)
+	}
+	if st.DashboardURL != defaultDashboardURL {
+		t.Fatalf("dashboard=%q", st.DashboardURL)
+	}
+	if st.TelegramURL != "https://t.me/example" {
+		t.Fatalf("telegram=%q", st.TelegramURL)
+	}
+}
+
+func TestChat_RequiresMessages(t *testing.T) {
+	cfg := Config{BaseURL: "http://example", APIKey: "k"}
+	_, err := cfg.Chat("rene", ChatRequest{})
+	if err == nil || !strings.Contains(err.Error(), "messages required") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestChat_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
+			t.Fatalf("auth=%q", got)
+		}
+		var body openAIReq
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body.Messages) < 2 || body.Messages[0].Role != "system" {
+			t.Fatalf("messages=%+v", body.Messages)
+		}
+		if !strings.Contains(body.Messages[0].Content, "Username Authelia: rene") {
+			t.Fatalf("system prompt missing user: %s", body.Messages[0].Content)
+		}
+		_ = json.NewEncoder(w).Encode(openAIResp{
+			Model: "test-model",
+			Choices: []struct {
+				Message ChatMessage `json:"message"`
+			}{{Message: ChatMessage{Role: "assistant", Content: "OK je m'en occupe"}}},
+		})
+	}))
+	defer srv.Close()
+
+	cfg := Config{
+		BaseURL:    srv.URL,
+		APIKey:     "secret",
+		HTTPClient: srv.Client(),
+	}
+	resp, err := cfg.Chat("rene", ChatRequest{
+		TripID:   "quebec-2026",
+		Messages: []ChatMessage{{Role: "user", Content: "Ajoute un jour à Québec"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Reply != "OK je m'en occupe" {
+		t.Fatalf("reply=%q", resp.Reply)
+	}
+}
