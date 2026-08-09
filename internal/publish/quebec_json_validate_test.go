@@ -10,9 +10,18 @@ import (
 )
 
 func TestQuebecCanonicalJSONValid(t *testing.T) {
-	root := filepath.Join("..", "..", "..", "tripkit-seeds")
-	if _, err := os.Stat(filepath.Join(root, "quebec-2026.js")); err != nil {
-		root = "/agent/repos/tripkit-seeds"
+	root := ""
+	for _, cand := range []string{
+		filepath.Join("..", "..", "..", "tripkit-seeds"),
+		"/agent/repos/tripkit-seeds",
+	} {
+		if _, err := os.Stat(filepath.Join(cand, "quebec-2026.js")); err == nil {
+			root = cand
+			break
+		}
+	}
+	if root == "" {
+		t.Skip("repo tripkit-seeds not found")
 	}
 	seedB, err := os.ReadFile(filepath.Join(root, "quebec-2026.js"))
 	if err != nil {
