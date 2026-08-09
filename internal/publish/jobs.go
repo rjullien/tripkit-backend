@@ -121,8 +121,10 @@ func CreateJob(db *gorm.DB, reg *Registry, resolver *ManifestResolver, req Creat
 		RequestedBy:   strings.ToLower(username),
 		ExpectedSHA:   req.ExpectedSHA,
 		ConfirmCreate: req.ConfirmCreate,
-		ErrorsJSON:    "[]",
-		WarningsJSON:  "[]",
+		// Postgres json columns reject '' — always write valid JSON tokens.
+		ErrorsJSON:   "[]",
+		WarningsJSON: "[]",
+		SummaryJSON:  "null",
 	}
 	if err := db.Create(job).Error; err != nil {
 		return nil, err
