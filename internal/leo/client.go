@@ -15,9 +15,11 @@ import (
 const (
 	defaultBaseURL      = "http://hermes-leo.openclaw.svc.cluster.local:8642"
 	defaultDashboardURL = "https://hermes-leo.bapttf.com"
-	// Stay under Cloudflare's ~100s proxy limit so the FE gets a JSON error
-	// instead of a raw connection abort (« Fetch is aborted »).
-	defaultTimeout = 85 * time.Second
+	// Plus chat is for short asks. Fail well under Cloudflare (~100s) with JSON.
+	// Long seed work belongs on the Hermes dashboard / Telegram.
+	defaultTimeout = 40 * time.Second
+	maxChatHistory  = 12
+	maxReplyTokens  = 800
 )
 
 // Config is loaded from env (never exposed to the browser).
@@ -96,8 +98,9 @@ type ChatResponse struct {
 }
 
 type openAIReq struct {
-	Model    string        `json:"model"`
-	Messages []ChatMessage `json:"messages"`
+	Model     string        `json:"model"`
+	Messages  []ChatMessage `json:"messages"`
+	MaxTokens int           `json:"max_tokens,omitempty"`
 }
 
 type openAIResp struct {
@@ -179,7 +182,8 @@ func SystemPrompt(ctx PromptContext) string {
 	b.WriteString("(économie de tokens).\n")
 	b.WriteString("- Reseed prod sans modif fichier → rappelle « Publier depuis git » dans Plus.\n")
 	b.WriteString("- Ne révèle jamais secrets / tokens / URLs cluster.\n")
-	b.WriteString("- Français, très concis.\n")
+	b.WriteString("- Français, très concis (≤4 phrases). Pas de monologue.\n")
+	b.WriteString("- Si la tâche est longue : une phrase de statut, puis agis — ne raconte pas chaque étape.\n")
 	return b.String()
 }
 
@@ -191,10 +195,10 @@ func (c Config) Chat(ctx PromptContext, req ChatRequest) (*ChatResponse, error) 
 	if len(req.Messages) == 0 {
 		return nil, fmt.Errorf("messages required")
 	}
-	// Cap history to avoid huge payloads
+	// Cap history — Plus chat is short-turn, not a long agent session.
 	msgs := req.Messages
-	if len(msgs) > 40 {
-		msgs = msgs[len(msgs)-40:]
+	if len(msgs) > maxChatHistory {
+		msgs = msgs[len(msgs)-maxChatHistory:]
 	}
 	for i := range msgs {
 		msgs[i].Role = strings.TrimSpace(msgs[i].Role)
@@ -215,7 +219,11 @@ func (c Config) Chat(ctx PromptContext, req ChatRequest) (*ChatResponse, error) 
 	out = append(out, ChatMessage{Role: "system", Content: SystemPrompt(promptCtx)})
 	out = append(out, msgs...)
 
-	body, err := json.Marshal(openAIReq{Model: "default", Messages: out})
+	body, err := json.Marshal(openAIReq{
+		Model:     "default",
+		Messages:  out,
+		MaxTokens: maxReplyTokens,
+	})
 	if err != nil {
 		return nil, err
 	}

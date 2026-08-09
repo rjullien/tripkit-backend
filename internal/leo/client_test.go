@@ -106,6 +106,9 @@ func TestChat_Success(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
+		if body.MaxTokens != maxReplyTokens {
+			t.Fatalf("max_tokens=%d want %d", body.MaxTokens, maxReplyTokens)
+		}
 		if len(body.Messages) < 2 || body.Messages[0].Role != "system" {
 			t.Fatalf("messages=%+v", body.Messages)
 		}
