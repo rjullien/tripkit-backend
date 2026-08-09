@@ -42,6 +42,9 @@ API REST en Go pour TripKit — gestion de voyages, jours, hébergements, listes
 | `TRIPKIT_CORS_ORIGINS` | No | `*` | Origines CORS autorisées, séparées par `,` |
 | `TRIPKIT_NO_CACHE` | No | — | Non vide = désactive le cache météo |
 | `APP_VERSION` | No | `dev` | Version renvoyée par `/health` |
+| `TRIPKIT_PUBLISH_SOURCES` | No | dogfood defaults (all `enabled:false`) | JSON array of trusted publish sources (see design doc) |
+| `TRIPKIT_PUBLISH_WORKER` | No | off | `1` = start in-process publish worker |
+| `TRIPKIT_GITHUB_TOKEN` | For worker | — | Fine-grained PAT / App token, Contents:read on seed repos |
 
 ## Quick Start
 ```bash

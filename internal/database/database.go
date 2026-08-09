@@ -71,6 +71,7 @@ func autoMigrate(db *gorm.DB) (*gorm.DB, error) {
 		&models.GroupMember{},
 		&models.TripAccess{},
 		&models.Asset{},
+		&models.PublishJob{},
 	); err != nil {
 		return nil, err
 	}
