@@ -24,8 +24,9 @@ var _LOGGER = log.Default()
 
 // Handler holds a reference to the database.
 type Handler struct {
-	db         *gorm.DB
-	publishReg *publish.Registry
+	db              *gorm.DB
+	publishReg      *publish.Registry
+	publishManifest *publish.ManifestResolver
 }
 
 // New creates a new Handler with the given DB.
@@ -36,6 +37,11 @@ func New(db *gorm.DB) *Handler {
 // SetPublishRegistry attaches the trusted publish source registry.
 func (h *Handler) SetPublishRegistry(reg *publish.Registry) {
 	h.publishReg = reg
+}
+
+// SetPublishManifestResolver attaches the family allowlist loader (publish-manifest.json).
+func (h *Handler) SetPublishManifestResolver(r *publish.ManifestResolver) {
+	h.publishManifest = r
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

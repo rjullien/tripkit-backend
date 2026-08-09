@@ -52,7 +52,7 @@ func TestDefaultDogfoodRegistry_JullienEnabled(t *testing.T) {
 func TestCreateJob_RequiresGitHubToken(t *testing.T) {
 	t.Setenv("TRIPKIT_GITHUB_TOKEN", "")
 	reg := publish.DefaultDogfoodRegistry()
-	_, err := publish.CreateJob(nil, reg, publish.CreateJobRequest{
+	_, err := publish.CreateJob(nil, reg, nil, publish.CreateJobRequest{
 		SourceID: "jullien", TripID: "quebec-2026", ConfirmCreate: true,
 	}, "rene", false)
 	if err != publish.ErrNoGitHubToken {

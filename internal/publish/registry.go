@@ -9,23 +9,26 @@ import (
 	"sync"
 )
 
-// Source is one trusted family seed repository mapping (ops-only config).
+// Source is one trusted family seed repository mapping (ops/trust config).
+// Trip allowlist lives in the seed repo as publish-manifest.json — not here.
+// Seeds is an optional fallback for tests / emergency (TRIPKIT_PUBLISH_ALLOW_REGISTRY_SEEDS=1).
 type Source struct {
-	ID               string   `json:"id"`
-	Repo             string   `json:"repo"` // owner/name
-	Ref              string   `json:"ref"`
-	ExpectedFamily   string   `json:"expectedFamily"`
-	PublisherLogins  []string `json:"publisherLogins"`
-	OwnerLogins      []string `json:"ownerLogins"`
-	Enabled          bool     `json:"enabled"`
-	Seeds            []SeedRef `json:"seeds"` // explicit allowlist
+	ID              string    `json:"id"`
+	Repo            string    `json:"repo"` // owner/name
+	Ref             string    `json:"ref"`
+	ExpectedFamily  string    `json:"expectedFamily"`
+	PublisherLogins []string  `json:"publisherLogins"`
+	OwnerLogins     []string  `json:"ownerLogins"`
+	Enabled         bool      `json:"enabled"`
+	Seeds           []SeedRef `json:"seeds,omitempty"`
 }
 
-// SeedRef maps a trip id to its seed file path in the repo.
+// SeedRef maps a trip id to its seed file path in the repo (from publish-manifest.json).
 type SeedRef struct {
-	TripID   string   `json:"tripId"`
-	Path     string   `json:"path"`
-	Assets   []string `json:"assets"`
+	TripID string   `json:"tripId"`
+	Path   string   `json:"path"`
+	Title  string   `json:"title,omitempty"`
+	Assets []string `json:"assets,omitempty"`
 }
 
 // Registry is the in-memory trusted publish source list.
@@ -147,8 +150,8 @@ func containsFold(values []string, target string) bool {
 }
 
 // DefaultDogfoodRegistry returns the progressive dogfood config.
-// jullien/quebec-2026 is enabled; nadia/laurine stay off until their turn.
-// Used when TRIPKIT_PUBLISH_SOURCES is unset (preferred over ops JSON in vps-infra).
+// jullien is enabled; trip list comes from each repo's publish-manifest.json.
+// nadia/laurine stay off until their turn.
 func DefaultDogfoodRegistry() *Registry {
 	return NewRegistry([]Source{
 		{
@@ -159,11 +162,6 @@ func DefaultDogfoodRegistry() *Registry {
 			PublisherLogins: []string{"rene", "nicole"},
 			OwnerLogins:     []string{"rene", "nicole"},
 			Enabled:         true,
-			Seeds: []SeedRef{{
-				TripID: "quebec-2026",
-				Path:   "quebec-2026.js",
-				Assets: []string{"quebec-map.html", "quebec-meteo.html"},
-			}},
 		},
 		{
 			ID:              "nadia",
@@ -173,10 +171,6 @@ func DefaultDogfoodRegistry() *Registry {
 			PublisherLogins: []string{"nadia"},
 			OwnerLogins:     []string{"nadia"},
 			Enabled:         false,
-			Seeds: []SeedRef{{
-				TripID: "balears-2026",
-				Path:   "balears-2026.js",
-			}},
 		},
 		{
 			ID:              "laurine",
@@ -186,7 +180,6 @@ func DefaultDogfoodRegistry() *Registry {
 			PublisherLogins: []string{"laurine"},
 			OwnerLogins:     []string{"laurine"},
 			Enabled:         false,
-			Seeds:           nil,
 		},
 	})
 }
