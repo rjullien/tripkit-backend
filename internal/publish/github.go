@@ -31,6 +31,48 @@ func NewGitHubClientFromEnv() *GitHubClient {
 	}
 }
 
+// FetchFile downloads a single file from owner/repo@ref via the Contents API.
+func (g *GitHubClient) FetchFile(repo, ref, filePath string) ([]byte, error) {
+	if g == nil || g.Token == "" {
+		return nil, fmt.Errorf("TRIPKIT_GITHUB_TOKEN not configured")
+	}
+	if ref == "" {
+		ref = "main"
+	}
+	filePath = strings.TrimPrefix(filePath, "./")
+	if filePath == "" || strings.Contains(filePath, "..") {
+		return nil, fmt.Errorf("invalid path %q", filePath)
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/contents/%s?ref=%s", repo, filePath, ref)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+g.Token)
+	req.Header.Set("Accept", "application/vnd.github.raw")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "tripkit-publish-worker")
+
+	res, err := g.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
+		return nil, fmt.Errorf("github contents %s/%s: %s (%s)", repo, filePath, res.Status, strings.TrimSpace(string(body)))
+	}
+	limited := io.LimitReader(res.Body, 1<<20+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > 1<<20 {
+		return nil, fmt.Errorf("file exceeds 1 MiB: %s", filePath)
+	}
+	return data, nil
+}
+
 // FetchRepoZip downloads owner/repo@ref as a zip archive.
 func (g *GitHubClient) FetchRepoZip(repo, ref string) (zipBytes []byte, resolvedSHA string, err error) {
 	if g == nil || g.Token == "" {

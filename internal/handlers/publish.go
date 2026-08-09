@@ -27,6 +27,7 @@ type SourceCatalogItem struct {
 }
 
 // ListPublishSources returns trusted seeds the caller may see.
+// Trip allowlist comes from each repo's publish-manifest.json (family-owned).
 func (h *Handler) ListPublishSources(w http.ResponseWriter, r *http.Request) {
 	if h.publishReg == nil {
 		writeJSON(w, http.StatusOK, []SourceCatalogItem{})
@@ -35,9 +36,18 @@ func (h *Handler) ListPublishSources(w http.ResponseWriter, r *http.Request) {
 	user := middleware.EffectiveUser(r)
 	admin := isRequestAdmin(r)
 	sources := h.publishReg.ListForUser(user, admin)
+	resolver := h.publishManifest
+	if resolver == nil {
+		resolver = publish.NewManifestResolverFromEnv()
+	}
 	out := make([]SourceCatalogItem, 0)
 	for _, src := range sources {
-		for _, seed := range src.Seeds {
+		seeds, err := resolver.SeedsForSource(src)
+		if err != nil {
+			// Source visible but catalogue empty until token/manifest OK — do not 500 the Plus tab.
+			continue
+		}
+		for _, seed := range seeds {
 			inProd := false
 			var trip models.Trip
 			if h.db.First(&trip, "id = ?", seed.TripID).Error == nil {
@@ -47,7 +57,7 @@ func (h *Handler) ListPublishSources(w http.ResponseWriter, r *http.Request) {
 			if inProd {
 				op = "update"
 			}
-			title := ""
+			title := seed.Title
 			if trip.Name != "" {
 				title = trip.Name
 			}
@@ -83,7 +93,7 @@ func (h *Handler) CreatePublishJob(w http.ResponseWriter, r *http.Request) {
 	user := middleware.EffectiveUser(r)
 	admin := isRequestAdmin(r) || config.IsAdmin(user)
 
-	job, err := publish.CreateJob(h.db, h.publishReg, req, user, admin)
+	job, err := publish.CreateJob(h.db, h.publishReg, h.publishManifest, req, user, admin)
 	if err != nil {
 		switch err {
 		case publish.ErrForbidden:

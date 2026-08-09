@@ -108,14 +108,6 @@ func (w *Worker) Process(job *models.PublishJob) {
 		fail("source_disabled", []JobError{{Code: "source_disabled", Message: "source not enabled"}})
 		return
 	}
-	seedRef, ok := src.FindSeed(job.TripID)
-	if !ok {
-		fail("seed_not_found", []JobError{{Code: "seed_not_found", Message: "trip not in allowlist"}})
-		return
-	}
-
-	paths := []string{seedRef.Path, "people.js", "checklist-config.js"}
-	paths = append(paths, seedRef.Assets...)
 
 	zipBytes, sha, err := w.GitHub.FetchRepoZip(src.Repo, src.Ref)
 	if err != nil {
@@ -131,6 +123,26 @@ func (w *Worker) Process(job *models.PublishJob) {
 	job.Progress = 35
 	w.DB.Save(job)
 
+	// Family-owned allowlist at the commit being published (source of truth).
+	manifestTree, err := ExtractAllowlisted(zipBytes, []string{ManifestFileName})
+	if err != nil {
+		fail("manifest_missing", []JobError{{Code: "manifest_missing", Message: err.Error(), Path: ManifestFileName}})
+		return
+	}
+	manifest, err := ParsePublishManifest(manifestTree[ManifestFileName])
+	if err != nil {
+		fail("manifest_invalid", []JobError{{Code: "manifest_invalid", Message: err.Error(), Path: ManifestFileName}})
+		return
+	}
+	seedRef, ok := manifest.FindSeed(job.TripID)
+	if !ok {
+		fail("seed_not_found", []JobError{{Code: "seed_not_found", Message: "trip not in publish-manifest.json allowlist"}})
+		return
+	}
+	job.SeedPath = seedRef.Path
+
+	paths := []string{seedRef.Path, "people.js", "checklist-config.js"}
+	paths = append(paths, seedRef.Assets...)
 	tree, err := ExtractAllowlisted(zipBytes, paths)
 	if err != nil {
 		fail("extract_failed", []JobError{{Code: "extract_failed", Message: err.Error()}})

@@ -65,7 +65,8 @@ type JobError struct {
 }
 
 // CreateJob enqueues a publish job after authz checks by the caller.
-func CreateJob(db *gorm.DB, reg *Registry, req CreateJobRequest, username string, isAdmin bool) (*models.PublishJob, error) {
+// resolver loads the family allowlist from publish-manifest.json (required in prod).
+func CreateJob(db *gorm.DB, reg *Registry, resolver *ManifestResolver, req CreateJobRequest, username string, isAdmin bool) (*models.PublishJob, error) {
 	req.SourceID = strings.TrimSpace(req.SourceID)
 	req.TripID = strings.TrimSpace(req.TripID)
 	if req.SourceID == "" || req.TripID == "" {
@@ -78,9 +79,16 @@ func CreateJob(db *gorm.DB, reg *Registry, req CreateJobRequest, username string
 		return nil, ErrForbidden
 	}
 	src, _ := reg.Get(req.SourceID)
-	seed, ok := src.FindSeed(req.TripID)
+	if resolver == nil {
+		resolver = NewManifestResolverFromEnv()
+	}
+	seeds, err := resolver.SeedsForSource(src)
+	if err != nil {
+		return nil, fmt.Errorf("publish-manifest: %w", err)
+	}
+	seed, ok := FindSeedRef(seeds, req.TripID)
 	if !ok {
-		return nil, fmt.Errorf("trip %q not in source %q allowlist", req.TripID, req.SourceID)
+		return nil, fmt.Errorf("trip %q not in %s allowlist (publish-manifest.json)", req.TripID, req.SourceID)
 	}
 
 	// Active job lock
