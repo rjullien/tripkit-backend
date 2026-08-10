@@ -53,6 +53,13 @@ func TestDefaultDogfoodRegistry_JullienEnabled(t *testing.T) {
 	if !ok || nadia.Enabled {
 		t.Fatal("nadia must stay disabled")
 	}
+	laurine, ok := reg.Get("laurine")
+	if !ok || !laurine.Enabled {
+		t.Fatal("laurine should be enabled for philippines dogfood")
+	}
+	if _, ok := publish.FindSeedRef(laurine.Seeds, "philippines-2027"); !ok {
+		t.Fatal("philippines-2027 must be catalogue fallback for laurine")
+	}
 	jihane, ok := reg.Get("jihane")
 	if !ok || jihane.Enabled {
 		t.Fatal("jihane must stay disabled until dogfood")
