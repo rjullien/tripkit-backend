@@ -149,10 +149,11 @@ func containsFold(values []string, target string) bool {
 	return false
 }
 
-// DefaultDogfoodRegistry returns the progressive dogfood config.
-// Trip allowlist source of truth = repo publish-manifest.json (when GitHub token works).
-// Seeds below are a catalogue FALLBACK only (no token / GitHub down) so the FE
-// still shows Créer / Mettre à jour — keep in sync with tripkit-seeds/publish-manifest.json.
+// DefaultDogfoodRegistry is the in-code FALLBACK when TRIPKIT_PUBLISH_SOURCES is unset.
+// Prod trust SoT = rjullien/tripkit/ops/publish-sources.json → Infisical publish-sources
+// → env TRIPKIT_PUBLISH_SOURCES (flip enabled without a BE release).
+// Trip allowlist = each seed repo's publish-manifest.json (when GitHub token works).
+// Seeds below are catalogue FALLBACK only (no token / GitHub down).
 // nadia/jihane stay off until their turn; laurine enabled for philippines-2027.
 func DefaultDogfoodRegistry() *Registry {
 	return NewRegistry([]Source{
@@ -215,7 +216,8 @@ func DefaultDogfoodRegistry() *Registry {
 	})
 }
 
-// LoadRegistry loads env JSON, or falls back to DefaultDogfoodRegistry.
+// LoadRegistry prefers TRIPKIT_PUBLISH_SOURCES (Infisical / ops JSON).
+// Empty env → DefaultDogfoodRegistry (local/CI / before cluster wire).
 func LoadRegistry() (*Registry, error) {
 	if strings.TrimSpace(os.Getenv("TRIPKIT_PUBLISH_SOURCES")) == "" {
 		return DefaultDogfoodRegistry(), nil
