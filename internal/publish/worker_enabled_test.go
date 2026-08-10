@@ -32,9 +32,14 @@ func TestWorkerEnabled(t *testing.T) {
 
 func TestDefaultDogfoodRegistry_JullienEnabled(t *testing.T) {
 	t.Setenv("TRIPKIT_PUBLISH_SOURCES", "")
-	reg, err := publish.LoadRegistry()
+	t.Setenv("TRIPKIT_GITHUB_TOKEN", "")
+	t.Setenv("TRIPKIT_PUBLISH_SOURCES_CACHE", t.TempDir()+"/missing.json")
+	reg, _, origin, err := publish.LoadRegistry()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if origin != "dogfood" {
+		t.Fatalf("origin=%q want dogfood (no token, no cache)", origin)
 	}
 	s, ok := reg.Get("jullien")
 	if !ok || !s.Enabled {

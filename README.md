@@ -42,9 +42,11 @@ API REST en Go pour TripKit — gestion de voyages, jours, hébergements, listes
 | `TRIPKIT_CORS_ORIGINS` | No | `*` | Origines CORS autorisées, séparées par `,` |
 | `TRIPKIT_NO_CACHE` | No | — | Non vide = désactive le cache météo |
 | `APP_VERSION` | No | `dev` | Version renvoyée par `/health` |
-| `TRIPKIT_PUBLISH_SOURCES` | Prod (publish) | dogfood defaults if unset | JSON trust registry (repos / `enabled` / publishers). **SoT git :** `rjullien/tripkit/ops/publish-sources.json` → Infisical key `publish-sources`. Not trip allowlist (`publish-manifest.json` in seed repos). |
+| `TRIPKIT_GITHUB_TOKEN` | Prod (publish) | — | Fine-grained PAT / App token, Contents:read on **`rjullien/tripkit`** (trust file) + seed repos (`github-token` in Infisical → Secret `tripkit-secrets`) |
+| `TRIPKIT_PUBLISH_SOURCES` | Dev / emergency | — | Optional JSON override. Prod = fetch `rjullien/tripkit/ops/publish-sources.json` via PAT, copy to disk; GH down → last cache → dogfood. Not trip allowlist (`publish-manifest.json`). |
+| `TRIPKIT_PUBLISH_SOURCES_CACHE` | No | `$TMPDIR/tripkit-publish-sources.json` | Disk copy of last good trust JSON |
+| `TRIPKIT_PUBLISH_SOURCES_TTL` | No | `2m` | How often to re-fetch trust JSON from GitHub |
 | `TRIPKIT_PUBLISH_WORKER` | No | auto when `TRIPKIT_GITHUB_TOKEN` set | `1`/`0` to force worker on/off |
-| `TRIPKIT_GITHUB_TOKEN` | Prod (publish) | — | Fine-grained PAT / App token, Contents:read on seed repos (`github-token` in Infisical → Secret `tripkit-secrets`) |
 | `TRIPKIT_PUBLISH_ALLOW_REGISTRY_SEEDS` | Dev | off | `1` = allow `Source.Seeds` fallback when manifest fetch fails |
 | `TRIPKIT_HERMES_BASE_URL` | No | `http://hermes-leo.openclaw.svc.cluster.local:8642` | Hermes-Léo API (cluster) |
 | `TRIPKIT_HERMES_API_KEY` | For `/leo/*` | — | Same logical key as Hermes `API_SERVER_KEY` (Infisical → Secret `tripkit-hermes-key`) |

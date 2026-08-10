@@ -37,14 +37,27 @@ type Registry struct {
 	sources map[string]Source
 }
 
+// ParseSourcesJSON unmarshals a publish-sources.json array.
+func ParseSourcesJSON(raw []byte) ([]Source, error) {
+	var list []Source
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil, fmt.Errorf("publish-sources json: %w", err)
+	}
+	if len(list) == 0 {
+		return nil, fmt.Errorf("publish-sources json: empty array")
+	}
+	return list, nil
+}
+
 // LoadRegistryFromEnv reads TRIPKIT_PUBLISH_SOURCES (JSON array) or returns empty.
+// Kept for tests / emergency override — prod prefers GitHub + disk cache.
 func LoadRegistryFromEnv() (*Registry, error) {
 	raw := strings.TrimSpace(os.Getenv("TRIPKIT_PUBLISH_SOURCES"))
 	if raw == "" {
 		return NewRegistry(nil), nil
 	}
-	var list []Source
-	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+	list, err := ParseSourcesJSON([]byte(raw))
+	if err != nil {
 		return nil, fmt.Errorf("TRIPKIT_PUBLISH_SOURCES: %w", err)
 	}
 	return NewRegistry(list), nil
@@ -53,6 +66,16 @@ func LoadRegistryFromEnv() (*Registry, error) {
 // NewRegistry builds a registry from sources.
 func NewRegistry(sources []Source) *Registry {
 	r := &Registry{sources: make(map[string]Source)}
+	r.ReplaceAll(sources)
+	return r
+}
+
+// ReplaceAll atomically swaps the source map (used by GitHub refresh / cache load).
+func (r *Registry) ReplaceAll(sources []Source) {
+	if r == nil {
+		return
+	}
+	next := make(map[string]Source, len(sources))
 	for _, s := range sources {
 		s.ID = strings.TrimSpace(s.ID)
 		if s.ID == "" {
@@ -61,9 +84,35 @@ func NewRegistry(sources []Source) *Registry {
 		if s.Ref == "" {
 			s.Ref = "main"
 		}
-		r.sources[s.ID] = normalizeSource(s)
+		next[s.ID] = normalizeSource(s)
 	}
-	return r
+	r.mu.Lock()
+	r.sources = next
+	r.mu.Unlock()
+}
+
+// Snapshot returns a copy of all sources (order not stable).
+func (r *Registry) Snapshot() []Source {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]Source, 0, len(r.sources))
+	for _, s := range r.sources {
+		out = append(out, s)
+	}
+	return out
+}
+
+// Len returns the number of registered sources.
+func (r *Registry) Len() int {
+	if r == nil {
+		return 0
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.sources)
 }
 
 func normalizeSource(s Source) Source {
@@ -149,9 +198,11 @@ func containsFold(values []string, target string) bool {
 	return false
 }
 
-// DefaultDogfoodRegistry is the in-code FALLBACK when TRIPKIT_PUBLISH_SOURCES is unset.
-// Prod trust SoT = rjullien/tripkit/ops/publish-sources.json → Infisical publish-sources
-// → env TRIPKIT_PUBLISH_SOURCES (flip enabled without a BE release).
+// DefaultDogfoodRegistry is the compiled-in cold-start FALLBACK when GitHub is
+// unreachable and no disk cache exists yet.
+//
+// Prod trust SoT = rjullien/tripkit/ops/publish-sources.json (fetched via PAT,
+// copied to disk; GH down → last cache → this dogfood).
 // Trip allowlist = each seed repo's publish-manifest.json (when GitHub token works).
 // Seeds below are catalogue FALLBACK only (no token / GitHub down).
 // nadia/jihane stay off until their turn; laurine enabled for philippines-2027.
@@ -216,11 +267,24 @@ func DefaultDogfoodRegistry() *Registry {
 	})
 }
 
-// LoadRegistry prefers TRIPKIT_PUBLISH_SOURCES (Infisical / ops JSON).
-// Empty env → DefaultDogfoodRegistry (local/CI / before cluster wire).
-func LoadRegistry() (*Registry, error) {
-	if strings.TrimSpace(os.Getenv("TRIPKIT_PUBLISH_SOURCES")) == "" {
-		return DefaultDogfoodRegistry(), nil
+// LoadRegistry loads the trust registry:
+//  1. TRIPKIT_PUBLISH_SOURCES env — emergency / test override
+//  2. GitHub rjullien/tripkit/ops/publish-sources.json (copied to disk cache)
+//  3. Last disk cache if GitHub is down
+//  4. DefaultDogfoodRegistry (cold start, no cache yet)
+//
+// Also returns the SourcesLoader used for periodic refresh (may be nil when env override).
+func LoadRegistry() (*Registry, *SourcesLoader, string, error) {
+	if raw := strings.TrimSpace(os.Getenv("TRIPKIT_PUBLISH_SOURCES")); raw != "" {
+		list, err := ParseSourcesJSON([]byte(raw))
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("TRIPKIT_PUBLISH_SOURCES: %w", err)
+		}
+		reg := NewRegistry(list)
+		return reg, nil, "env", nil
 	}
-	return LoadRegistryFromEnv()
+	loader := NewSourcesLoaderFromEnv()
+	reg := NewRegistry(nil)
+	origin := loader.Bootstrap(reg)
+	return reg, loader, origin, nil
 }

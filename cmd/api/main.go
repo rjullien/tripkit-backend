@@ -33,12 +33,14 @@ func main() {
 
 	h := handlers.New(db)
 
-	reg, err := publish.LoadRegistry()
+	reg, sourcesLoader, regOrigin, err := publish.LoadRegistry()
 	if err != nil {
 		log.Fatalf("Failed to load publish registry: %v", err)
 	}
+	log.Printf("publish registry: origin=%s sources=%d", regOrigin, reg.Len())
 	h.SetPublishRegistry(reg)
 	h.SetPublishManifestResolver(publish.NewManifestResolverFromEnv())
+	publish.StartRegistryRefresh(reg, sourcesLoader)
 
 	// In-process worker: auto-on when TRIPKIT_GITHUB_TOKEN is set; override via TRIPKIT_PUBLISH_WORKER.
 	if publish.WorkerEnabled() {
