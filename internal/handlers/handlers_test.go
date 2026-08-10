@@ -543,6 +543,22 @@ func TestSync_ServerNewerWins(t *testing.T) {
 	}
 }
 
+func TestSync_TieCheckedWins(t *testing.T) {
+	r := setupSync(t)
+	doSync(r, map[string]any{"deviceId": "a", "lastSyncAt": 0, "checks": map[string]any{"bag": map[string]any{"checked": false, "updatedAt": 300}}, "custom": map[string]any{}, "hidden": []any{}})
+	body := parseResp(doSync(r, map[string]any{"deviceId": "b", "lastSyncAt": 0, "checks": map[string]any{"bag": map[string]any{"checked": true, "updatedAt": 300}}, "custom": map[string]any{}, "hidden": []any{}}))
+	if body["merged"].(map[string]any)["checks"].(map[string]any)["bag"].(map[string]any)["checked"] != true {
+		t.Errorf("expected checked to win on equal updatedAt")
+	}
+	// Reverse order: true first, then false at same ts → stay true
+	r2 := setupSync(t)
+	doSync(r2, map[string]any{"deviceId": "a", "lastSyncAt": 0, "checks": map[string]any{"bag": map[string]any{"checked": true, "updatedAt": 300}}, "custom": map[string]any{}, "hidden": []any{}})
+	body2 := parseResp(doSync(r2, map[string]any{"deviceId": "b", "lastSyncAt": 0, "checks": map[string]any{"bag": map[string]any{"checked": false, "updatedAt": 300}}, "custom": map[string]any{}, "hidden": []any{}}))
+	if body2["merged"].(map[string]any)["checks"].(map[string]any)["bag"].(map[string]any)["checked"] != true {
+		t.Errorf("expected existing checked to keep winning on equal updatedAt")
+	}
+}
+
 func TestSync_Idempotent(t *testing.T) {
 	r := setupSync(t)
 	doSync(r, map[string]any{"deviceId": "d", "lastSyncAt": 0, "checks": map[string]any{"sugar": map[string]any{"checked": true, "updatedAt": 300}}, "custom": map[string]any{}, "hidden": []any{}})
