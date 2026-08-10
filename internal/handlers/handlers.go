@@ -804,7 +804,8 @@ func (h *Handler) SyncList(w http.ResponseWriter, r *http.Request) {
 
 	// All sync writes in a single transaction for atomicity
 	err := h.db.Transaction(func(tx *gorm.DB) error {
-		// Step 1: Merge checks (last-write-wins by updatedAt)
+		// Step 1: Merge checks — last-write-wins by updatedAt; on equal
+		// timestamps, checked wins over unchecked (family shared lists).
 		for itemID, incoming := range body.Checks {
 			check := models.ListCheck{
 				ListID:    listID,
@@ -828,8 +829,9 @@ func (h *Handler) SyncList(w http.ResponseWriter, r *http.Request) {
 				}).Error; err != nil {
 					return err
 				}
-			} else if incoming.UpdatedAt == existing.UpdatedAt && incoming.Checked != existing.Checked {
-				if err := tx.Model(&existing).Update("checked", incoming.Checked).Error; err != nil {
+			} else if incoming.UpdatedAt == existing.UpdatedAt && incoming.Checked && !existing.Checked {
+				conflicts++
+				if err := tx.Model(&existing).Update("checked", true).Error; err != nil {
 					return err
 				}
 			}
