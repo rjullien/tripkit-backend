@@ -153,7 +153,7 @@ func containsFold(values []string, target string) bool {
 // Trip allowlist source of truth = repo publish-manifest.json (when GitHub token works).
 // Seeds below are a catalogue FALLBACK only (no token / GitHub down) so the FE
 // still shows Créer / Mettre à jour — keep in sync with tripkit-seeds/publish-manifest.json.
-// nadia/laurine stay off until their turn (their Seeds empty → they need token+manifest).
+// nadia/jihane stay off until their turn; laurine enabled for philippines-2027.
 func DefaultDogfoodRegistry() *Registry {
 	return NewRegistry([]Source{
 		{
@@ -194,7 +194,14 @@ func DefaultDogfoodRegistry() *Registry {
 			ExpectedFamily:  "laurine",
 			PublisherLogins: []string{"laurine"},
 			OwnerLogins:     []string{"laurine"},
-			Enabled:         false,
+			Enabled:         true,
+			Seeds: []SeedRef{
+				{
+					TripID: "philippines-2027",
+					Path:   "philippines-2027.js",
+					Title:  "Philippines 2027",
+				},
+			},
 		},
 		{
 			ID:              "jihane",
