@@ -32,6 +32,7 @@ func TestLeoPromptContext_AdminSeesAll(t *testing.T) {
 		"rjullien/tripkit-seeds",
 		"rjullien/tripkit-seeds-nadia",
 		"rjullien/tripkit-seeds-laurine",
+		"rjullien/tripkit-seeds-jihane",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing %s in %v", want, ctx.AllowedRepos)

@@ -53,6 +53,13 @@ func TestDefaultDogfoodRegistry_JullienEnabled(t *testing.T) {
 	if !ok || nadia.Enabled {
 		t.Fatal("nadia must stay disabled")
 	}
+	jihane, ok := reg.Get("jihane")
+	if !ok || jihane.Enabled {
+		t.Fatal("jihane must stay disabled until dogfood")
+	}
+	if jihane.Repo != "rjullien/tripkit-seeds-jihane" || jihane.ExpectedFamily != "zouaoui" {
+		t.Fatalf("jihane source misconfigured: %+v", jihane)
+	}
 }
 
 func TestCreateJob_RequiresGitHubToken(t *testing.T) {

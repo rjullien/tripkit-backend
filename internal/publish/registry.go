@@ -196,6 +196,15 @@ func DefaultDogfoodRegistry() *Registry {
 			OwnerLogins:     []string{"laurine"},
 			Enabled:         false,
 		},
+		{
+			ID:              "jihane",
+			Repo:            "rjullien/tripkit-seeds-jihane",
+			Ref:             "main",
+			ExpectedFamily:  "zouaoui",
+			PublisherLogins: []string{"jihane"},
+			OwnerLogins:     []string{"jihane"},
+			Enabled:         false,
+		},
 	})
 }
 
