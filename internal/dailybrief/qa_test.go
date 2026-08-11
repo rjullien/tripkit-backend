@@ -133,3 +133,11 @@ func TestHumanDateFR(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestTextContainsLoose(t *testing.T) {
+	name := "Les Lofts ilewa — Chute-Montmorency"
+	text := "🏨 *Les Lofts ilewa — Chute‑Montmorency*" // nb hyphen in Chute‑
+	if !textContainsLoose(text, name) {
+		t.Fatal("expected loose match on unicode dashes")
+	}
+}

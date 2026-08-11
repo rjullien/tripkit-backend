@@ -54,6 +54,7 @@ func (h *Handler) GetDayBrief(w http.ResponseWriter, r *http.Request) {
 		"generatedAt": res.GeneratedAt,
 		"weather":     res.Weather,
 		"qa":          res.QA,
+		"qaLoopUsed":  res.QALoopUsed,
 		"timezone":    res.Timezone,
 		"sent":        false,
 	})

@@ -65,6 +65,12 @@ Règles :
 - Inclus toujours le jour de la semaine ET la date en français (ex. dimanche 16 août).
 - Si un hôtel est fourni, mentionne-le clairement (nom + check-in si dispo).`
 
+const correctSystemPrompt = formatSystemPrompt + `
+
+Tu corriges un message WhatsApp déjà généré qui a échoué au QA.
+On te donne : (1) les données source, (2) ton message précédent, (3) le rapport QA.
+Corrige UNIQUEMENT les problèmes listés. N'invente rien. Réponds UNIQUEMENT avec le message corrigé.`
+
 // Format asks Bifrost to turn enriched day JSON into WhatsApp text.
 func (c *BifrostClient) Format(enriched any) (string, error) {
 	if c == nil || c.BaseURL == "" {
@@ -77,7 +83,7 @@ func (c *BifrostClient) Format(enriched any) (string, error) {
 
 	var lastErr error
 	for attempt := 0; attempt <= 2; attempt++ {
-		text, err := c.formatOnce(string(userPayload))
+		text, err := c.chatOnce(formatSystemPrompt, string(userPayload))
 		if err == nil {
 			return text, nil
 		}
@@ -87,11 +93,41 @@ func (c *BifrostClient) Format(enriched any) (string, error) {
 	return "", lastErr
 }
 
-func (c *BifrostClient) formatOnce(userContent string) (string, error) {
+// FormatCorrect asks Bifrost to fix a previous brief using QA findings (one shot).
+func (c *BifrostClient) FormatCorrect(enriched any, previousText string, qa QAResult) (string, error) {
+	if c == nil || c.BaseURL == "" {
+		return "", fmt.Errorf("bifrost not configured")
+	}
+	srcJSON, err := json.Marshal(enriched)
+	if err != nil {
+		return "", err
+	}
+	qaJSON, err := json.Marshal(qa)
+	if err != nil {
+		return "", err
+	}
+	user := "Données source (JSON):\n" + string(srcJSON) +
+		"\n\nMessage précédent:\n" + previousText +
+		"\n\nRapport QA (JSON):\n" + string(qaJSON) +
+		"\n\nCorrige le message pour passer le QA."
+
+	var lastErr error
+	for attempt := 0; attempt <= 2; attempt++ {
+		text, err := c.chatOnce(correctSystemPrompt, user)
+		if err == nil {
+			return text, nil
+		}
+		lastErr = err
+		time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+	}
+	return "", lastErr
+}
+
+func (c *BifrostClient) chatOnce(system, userContent string) (string, error) {
 	body, err := json.Marshal(bifrostReq{
 		Model: c.Model,
 		Messages: []bifrostMsg{
-			{Role: "system", Content: formatSystemPrompt},
+			{Role: "system", Content: system},
 			{Role: "user", Content: userContent},
 		},
 		MaxTokens: 2000,

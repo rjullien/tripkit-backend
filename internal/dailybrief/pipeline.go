@@ -26,7 +26,9 @@ type GenerateResult struct {
 	QA          QAResult       `json:"qa"`
 	Sent        bool           `json:"sent"`
 	Timezone    string         `json:"timezone,omitempty"`
-	Source      *DayBriefData  `json:"-"`
+	// QALoopUsed is true when a single Bifrost correction pass ran after QA FAILED.
+	QALoopUsed bool `json:"qaLoopUsed,omitempty"`
+	Source     *DayBriefData `json:"-"`
 }
 
 // SendOptions controls force / destination override (admin test).
@@ -44,6 +46,7 @@ type SendResult struct {
 	MessageLength int       `json:"messageLength"`
 	MessageID     string    `json:"messageId,omitempty"`
 	QAVerdict     QAVerdict `json:"qaVerdict"`
+	QALoopUsed    bool      `json:"qaLoopUsed,omitempty"`
 	SentAt        time.Time `json:"sentAt"`
 	Timezone      string    `json:"timezone,omitempty"`
 	Error         string    `json:"error,omitempty"`
@@ -90,6 +93,17 @@ func (s *Service) GenerateOpts(tripID string, dayNumber int, opts ExtractOpts) (
 		return nil, err
 	}
 	qa := RunQA(text, src)
+	qaLoopUsed := false
+	if qa.Verdict == QAFailed {
+		corrected, corrErr := bf.FormatCorrect(src, text, qa)
+		if corrErr != nil {
+			log.Printf("dailybrief: QA correction failed: %v", corrErr)
+		} else {
+			qaLoopUsed = true
+			text = corrected
+			qa = RunQA(text, src)
+		}
+	}
 	return &GenerateResult{
 		Text:        text,
 		DayNumber:   dayNumber,
@@ -98,6 +112,7 @@ func (s *Service) GenerateOpts(tripID string, dayNumber int, opts ExtractOpts) (
 		QA:          qa,
 		Sent:        false,
 		Timezone:    src.Timezone,
+		QALoopUsed:  qaLoopUsed,
 		Source:      src,
 	}, nil
 }
@@ -152,12 +167,13 @@ func (s *Service) GenerateAndSendOpts(tripID string, dayNumber int, opt SendOpti
 		_ = s.recordSend(tripID, dayNumber, localDate, gen, to, "", false, gen.QA.Summary)
 		_ = s.notifyAdminQAFailed(gen)
 		return &SendResult{
-			Sent:      false,
-			Group:     to,
-			QAVerdict: QAFailed,
-			SentAt:    time.Now().UTC(),
-			Timezone:  gen.Timezone,
-			Error:     gen.QA.Summary,
+			Sent:       false,
+			Group:      to,
+			QAVerdict:  QAFailed,
+			QALoopUsed: gen.QALoopUsed,
+			SentAt:     time.Now().UTC(),
+			Timezone:   gen.Timezone,
+			Error:      gen.QA.Summary,
 		}, fmt.Errorf("QA FAILED: %s", gen.QA.Summary)
 	}
 
@@ -169,12 +185,16 @@ func (s *Service) GenerateAndSendOpts(tripID string, dayNumber int, opt SendOpti
 		return nil, err
 	}
 	_ = s.recordSend(tripID, dayNumber, localDate, gen, to, msgID, true, "")
+	if gen.QALoopUsed {
+		_ = s.notifyAdminQALoopUsed(gen)
+	}
 	return &SendResult{
 		Sent:          true,
 		Group:         to,
 		MessageLength: len(gen.Text),
 		MessageID:     msgID,
 		QAVerdict:     gen.QA.Verdict,
+		QALoopUsed:    gen.QALoopUsed,
 		SentAt:        time.Now().UTC(),
 		Timezone:      gen.Timezone,
 	}, nil
@@ -203,11 +223,53 @@ func (s *Service) notifyAdminQAFailed(gen *GenerateResult) error {
 	if cfg.AdminPhone == "" || gen == nil || gen.Source == nil {
 		return nil
 	}
-	msg := fmt.Sprintf("⚠️ Daily Brief QA FAILED\ntrip=%s day=%d\n%s", gen.Source.TripID, gen.DayNumber, gen.QA.Summary)
+	detail := formatQAIssues(gen.QA)
+	loop := "non"
+	if gen.QALoopUsed {
+		loop = "oui (1 correction)"
+	}
+	msg := fmt.Sprintf("⚠️ Daily Brief QA FAILED après correction\ntrip=%s day=%d\nqaLoop=%s\n%s\n%s",
+		gen.Source.TripID, gen.DayNumber, loop, gen.QA.Summary, detail)
 	gowa := NewGowaClient(cfg.GowaBaseURL)
 	_, err := gowa.Send(cfg.AdminPhone, msg)
 	if err != nil {
 		log.Printf("dailybrief: admin notify failed: %v", err)
 	}
 	return err
+}
+
+func (s *Service) notifyAdminQALoopUsed(gen *GenerateResult) error {
+	cfg := s.cfg()
+	if cfg.AdminPhone == "" || gen == nil || gen.Source == nil {
+		return nil
+	}
+	msg := fmt.Sprintf("ℹ️ Daily Brief : boucle QA utilisée (1 correction)\ntrip=%s day=%d\nverdict final=%s\n%s",
+		gen.Source.TripID, gen.DayNumber, gen.QA.Verdict, gen.QA.Summary)
+	gowa := NewGowaClient(cfg.GowaBaseURL)
+	_, err := gowa.Send(cfg.AdminPhone, msg)
+	if err != nil {
+		log.Printf("dailybrief: admin qa-loop notify failed: %v", err)
+	}
+	return err
+}
+
+func formatQAIssues(qa QAResult) string {
+	var b strings.Builder
+	appendList := func(label string, items []string) {
+		if len(items) == 0 {
+			return
+		}
+		b.WriteString(label)
+		b.WriteString(":\n")
+		for _, it := range items {
+			b.WriteString("• ")
+			b.WriteString(it)
+			b.WriteByte('\n')
+		}
+	}
+	appendList("contradictions", qa.Contradictions)
+	appendList("placeholders", qa.Placeholders)
+	appendList("completeness", qa.Completeness)
+	appendList("hallucinations", qa.Hallucinations)
+	return strings.TrimSpace(b.String())
 }
