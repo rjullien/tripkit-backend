@@ -131,6 +131,7 @@ func (l *Loader) Bootstrap() Config {
 			c.Origin = "env"
 			c.BifrostAPIKey = strings.TrimSpace(os.Getenv("TRIPKIT_BIFROST_API_KEY"))
 			l.cfg = c
+			l.lastFetch = time.Now() // keep env override for TTL window
 			return l.cfg
 		}
 		log.Printf("dailybrief: TRIPKIT_DAILY_BRIEF_JSON invalid, falling back")
