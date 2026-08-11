@@ -20,6 +20,8 @@ API REST en Go pour TripKit — gestion de voyages, jours, hébergements, listes
 | `DELETE` | `/api/trips/:id` | Delete trip (cascade) |
 | `GET` | `/api/trips/:id/seed` | Full export |
 | `GET/PUT` | `/api/trips/:id/days[/:num]` | Days CRUD (upsert) |
+| `GET` | `/api/trips/:id/days/:num/brief` | Daily Brief preview (`?skipConfig=1` admin) |
+| `POST` | `/api/trips/:id/days/:num/brief/send` | Send (`force`, body `{"to":"<phone>"}` admin override) |
 | `GET/PUT/DELETE` | `/api/trips/:id/assets[/:file]` | Assets CRUD (map images) |
 | `GET/PUT` | `/api/trips/:id/hotels[/:num]` | Hotels CRUD (upsert) |
 | `GET/PUT/DELETE` | `/api/trips/:id/lists[/:lid]` | Lists CRUD |
@@ -52,6 +54,11 @@ API REST en Go pour TripKit — gestion de voyages, jours, hébergements, listes
 | `TRIPKIT_HERMES_API_KEY` | For `/leo/*` | — | Same logical key as Hermes `API_SERVER_KEY` (Infisical → Secret `tripkit-hermes-key`) |
 | `TRIPKIT_LEO_DASHBOARD_URL` | No | `https://hermes-leo.bapttf.com` | Public dashboard link for FE fallback |
 | `TRIPKIT_LEO_TELEGRAM_URL` | No | — | Optional `https://t.me/…` deep-link for FE fallback |
+| `TRIPKIT_BIFROST_API_KEY` | If Bifrost requires auth | — | Bearer for Daily Brief format (not Hermes) |
+| `TRIPKIT_DAILY_BRIEF_JSON` | Emergency | — | Raw override of `ops/daily-brief.json` |
+| `TRIPKIT_DAILY_BRIEF_CACHE` | No | `$TMPDIR/tripkit-daily-brief.json` | Disk cache for Daily Brief ops JSON |
+
+Daily Brief SoT (URLs + model + `adminPhone`): private `rjullien/tripkit/ops/daily-brief.json` via `TRIPKIT_GITHUB_TOKEN` (same pattern as Publish). GoWA only — no HA. Format via Bifrost — no Hermes. This public repo must not contain phone numbers, WhatsApp JIDs, or Tailscale MagicDNS hostnames — those stay in private ops/seeds.
 
 ### Léo / Hermes endpoints
 

@@ -1,0 +1,213 @@
+package dailybrief
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"strings"
+	"time"
+
+	"github.com/rjullien/tripkit-backend/internal/models"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+// Service wires config + clients for generate / send.
+type Service struct {
+	DB     *gorm.DB
+	Loader *Loader
+}
+
+type GenerateResult struct {
+	Text        string         `json:"text"`
+	DayNumber   int            `json:"dayNumber"`
+	GeneratedAt time.Time      `json:"generatedAt"`
+	Weather     map[string]any `json:"weather,omitempty"`
+	QA          QAResult       `json:"qa"`
+	Sent        bool           `json:"sent"`
+	Timezone    string         `json:"timezone,omitempty"`
+	Source      *DayBriefData  `json:"-"`
+}
+
+// SendOptions controls force / destination override (admin test).
+type SendOptions struct {
+	Force bool
+	// To overrides seed whatsappGroup (admin DM for tests). Empty = group from seed.
+	To string
+	// SkipConfigGate allows generate/send when trip.dailyBrief is not yet in DB (admin test).
+	SkipConfigGate bool
+}
+
+type SendResult struct {
+	Sent          bool      `json:"sent"`
+	Group         string    `json:"group"`
+	MessageLength int       `json:"messageLength"`
+	MessageID     string    `json:"messageId,omitempty"`
+	QAVerdict     QAVerdict `json:"qaVerdict"`
+	SentAt        time.Time `json:"sentAt"`
+	Timezone      string    `json:"timezone,omitempty"`
+	Error         string    `json:"error,omitempty"`
+}
+
+func (s *Service) cfg() Config {
+	if s.Loader != nil {
+		return s.Loader.Get()
+	}
+	return DefaultConfig()
+}
+
+// Generate builds the WhatsApp brief (no send).
+func (s *Service) Generate(tripID string, dayNumber int) (*GenerateResult, error) {
+	return s.GenerateOpts(tripID, dayNumber, ExtractOpts{RequireConfigured: true})
+}
+
+// GenerateOpts builds the brief with extract options.
+func (s *Service) GenerateOpts(tripID string, dayNumber int, opts ExtractOpts) (*GenerateResult, error) {
+	src, err := ExtractDayOpts(s.DB, tripID, dayNumber, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	var trip models.Trip
+	_ = s.DB.First(&trip, "id = ?", tripID)
+	tripData := map[string]any{}
+	if trip.Data != nil {
+		_ = json.Unmarshal([]byte(*trip.Data), &tripData)
+	}
+	var day models.Day
+	dayData := map[string]any{}
+	if err := s.DB.Where("trip_id = ? AND day_num = ?", tripID, dayNumber).First(&day).Error; err == nil {
+		_ = json.Unmarshal([]byte(day.Data), &dayData)
+	}
+	if lat, lon, ok := CoordsFromTripData(tripData, dayData); ok {
+		_ = EnrichDay(src, lat, lon)
+	}
+
+	cfg := s.cfg()
+	bf := NewBifrostClient(cfg.BifrostBaseURL, cfg.BifrostAPIKey, cfg.BriefModel)
+	text, err := bf.Format(src)
+	if err != nil {
+		return nil, err
+	}
+	qa := RunQA(text, src)
+	return &GenerateResult{
+		Text:        text,
+		DayNumber:   dayNumber,
+		GeneratedAt: time.Now().UTC(),
+		Weather:     src.Weather,
+		QA:          qa,
+		Sent:        false,
+		Timezone:    src.Timezone,
+		Source:      src,
+	}, nil
+}
+
+// GenerateAndSend runs pipeline + GoWA send when QA allows.
+func (s *Service) GenerateAndSend(tripID string, dayNumber int, force bool) (*SendResult, error) {
+	return s.GenerateAndSendOpts(tripID, dayNumber, SendOptions{Force: force})
+}
+
+// GenerateAndSendOpts supports force + To override (admin test DM).
+func (s *Service) GenerateAndSendOpts(tripID string, dayNumber int, opt SendOptions) (*SendResult, error) {
+	extractOpts := ExtractOpts{RequireConfigured: !opt.SkipConfigGate}
+	gen, err := s.GenerateOpts(tripID, dayNumber, extractOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	to := strings.TrimSpace(opt.To)
+	if to == "" && gen.Source != nil {
+		to = gen.Source.WhatsAppGroup
+	}
+	if to == "" {
+		return nil, fmt.Errorf("no WhatsApp destination (seed whatsappGroup empty and no to= override)")
+	}
+
+	localDate := time.Now().UTC().Format("2006-01-02")
+	if gen.Source != nil && gen.Source.Timezone != "" {
+		if loc, err := time.LoadLocation(gen.Source.Timezone); err == nil {
+			localDate = time.Now().In(loc).Format("2006-01-02")
+		}
+	}
+
+	if !opt.Force {
+		var existing models.DailyBriefSend
+		err := s.DB.Where("trip_id = ? AND day_number = ? AND local_date = ? AND sent = ?", tripID, dayNumber, localDate, true).
+			First(&existing).Error
+		if err == nil {
+			return &SendResult{
+				Sent:          true,
+				Group:         existing.WhatsAppTo,
+				MessageLength: existing.MessageLen,
+				MessageID:     existing.MessageID,
+				QAVerdict:     QAVerdict(existing.QAVerdict),
+				SentAt:        existing.CreatedAt,
+				Timezone:      gen.Timezone,
+				Error:         "already_sent",
+			}, nil
+		}
+	}
+
+	if gen.QA.Verdict == QAFailed {
+		_ = s.recordSend(tripID, dayNumber, localDate, gen, to, "", false, gen.QA.Summary)
+		_ = s.notifyAdminQAFailed(gen)
+		return &SendResult{
+			Sent:      false,
+			Group:     to,
+			QAVerdict: QAFailed,
+			SentAt:    time.Now().UTC(),
+			Timezone:  gen.Timezone,
+			Error:     gen.QA.Summary,
+		}, fmt.Errorf("QA FAILED: %s", gen.QA.Summary)
+	}
+
+	cfg := s.cfg()
+	gowa := NewGowaClient(cfg.GowaBaseURL)
+	msgID, err := gowa.Send(to, gen.Text)
+	if err != nil {
+		_ = s.recordSend(tripID, dayNumber, localDate, gen, to, "", false, err.Error())
+		return nil, err
+	}
+	_ = s.recordSend(tripID, dayNumber, localDate, gen, to, msgID, true, "")
+	return &SendResult{
+		Sent:          true,
+		Group:         to,
+		MessageLength: len(gen.Text),
+		MessageID:     msgID,
+		QAVerdict:     gen.QA.Verdict,
+		SentAt:        time.Now().UTC(),
+		Timezone:      gen.Timezone,
+	}, nil
+}
+
+func (s *Service) recordSend(tripID string, dayNumber int, localDate string, gen *GenerateResult, to, msgID string, sent bool, errMsg string) error {
+	row := models.DailyBriefSend{
+		TripID:     tripID,
+		DayNumber:  dayNumber,
+		LocalDate:  localDate,
+		QAVerdict:  string(gen.QA.Verdict),
+		Sent:       sent,
+		WhatsAppTo: to,
+		MessageID:  msgID,
+		MessageLen: len(gen.Text),
+		Error:      errMsg,
+	}
+	return s.DB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "trip_id"}, {Name: "day_number"}, {Name: "local_date"}},
+		DoUpdates: clause.AssignmentColumns([]string{"qa_verdict", "sent", "whatsapp_to", "message_id", "message_len", "error"}),
+	}).Create(&row).Error
+}
+
+func (s *Service) notifyAdminQAFailed(gen *GenerateResult) error {
+	cfg := s.cfg()
+	if cfg.AdminPhone == "" || gen == nil || gen.Source == nil {
+		return nil
+	}
+	msg := fmt.Sprintf("⚠️ Daily Brief QA FAILED\ntrip=%s day=%d\n%s", gen.Source.TripID, gen.DayNumber, gen.QA.Summary)
+	gowa := NewGowaClient(cfg.GowaBaseURL)
+	_, err := gowa.Send(cfg.AdminPhone, msg)
+	if err != nil {
+		log.Printf("dailybrief: admin notify failed: %v", err)
+	}
+	return err
+}

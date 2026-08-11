@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/rjullien/tripkit-backend/internal/config"
+	"github.com/rjullien/tripkit-backend/internal/dailybrief"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/models"
 	"github.com/rjullien/tripkit-backend/internal/publish"
@@ -27,6 +28,7 @@ type Handler struct {
 	db              *gorm.DB
 	publishReg      *publish.Registry
 	publishManifest *publish.ManifestResolver
+	brief           *dailybrief.Service
 }
 
 // New creates a new Handler with the given DB.
@@ -37,6 +39,11 @@ func New(db *gorm.DB) *Handler {
 // SetPublishRegistry attaches the trusted publish source registry.
 func (h *Handler) SetPublishRegistry(reg *publish.Registry) {
 	h.publishReg = reg
+}
+
+// SetDailyBrief attaches the Daily Brief service.
+func (h *Handler) SetDailyBrief(svc *dailybrief.Service) {
+	h.brief = svc
 }
 
 // SetPublishManifestResolver attaches the family allowlist loader (publish-manifest.json).
