@@ -67,7 +67,7 @@ Règles :
 
 SECTIONS OBLIGATOIRES (toujours, dans cet esprit) :
 1) ⭐ *À savoir* — 2 à 4 pépites sympas sur le lieu / la zone (historique, géologique, anecdote). Base-toi sur highlights + placeFacts. Ne dilue PAS ces pépites dans le programme : elles vont DANS cette section.
-2) 📰 *Actualité* — jusqu'à 3 titres voyageur issus de actualites[] (spectacles, expos, events, infos utiles). Titres seuls, pas d'URL. INTERDIT : politique, procès, polarisant, faits divers.
+2) 📰 *Actualité* — jusqu'à 3 items issus de actualites[] : utilise *detail* s'il est fourni (sinon title), puis le *url* sur la ligne suivante s'il est présent. INTERDIT : politique, procès, polarisant, faits divers, listicles vagues sans détail. N'invente pas d'URL.
 3) 💡 *Astuce pratique* — UNE seule ligne, depuis practicalTip (obligatoire).
 
 SECTIONS OPTIONNELLES (si présentes dans les données) :
@@ -134,14 +134,22 @@ func (c *BifrostClient) FormatCorrect(enriched any, previousText string, qa QARe
 	return "", lastErr
 }
 
-const curateActuSystemPrompt = `Tu filtres des titres d'actualité pour un brief voyageur WhatsApp.
-Garde UNIQUEMENT ce qui aide un touriste sur place aujourd'hui : spectacles, festivals, expos, restos/cafés, sorties, patrimoine, fermetures utiles, météo locale marquante.
-REJETTE : politique, procès, faits divers, polarisant, hors sujet voyage.
-Réponds UNIQUEMENT avec un JSON array (0 à 3 objets) :
-[{"title":"...","source":"..."}]
-Les title/source doivent être repris tels quels depuis la liste fournie (pas d'invention).`
+const curateActuSystemPrompt = `Tu filtres et CREUSES des actualités pour un brief voyageur WhatsApp.
+Objectif : infos ACTIONNABLES pendant le séjour DANS CETTE VILLE (placeStayFrom → placeStayTo), surtout utiles aujourd'hui (date).
 
-// CurateActualites asks Bifrost to pick ≤3 traveler-relevant headlines for this day.
+GARDE seulement si le voyageur peut agir pendant cette fenêtre : lieu/événement nommé, fermeture utile, spectacle daté, resto, expo en cours.
+REJETTE : politique, procès, faits divers, polarisant.
+REJETTE listicles vagues ("6 sorties", "20 shows en août", "à faire en…") sauf si le snippet donne un événement nommé + timing utilisable pendant placeStayFrom…placeStayTo.
+Si l'événement est clairement hors de la fenêtre sur place → rejette.
+
+Pour chaque item retenu, écris "detail" = UNE phrase concrète (quoi + où + quand si connu dans title/snippet).
+N'invente RIEN (pas de date/lieu/heure absents du title/snippet).
+Recopie title/source/url EXACTEMENT depuis le candidat.
+
+Réponds UNIQUEMENT avec un JSON array (0 à 3 objets) :
+[{"title":"...","source":"...","url":"...","detail":"..."}]`
+
+// CurateActualites asks Bifrost to pick ≤3 actionable traveler headlines and dig a detail line.
 func (c *BifrostClient) CurateActualites(data *DayBriefData, candidates []ActualiteItem) ([]ActualiteItem, error) {
 	if c == nil || c.BaseURL == "" {
 		return nil, fmt.Errorf("bifrost not configured")
@@ -150,21 +158,24 @@ func (c *BifrostClient) CurateActualites(data *DayBriefData, candidates []Actual
 		return nil, nil
 	}
 	ctx := map[string]any{
-		"placeName":  data.PlaceName,
-		"weekday":    data.Weekday,
-		"date":       data.Date,
-		"travelDay":  data.TravelDay,
-		"hasKids":    data.HasKids,
-		"weather":    data.Weather,
-		"highlights": data.Highlights,
-		"candidates": candidates,
+		"placeName":      data.PlaceName,
+		"locationId":     data.LocationID,
+		"weekday":        data.Weekday,
+		"date":           data.Date,
+		"placeStayFrom":  data.PlaceStayFrom,
+		"placeStayTo":    data.PlaceStayTo,
+		"travelDay":      data.TravelDay,
+		"hasKids":        data.HasKids,
+		"weather":        data.Weather,
+		"highlights":     data.Highlights,
+		"candidates":     candidates,
 	}
 	payload, err := json.Marshal(ctx)
 	if err != nil {
 		return nil, err
 	}
-	user := "Contexte jour + candidats JSON:\n" + string(payload) +
-		"\n\nSélectionne jusqu'à 3 titres utiles au voyageur (JSON array uniquement)."
+	user := "Contexte jour + séjour sur place + candidats JSON:\n" + string(payload) +
+		"\n\nRetiens jusqu'à 3 actualités actionnables pour CE séjour dans la ville (JSON array uniquement)."
 
 	raw, err := c.chatOnce(curateActuSystemPrompt, user)
 	if err != nil {
@@ -190,17 +201,36 @@ func (c *BifrostClient) CurateActualites(data *DayBriefData, candidates []Actual
 	var out []ActualiteItem
 	for _, p := range picked {
 		key := strings.ToLower(strings.TrimSpace(p.Title))
-		if key == "" || newsHardDeny(p.Title) {
+		if key == "" || newsHardDeny(p.Title) || newsVagueDeny(p.Title) {
 			continue
 		}
-		if orig, ok := byTitle[key]; ok {
-			out = append(out, orig)
+		orig, ok := byTitle[key]
+		if !ok {
+			continue
 		}
+		detail := strings.TrimSpace(p.Detail)
+		if detail == "" {
+			detail = fallbackDetail(orig)
+		}
+		item := orig
+		item.Detail = detail
+		// Never invent URLs — keep candidate URL only.
+		out = append(out, item)
 		if len(out) >= maxActualites {
 			break
 		}
 	}
 	return out, nil
+}
+
+func fallbackDetail(it ActualiteItem) string {
+	if s := strings.TrimSpace(it.Snippet); s != "" {
+		if len(s) > 160 {
+			return s[:157] + "…"
+		}
+		return s
+	}
+	return strings.TrimSpace(it.Title)
 }
 
 func (c *BifrostClient) chatOnce(system, userContent string) (string, error) {

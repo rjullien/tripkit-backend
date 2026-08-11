@@ -144,12 +144,13 @@ type rssFeed struct {
 
 type rssItem struct {
 	Title       string `xml:"title"`
+	Link        string `xml:"link"`
 	Description string `xml:"description"`
 	Source      string `xml:"source"`
 }
 
 func fetchTravelerNews(place string) []ActualiteItem {
-	q := fmt.Sprintf("%s (spectacle OR festival OR concert OR exposition OR musée OR événement OR restaurant OR tourisme) when:14d", place)
+	q := fmt.Sprintf("%s (spectacle OR festival OR concert OR exposition OR musée OR événement OR restaurant OR tourisme OR fermeture) when:7d", place)
 	u := "https://news.google.com/rss/search?q=" + url.QueryEscape(q) + "&hl=fr-CA&gl=CA&ceid=CA:fr"
 	// Broader French news if place looks European
 	low := strings.ToLower(place)
@@ -179,14 +180,21 @@ func fetchTravelerNews(place string) []ActualiteItem {
 	var out []ActualiteItem
 	for _, it := range feed.Channel.Items {
 		title := cleanNewsTitle(it.Title)
-		if title == "" || newsHardDeny(title) {
+		if title == "" || newsHardDeny(title) || newsVagueDeny(title) {
 			continue
 		}
 		src := strings.TrimSpace(it.Source)
 		if src == "" {
 			src = newsSourceFromTitle(it.Title)
 		}
-		out = append(out, ActualiteItem{Title: title, Source: src})
+		snippet := cleanNewsSnippet(it.Description)
+		link := strings.TrimSpace(it.Link)
+		out = append(out, ActualiteItem{
+			Title:   title,
+			Source:  src,
+			URL:     link,
+			Snippet: snippet,
+		})
 		if len(out) >= 12 {
 			break
 		}
@@ -202,6 +210,16 @@ func cleanNewsTitle(t string) string {
 		t = strings.TrimSpace(t[:i])
 	}
 	return strings.TrimSpace(t)
+}
+
+func cleanNewsSnippet(s string) string {
+	s = html.UnescapeString(strings.TrimSpace(s))
+	s = reHTMLTag.ReplaceAllString(s, " ")
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > 360 {
+		s = s[:357] + "…"
+	}
+	return strings.TrimSpace(s)
 }
 
 func newsSourceFromTitle(t string) string {
@@ -229,9 +247,34 @@ func newsHardDeny(title string) bool {
 	return false
 }
 
+// newsVagueDeny drops listicles that are not actionable without digging.
+func newsVagueDeny(title string) bool {
+	low := strings.ToLower(title)
+	vague := []string{
+		"sorties gratuites", "sorties à faire", "sorties a faire",
+		"à voir en", "a voir en", "à faire en", "a faire en",
+		"shows à voir", "shows a voir", "spectacles à voir",
+		"meilleures sorties", "meilleures activités", "idées de sorties", "idees de sorties",
+		"guide des sorties", "que faire en", "quoi faire en",
+		"top 5", "top 10", "top 20",
+	}
+	for _, v := range vague {
+		if strings.Contains(low, v) {
+			return true
+		}
+	}
+	// "6 sorties…", "20 shows…"
+	if reListicleCount.MatchString(low) {
+		return true
+	}
+	return false
+}
+
+var reListicleCount = regexp.MustCompile(`(?i)\b\d+\s+(sorties|shows|spectacles|activités|activites|choses|événements|evenements)\b`)
+
 // travelerRelevant is a deterministic fallback when LLM curation is unavailable.
 func travelerRelevant(title string) bool {
-	if newsHardDeny(title) {
+	if newsHardDeny(title) || newsVagueDeny(title) {
 		return false
 	}
 	low := strings.ToLower(title)

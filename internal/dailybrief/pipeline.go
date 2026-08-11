@@ -90,7 +90,7 @@ func (s *Service) GenerateOpts(tripID string, dayNumber int, opts ExtractOpts) (
 	cfg := s.cfg()
 	bf := NewBifrostClient(cfg.BifrostBaseURL, cfg.BifrostAPIKey, cfg.BriefModel)
 
-	// Extra LLM call: curate Actualité (drop politics / junk; ≤3 traveler titles).
+	// Extra LLM call: curate + dig Actualité (actionable detail; drop listicles / junk).
 	if len(src.Actualites) > 0 {
 		candidates := src.Actualites
 		if curated, err := bf.CurateActualites(src, candidates); err != nil {
@@ -111,7 +111,8 @@ func (s *Service) GenerateOpts(tripID string, dayNumber int, opts ExtractOpts) (
 			place = "la destination"
 		}
 		src.Actualites = []ActualiteItem{{
-			Title:  "Pas de une locale marquante ce matin — focus sur le programme à " + place,
+			Title:  "Pas de une locale actionnable ce matin — focus sur le programme à " + place,
+			Detail: "Pas de une locale actionnable ce matin — focus sur le programme à " + place,
 			Source: "TripKit",
 		}}
 	}
@@ -151,6 +152,7 @@ func fallbackActualites(candidates []ActualiteItem) []ActualiteItem {
 		if !travelerRelevant(c.Title) {
 			continue
 		}
+		c.Detail = fallbackDetail(c)
 		out = append(out, c)
 		if len(out) >= maxActualites {
 			break

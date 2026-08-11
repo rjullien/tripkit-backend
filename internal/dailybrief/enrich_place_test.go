@@ -38,17 +38,21 @@ func TestTravelerRelevant_CultureTourism(t *testing.T) {
 func TestFallbackActualites_DropsPolitics(t *testing.T) {
 	in := []ActualiteItem{
 		{Title: "Évènement antiavortement annulé — La Presse", Source: "La Presse"},
-		{Title: "Festival d'été de Québec : nouvelles dates", Source: "Le Soleil"},
+		{Title: "Festival d'été de Québec : nouvelles dates", Source: "Le Soleil", Snippet: "Nouvelles dates annoncées."},
 		{Title: "Le ministre visite Québec", Source: "Radio-Canada"},
-		{Title: "Exposition photo au Vieux-Québec", Source: "Le Devoir"},
+		{Title: "Exposition photo au Vieux-Québec", Source: "Le Devoir", URL: "https://example.com/expo"},
+		{Title: "Six sorties gratuites à faire en août", Source: "Radio-Canada"},
 	}
 	out := fallbackActualites(in)
 	if len(out) != 2 {
 		t.Fatalf("want 2 traveler titles, got %d %#v", len(out), out)
 	}
 	for _, it := range out {
-		if newsHardDeny(it.Title) {
+		if newsHardDeny(it.Title) || newsVagueDeny(it.Title) {
 			t.Fatalf("fallback kept denied title %q", it.Title)
+		}
+		if it.Detail == "" {
+			t.Fatalf("fallback should set detail for %q", it.Title)
 		}
 	}
 }

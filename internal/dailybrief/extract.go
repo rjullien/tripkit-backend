@@ -47,12 +47,19 @@ type DayBriefData struct {
 	DressCode      string          `json:"dressCode,omitempty"`
 	DynamicAlerts  []string        `json:"dynamicAlerts,omitempty"`
 	Timezone       string          `json:"timezone,omitempty"`
+	// Place stay window = contiguous days with the same locationId, as dates.
+	LocationID     string `json:"locationId,omitempty"`
+	PlaceStayFrom  string `json:"placeStayFrom,omitempty"` // YYYY-MM-DD
+	PlaceStayTo    string `json:"placeStayTo,omitempty"`   // YYYY-MM-DD
 }
 
-// ActualiteItem is a local headline for travelers (title only — no tracking URLs).
+// ActualiteItem is a traveler news item (actionable: detail + link when available).
 type ActualiteItem struct {
-	Title  string `json:"title"`
-	Source string `json:"source,omitempty"`
+	Title   string `json:"title"`
+	Source  string `json:"source,omitempty"`
+	URL     string `json:"url,omitempty"`
+	Snippet string `json:"snippet,omitempty"`
+	Detail  string `json:"detail,omitempty"` // dug by LLM from title+snippet
 }
 
 // Tip is a short traveler tip selected for this day (deterministic).
@@ -125,6 +132,13 @@ func ExtractDayOpts(db *gorm.DB, tripID string, dayNumber int, opts ExtractOpts)
 		Timezone:      resolveTZ(tripData, dayData),
 		HasKids:       tripHasKids(tripData),
 		TravelDay:     isTravelDay(dayData, label),
+	}
+	if locID, _ := dayData["locationId"].(string); locID != "" {
+		out.LocationID = strings.TrimSpace(locID)
+	}
+	if trip.StartDate != nil {
+		from, to := PlaceStayWindow(db, tripID, dayNumber, out.LocationID, *trip.StartDate)
+		out.PlaceStayFrom, out.PlaceStayTo = from, to
 	}
 
 	if hotelID, ok := dayData["hotelId"].(string); ok && hotelID != "" {
@@ -273,6 +287,59 @@ func DayTimezone(db *gorm.DB, trip models.Trip, dayNumber int) string {
 		_ = json.Unmarshal([]byte(day.Data), &dayData)
 	}
 	return resolveTZ(tripData, dayData)
+}
+
+// PlaceStayWindow returns YYYY-MM-DD from/to for the contiguous run of days
+// sharing locationID around dayNumber (e.g. Québec J2–J4 → 2026-08-15…2026-08-17).
+// If locationID is empty, returns the single day date twice.
+func PlaceStayWindow(db *gorm.DB, tripID string, dayNumber int, locationID, startDate string) (from, to string) {
+	start, err := time.Parse("2006-01-02", strings.TrimSpace(startDate))
+	if err != nil {
+		return "", ""
+	}
+	dayDate := func(n int) string {
+		return start.AddDate(0, 0, n-1).Format("2006-01-02")
+	}
+	locID := strings.TrimSpace(locationID)
+	if locID == "" || db == nil {
+		d := dayDate(dayNumber)
+		return d, d
+	}
+
+	var days []models.Day
+	if err := db.Where("trip_id = ?", tripID).Order("day_num asc").Find(&days).Error; err != nil || len(days) == 0 {
+		d := dayDate(dayNumber)
+		return d, d
+	}
+
+	locOf := map[int]string{}
+	for _, d := range days {
+		var data map[string]any
+		_ = json.Unmarshal([]byte(d.Data), &data)
+		id, _ := data["locationId"].(string)
+		locOf[d.DayNum] = strings.TrimSpace(id)
+	}
+	if locOf[dayNumber] != "" && locOf[dayNumber] != locID {
+		// Caller passed a stale id — prefer DB.
+		locID = locOf[dayNumber]
+	}
+
+	lo, hi := dayNumber, dayNumber
+	for n := dayNumber - 1; ; n-- {
+		id, ok := locOf[n]
+		if !ok || id != locID {
+			break
+		}
+		lo = n
+	}
+	for n := dayNumber + 1; ; n++ {
+		id, ok := locOf[n]
+		if !ok || id != locID {
+			break
+		}
+		hi = n
+	}
+	return dayDate(lo), dayDate(hi)
 }
 
 func resolveTZ(tripData, dayData map[string]any) string {
