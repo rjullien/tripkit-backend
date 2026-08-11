@@ -31,6 +31,48 @@ func TestRunQA_FailedPlaceholder(t *testing.T) {
 	}
 }
 
+func TestRunQA_FrenchHotelAndDate(t *testing.T) {
+	src := &DayBriefData{
+		Date:    "2026-08-16",
+		Weekday: "dimanche",
+		Hotel:   map[string]any{"name": "Les Lofts ilewa — Chute-Montmorency"},
+		Timeline: []map[string]any{
+			{"time": "09:00", "label": "Petit-Champlain"},
+			{"time": "14:30", "label": "Chutes"},
+		},
+		Weather: map[string]any{"summary": "pluie"},
+	}
+	text := `_Bon dimanche les amis !_ 🌧️
+Aujourd'hui 16 août.
+*09h00* Petit-Champlain
+*14h30* Chutes
+🔑 Votre logement : Les Lofts ilewa — Chute-Montmorency`
+	qa := RunQA(text, src)
+	if qa.Verdict == QAFailed {
+		t.Fatalf("expected pass/warn, got %s %#v", qa.Verdict, qa)
+	}
+}
+
+func TestTimelineTimePresent(t *testing.T) {
+	cases := []struct {
+		text, t string
+		want    bool
+	}{
+		{"*09:00* go", "09:00", true},
+		{"*09h00* go", "09:00", true},
+		{"*9h00* go", "09:00", true},
+		{"*14h30* go", "14:30", true},
+		{"🚶 *9h* — go", "09:00", true},
+		{"*11h* — quartier", "11:00", true},
+		{"no times", "09:00", false},
+	}
+	for _, c := range cases {
+		if got := timelineTimePresent(c.text, c.t); got != c.want {
+			t.Fatalf("%q in %q: got %v want %v", c.t, c.text, got, c.want)
+		}
+	}
+}
+
 func TestParseConfigJSON(t *testing.T) {
 	raw := []byte(`{
 	  "gowaBaseUrl": "http://gowa.gowa.svc.cluster.local:3000",

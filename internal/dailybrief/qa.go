@@ -41,9 +41,9 @@ var forbiddenPatterns = []struct {
 }
 
 var (
-	reHotelSection = regexp.MustCompile(`(?i)hotel|check.?in|🏨`)
+	reHotelSection = regexp.MustCompile(`(?i)h[oô]tel|check.?in|logement|h[eé]bergement|loft|🏨|🔑`)
 	reTimeline     = regexp.MustCompile(`\d{1,2}[h:]\d{0,2}`)
-	reWeather      = regexp.MustCompile(`(?i)°[CF]|meteo|météo|☀️|🌧|🌤|temp`)
+	reWeather      = regexp.MustCompile(`(?i)°[CF]|meteo|météo|☀️|🌧|🌧️|🌤|temp|pluie|soleil`)
 	rePhone        = regexp.MustCompile(`(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}`)
 	reURL          = regexp.MustCompile(`https?://[^\s)]+`)
 	rePhoneNoise   = regexp.MustCompile(`[-.\s()]`)
@@ -75,19 +75,31 @@ func RunQA(text string, src *DayBriefData) QAResult {
 	}
 	if src.Date != "" {
 		human := humanDateFR(src.Date)
-		if !strings.Contains(text, src.Date) && (human == "" || !strings.Contains(text, human)) {
-			res.Contradictions = append(res.Contradictions, "date missing")
-			res.Verdict = QAFailed
+		hasISO := strings.Contains(text, src.Date)
+		hasHuman := human != "" && strings.Contains(strings.ToLower(text), strings.ToLower(human))
+		if !hasISO && !hasHuman {
+			// Weekday alone → warning; neither → failed.
+			if src.Weekday != "" && strings.Contains(strings.ToLower(text), strings.ToLower(src.Weekday)) {
+				res.Contradictions = append(res.Contradictions, "date missing (weekday only)")
+				if res.Verdict == QAPassed {
+					res.Verdict = QAWarning
+				}
+			} else {
+				res.Contradictions = append(res.Contradictions, "date missing")
+				res.Verdict = QAFailed
+			}
 		}
 	}
 	if src.Hotel != nil {
-		if name, _ := src.Hotel["name"].(string); name != "" && !strings.Contains(text, name) {
+		name, _ := src.Hotel["name"].(string)
+		hasName := name != "" && strings.Contains(text, name)
+		if name != "" && !hasName {
 			res.Completeness = append(res.Completeness, "hotel.name absent")
 			if res.Verdict == QAPassed {
 				res.Verdict = QAWarning
 			}
 		}
-		if !reHotelSection.MatchString(text) {
+		if !reHotelSection.MatchString(text) && !hasName {
 			res.Completeness = append(res.Completeness, "hotel section missing")
 			res.Verdict = QAFailed
 		}
@@ -105,7 +117,7 @@ func RunQA(text string, src *DayBriefData) QAResult {
 		res.Verdict = QAFailed
 	}
 	for _, item := range src.Timeline {
-		if t, _ := item["time"].(string); t != "" && !strings.Contains(text, t) {
+		if t, _ := item["time"].(string); t != "" && !timelineTimePresent(text, t) {
 			res.Completeness = append(res.Completeness, fmt.Sprintf("timeline time %s absent", t))
 			if res.Verdict == QAPassed {
 				res.Verdict = QAWarning
@@ -163,4 +175,49 @@ func humanDateFR(iso string) string {
 		return ""
 	}
 	return day + " " + months[m]
+}
+
+// timelineTimePresent accepts "09:00", "9:00", "09h00", "9h00".
+func timelineTimePresent(text, t string) bool {
+	t = strings.TrimSpace(t)
+	if t == "" {
+		return true
+	}
+	if strings.Contains(text, t) {
+		return true
+	}
+	norm := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(t, "H", ":"), "h", ":"))
+	parts := strings.SplitN(norm, ":", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	hNum := strings.TrimLeft(parts[0], "0")
+	if hNum == "" {
+		hNum = "0"
+	}
+	min := parts[1]
+	if len(min) == 1 {
+		min = "0" + min
+	}
+	hPad := hNum
+	if len(hPad) == 1 {
+		hPad = "0" + hPad
+	}
+	variants := []string{
+		hNum + ":" + min,
+		hPad + ":" + min,
+		hNum + "h" + min,
+		hPad + "h" + min,
+	}
+	// French short form "9h" / "09h" when minutes are :00
+	if min == "00" {
+		variants = append(variants, hNum+"h", hPad+"h", hNum+"H", hPad+"H")
+	}
+	low := strings.ToLower(text)
+	for _, v := range variants {
+		if strings.Contains(low, strings.ToLower(v)) {
+			return true
+		}
+	}
+	return false
 }
