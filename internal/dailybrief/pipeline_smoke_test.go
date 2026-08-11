@@ -37,7 +37,7 @@ func TestPipeline_GenerateAndSend_Smoke(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		text := "📅 *mercredi 15 avril*\n🏨 SpringHill\n• 08:00 - Depart"
+		text := "📅 *mercredi 15 avril*\n🏨 SpringHill\n• 08:00 - Depart\n⭐ *À savoir*\n• Fait local\n📰 *Actualité*\n• Expo locale\n💡 *Astuce pratique*\nCash pour le parking"
 		resp := bifrostResp{Choices: []struct {
 			Message bifrostMsg `json:"message"`
 		}{{Message: bifrostMsg{Role: "assistant", Content: text}}}}

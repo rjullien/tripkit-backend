@@ -28,7 +28,7 @@ func TestGenerateOpts_QACorrectionOnce(t *testing.T) {
 		}
 		text := "TODO bad mercredi 15 avril" // first call fails QA
 		if strings.Contains(sys, "Corrige") || calls >= 2 {
-			text = "📅 *mercredi 15 avril*\n🏨 SpringHill check-in\n• 08:00 - Depart"
+			text = "📅 *mercredi 15 avril*\n🏨 SpringHill check-in\n• 08:00 - Depart\n⭐ *À savoir*\n• Fait local\n📰 *Actualité*\n• Expo du jour\n💡 *Astuce pratique*\nPrendre le parapluie"
 		}
 		_ = json.NewEncoder(w).Encode(bifrostResp{Choices: []struct {
 			Message bifrostMsg `json:"message"`

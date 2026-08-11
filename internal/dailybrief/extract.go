@@ -24,18 +24,41 @@ type DayBriefData struct {
 	Date          string           `json:"date"`
 	Weekday       string           `json:"weekday"`
 	Label         string           `json:"label,omitempty"`
+	PlaceName     string           `json:"placeName,omitempty"`
+	From          string           `json:"from,omitempty"`
+	Dist          string           `json:"dist,omitempty"`
 	Hotel         map[string]any   `json:"hotel,omitempty"`
 	Restaurant    map[string]any   `json:"restaurant,omitempty"`
 	Timeline      []map[string]any `json:"timeline,omitempty"`
 	Highlights    []string         `json:"highlights,omitempty"`
-	MapURL        string           `json:"mapUrl,omitempty"`
-	Duration      string           `json:"duration,omitempty"`
-	Alerts        []string         `json:"alerts,omitempty"`
-	WhatsAppGroup string           `json:"whatsappGroup,omitempty"`
-	Weather       map[string]any   `json:"weather,omitempty"`
-	DressCode     string           `json:"dressCode,omitempty"`
-	DynamicAlerts []string         `json:"dynamicAlerts,omitempty"`
-	Timezone      string           `json:"timezone,omitempty"`
+	PlaceFacts    []string         `json:"placeFacts,omitempty"`
+	Actualites    []ActualiteItem  `json:"actualites,omitempty"`
+	CultureExpress *Tip            `json:"cultureExpress,omitempty"`
+	PracticalTip   *Tip            `json:"practicalTip,omitempty"` // mandatory 1-liner
+	Tips           []Tip           `json:"tips,omitempty"`         // 0–5 extras pertinents ce jour
+	HasKids        bool            `json:"hasKids,omitempty"`
+	TravelDay      bool            `json:"travelDay,omitempty"` // on roule / transfert
+	MapURL         string          `json:"mapUrl,omitempty"`
+	Duration       string          `json:"duration,omitempty"`
+	Alerts         []string        `json:"alerts,omitempty"`
+	WhatsAppGroup  string          `json:"whatsappGroup,omitempty"`
+	Weather        map[string]any  `json:"weather,omitempty"`
+	DressCode      string          `json:"dressCode,omitempty"`
+	DynamicAlerts  []string        `json:"dynamicAlerts,omitempty"`
+	Timezone       string          `json:"timezone,omitempty"`
+}
+
+// ActualiteItem is a local headline for travelers (title only — no tracking URLs).
+type ActualiteItem struct {
+	Title  string `json:"title"`
+	Source string `json:"source,omitempty"`
+}
+
+// Tip is a short traveler tip selected for this day (deterministic).
+type Tip struct {
+	Kind  string `json:"kind"` // culture_express|pratique|food|photo|plan_b|timing|transport|budget|famille|securite
+	Title string `json:"title"`
+	Text  string `json:"text"`
 }
 
 // ExtractDay loads trip + day from DB into DayBriefData (no LLM).
@@ -94,8 +117,13 @@ func ExtractDayOpts(db *gorm.DB, tripID string, dayNumber int, opts ExtractOpts)
 		Date:          dateStr,
 		Weekday:       weekday,
 		Label:         label,
+		PlaceName:     placeNameFromDay(label, dayData),
+		From:          firstString(dayData, "from"),
+		Dist:          firstString(dayData, "dist"),
 		WhatsAppGroup: waGroup,
 		Timezone:      resolveTZ(tripData, dayData),
+		HasKids:       tripHasKids(tripData),
+		TravelDay:     isTravelDay(dayData, label),
 	}
 
 	if hotelID, ok := dayData["hotelId"].(string); ok && hotelID != "" {
@@ -141,6 +169,92 @@ func ExtractDayOpts(db *gorm.DB, tripID string, dayNumber int, opts ExtractOpts)
 	out.Alerts = stringList(dayData["alerts"])
 
 	return out, nil
+}
+
+func placeNameFromDay(label string, dayData map[string]any) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		if id, _ := dayData["locationId"].(string); id != "" {
+			return strings.ReplaceAll(id, "-", " ")
+		}
+		return ""
+	}
+	for _, sep := range []string{" — ", " – ", " - ", " → ", "→"} {
+		if i := strings.Index(label, sep); i > 0 {
+			left := strings.TrimSpace(label[:i])
+			left = strings.TrimLeftFunc(left, func(r rune) bool {
+				return r == '🚗' || r == '✈' || r == '️' || r == '🚆' || r == '🚢' || r == ' '
+			})
+			// Also strip common transport prefixes without relying on all emoji
+			left = strings.TrimSpace(strings.TrimPrefix(left, "🚗"))
+			if left != "" {
+				return left
+			}
+		}
+	}
+	return strings.TrimSpace(strings.TrimPrefix(label, "🚗"))
+}
+
+func tripHasKids(tripData map[string]any) bool {
+	people, _ := tripData["people"].(map[string]any)
+	travelers, _ := tripData["travelers"].([]any)
+	checkPerson := func(p map[string]any) bool {
+		if p == nil {
+			return false
+		}
+		if child, ok := p["child"].(bool); ok && child {
+			return true
+		}
+		if isChild, ok := p["isChild"].(bool); ok && isChild {
+			return true
+		}
+		if age, ok := asFloat(p["age"]); ok && age > 0 && age < 18 {
+			return true
+		}
+		emoji, _ := p["emoji"].(string)
+		for _, e := range []string{"🧒", "👧", "👦", "👶"} {
+			if strings.Contains(emoji, e) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, t := range travelers {
+		tm, _ := t.(map[string]any)
+		if tm == nil {
+			continue
+		}
+		if checkPerson(tm) {
+			return true
+		}
+		pid, _ := tm["personId"].(string)
+		if pid != "" && people != nil {
+			if p, _ := people[pid].(map[string]any); checkPerson(p) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isTravelDay(dayData map[string]any, label string) bool {
+	dist := strings.ToLower(strings.TrimSpace(firstString(dayData, "dist")))
+	dur := strings.ToLower(strings.TrimSpace(firstString(dayData, "dur", "duration")))
+	lowLabel := strings.ToLower(label)
+	if strings.Contains(label, "🚗") || strings.Contains(label, "✈") || strings.Contains(lowLabel, "→") {
+		return true
+	}
+	if dist != "" && dist != "-" && dist != "local" {
+		if strings.Contains(dist, "km") || strings.Contains(dist, "mi") {
+			return true
+		}
+	}
+	if dur != "" && dur != "-" {
+		if strings.Contains(dur, "h") || strings.Contains(dur, "min") {
+			return true
+		}
+	}
+	return false
 }
 
 // DayTimezone returns IANA TZ for a trip day (locationId → locations[].tz → homeTz → Paris).

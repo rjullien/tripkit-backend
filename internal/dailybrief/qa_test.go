@@ -16,7 +16,13 @@ func TestRunQA_Passed(t *testing.T) {
 	}
 	text := `📅 *mercredi 15 avril*
 🏨 SpringHill check-in
-• 08:00 - Depart`
+• 08:00 - Depart
+⭐ *À savoir*
+• Ville test au bord de l'eau
+📰 *Actualité*
+• Expo locale ce week-end
+💡 *Astuce pratique*
+Cash utile pour le parking`
 	qa := RunQA(text, src)
 	if qa.Verdict != QAPassed && qa.Verdict != QAWarning {
 		t.Fatalf("verdict=%s summary=%s %#v", qa.Verdict, qa.Summary, qa)
@@ -46,7 +52,13 @@ func TestRunQA_FrenchHotelAndDate(t *testing.T) {
 Aujourd'hui 16 août.
 *09h00* Petit-Champlain
 *14h30* Chutes
-🔑 Votre logement : Les Lofts ilewa — Chute-Montmorency`
+🔑 Votre logement : Les Lofts ilewa — Chute-Montmorency
+⭐ *À savoir*
+• Capitale du Québec
+📰 *Actualité*
+• Festival d'été en ville
+💡 *Astuce pratique*
+Parapluie dans le sac`
 	qa := RunQA(text, src)
 	if qa.Verdict == QAFailed {
 		t.Fatalf("expected pass/warn, got %s %#v", qa.Verdict, qa)
