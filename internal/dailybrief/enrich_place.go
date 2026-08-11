@@ -216,7 +216,12 @@ func newsSourceFromTitle(t string) string {
 
 func travelerRelevant(title string) bool {
 	low := strings.ToLower(title)
-	deny := []string{"homicide", "meurtre", "fusillade", "agression sexuelle", "crash boursier"}
+	deny := []string{
+		"homicide", "meurtre", "fusillade", "agression sexuelle", "crash boursier",
+		"condamné", "condamnee", "condamnée", "procès", "proces", "tribunal",
+		"antiavortement", "avortement", "élection", "election", "parti québécois",
+		"ministre",
+	}
 	for _, d := range deny {
 		if strings.Contains(low, d) {
 			return false
@@ -227,13 +232,13 @@ func travelerRelevant(title string) bool {
 		"tourisme", "restaurant", "hôtel", "hotel", "événement", "evenement",
 		"culture", "théâtre", "theatre", "cinéma", "cinema", "marché", "marche",
 		"fermeture", "grève", "greve", "chantier", "météo", "meteo", "pluie",
-		"voyage", "visiteur", "quartier", "patrimoine",
+		"voyage", "visiteur", "quartier", "patrimoine", "sortie", "gratuit",
+		"été", "ete", "plein air",
 	}
 	for _, a := range allow {
 		if strings.Contains(low, a) {
 			return true
 		}
 	}
-	// Soft allow if title mentions city-ish short news
-	return len(title) < 120
+	return false
 }
