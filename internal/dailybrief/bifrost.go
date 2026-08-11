@@ -61,7 +61,9 @@ Règles :
 - Adapte le ton au contexte (jour relax vs jour chargé)
 - N'invente AUCUNE information. Utilise UNIQUEMENT les données fournies.
 - N'ajoute pas de liens ou numéros de téléphone que tu n'as pas reçus en input.
-- Réponds UNIQUEMENT avec le message formaté, sans explication ni commentaire.`
+- Réponds UNIQUEMENT avec le message formaté, sans explication ni commentaire.
+- Inclus toujours le jour de la semaine ET la date en français (ex. dimanche 16 août).
+- Si un hôtel est fourni, mentionne-le clairement (nom + check-in si dispo).`
 
 // Format asks Bifrost to turn enriched day JSON into WhatsApp text.
 func (c *BifrostClient) Format(enriched any) (string, error) {
