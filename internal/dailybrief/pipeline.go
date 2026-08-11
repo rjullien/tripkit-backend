@@ -86,6 +86,23 @@ func (s *Service) GenerateOpts(tripID string, dayNumber int, opts ExtractOpts) (
 		_ = EnrichDay(src, lat, lon)
 	}
 	EnrichPlaceContext(src)
+
+	cfg := s.cfg()
+	bf := NewBifrostClient(cfg.BifrostBaseURL, cfg.BifrostAPIKey, cfg.BriefModel)
+
+	// Extra LLM call: curate Actualité (drop politics / junk; ≤3 traveler titles).
+	if len(src.Actualites) > 0 {
+		candidates := src.Actualites
+		if curated, err := bf.CurateActualites(src, candidates); err != nil {
+			log.Printf("dailybrief: actu curation failed, fallback filter: %v", err)
+			src.Actualites = fallbackActualites(candidates)
+		} else if len(curated) > 0 {
+			src.Actualites = curated
+		} else {
+			src.Actualites = fallbackActualites(candidates)
+		}
+	}
+
 	SelectDayTips(src)
 	// Actualité is mandatory in the brief — soft placeholder if feeds are empty.
 	if len(src.Actualites) == 0 {
@@ -99,8 +116,6 @@ func (s *Service) GenerateOpts(tripID string, dayNumber int, opts ExtractOpts) (
 		}}
 	}
 
-	cfg := s.cfg()
-	bf := NewBifrostClient(cfg.BifrostBaseURL, cfg.BifrostAPIKey, cfg.BriefModel)
 	text, err := bf.Format(src)
 	if err != nil {
 		return nil, err
@@ -128,6 +143,20 @@ func (s *Service) GenerateOpts(tripID string, dayNumber int, opts ExtractOpts) (
 		QALoopUsed:  qaLoopUsed,
 		Source:      src,
 	}, nil
+}
+
+func fallbackActualites(candidates []ActualiteItem) []ActualiteItem {
+	var out []ActualiteItem
+	for _, c := range candidates {
+		if !travelerRelevant(c.Title) {
+			continue
+		}
+		out = append(out, c)
+		if len(out) >= maxActualites {
+			break
+		}
+	}
+	return out
 }
 
 // GenerateAndSend runs pipeline + GoWA send when QA allows.

@@ -37,7 +37,11 @@ func TestPipeline_GenerateAndSend_Smoke(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
+		body, _ := io.ReadAll(r.Body)
 		text := "📅 *mercredi 15 avril*\n🏨 SpringHill\n• 08:00 - Depart\n⭐ *À savoir*\n• Fait local\n📰 *Actualité*\n• Expo locale\n💡 *Astuce pratique*\nCash pour le parking"
+		if strings.Contains(string(body), "filtres des titres") {
+			text = `[{"title":"Expo locale","source":"Le Soleil"}]`
+		}
 		resp := bifrostResp{Choices: []struct {
 			Message bifrostMsg `json:"message"`
 		}{{Message: bifrostMsg{Role: "assistant", Content: text}}}}

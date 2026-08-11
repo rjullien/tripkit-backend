@@ -30,10 +30,8 @@ func EnrichPlaceContext(data *DayBriefData) {
 	if facts := fetchWikiFacts(place); len(facts) > 0 {
 		data.PlaceFacts = facts
 	}
+	// Keep up to ~12 candidates; pipeline LLM curation (or fallback) picks ≤3.
 	if news := fetchTravelerNews(place); len(news) > 0 {
-		if len(news) > maxActualites {
-			news = news[:maxActualites]
-		}
 		data.Actualites = news
 	}
 }
@@ -181,7 +179,7 @@ func fetchTravelerNews(place string) []ActualiteItem {
 	var out []ActualiteItem
 	for _, it := range feed.Channel.Items {
 		title := cleanNewsTitle(it.Title)
-		if title == "" || !travelerRelevant(title) {
+		if title == "" || newsHardDeny(title) {
 			continue
 		}
 		src := strings.TrimSpace(it.Source)
@@ -189,7 +187,7 @@ func fetchTravelerNews(place string) []ActualiteItem {
 			src = newsSourceFromTitle(it.Title)
 		}
 		out = append(out, ActualiteItem{Title: title, Source: src})
-		if len(out) >= maxActualites {
+		if len(out) >= 12 {
 			break
 		}
 	}
@@ -214,19 +212,29 @@ func newsSourceFromTitle(t string) string {
 	return ""
 }
 
-func travelerRelevant(title string) bool {
+func newsHardDeny(title string) bool {
 	low := strings.ToLower(title)
 	deny := []string{
 		"homicide", "meurtre", "fusillade", "agression sexuelle", "crash boursier",
-		"condamné", "condamnee", "condamnée", "procès", "proces", "tribunal",
-		"antiavortement", "avortement", "élection", "election", "parti québécois",
-		"ministre",
+		"condamné", "condamnee", "condamnée", "condamne", "procès", "proces", "tribunal",
+		"antiavortement", "avortement", "avort", "élection", "election", "parti québécois",
+		"ministre", "député", "depute", "politique", "gouvernement", "assemblée nationale",
+		"poursuite", "amende", "inculp",
 	}
 	for _, d := range deny {
 		if strings.Contains(low, d) {
-			return false
+			return true
 		}
 	}
+	return false
+}
+
+// travelerRelevant is a deterministic fallback when LLM curation is unavailable.
+func travelerRelevant(title string) bool {
+	if newsHardDeny(title) {
+		return false
+	}
+	low := strings.ToLower(title)
 	allow := []string{
 		"festival", "concert", "spectacle", "exposition", "musée", "musee",
 		"tourisme", "restaurant", "hôtel", "hotel", "événement", "evenement",

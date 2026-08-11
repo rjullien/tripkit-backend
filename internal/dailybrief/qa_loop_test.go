@@ -17,6 +17,7 @@ import (
 
 func TestGenerateOpts_QACorrectionOnce(t *testing.T) {
 	calls := 0
+	formatCalls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		body, _ := io.ReadAll(r.Body)
@@ -26,9 +27,18 @@ func TestGenerateOpts_QACorrectionOnce(t *testing.T) {
 		if len(req.Messages) > 0 {
 			sys = req.Messages[0].Content
 		}
-		text := "TODO bad mercredi 15 avril" // first call fails QA
-		if strings.Contains(sys, "Corrige") || calls >= 2 {
+		text := "TODO bad mercredi 15 avril"
+		switch {
+		case strings.Contains(sys, "filtres des titres"):
+			text = `[{"title":"Expo du jour","source":"Le Soleil"}]`
+		case strings.Contains(sys, "Corrige"):
 			text = "📅 *mercredi 15 avril*\n🏨 SpringHill check-in\n• 08:00 - Depart\n⭐ *À savoir*\n• Fait local\n📰 *Actualité*\n• Expo du jour\n💡 *Astuce pratique*\nPrendre le parapluie"
+		default:
+			// First Format fails QA; later Format (if any) stays bad unless Corrige above.
+			formatCalls++
+			if formatCalls == 1 {
+				text = "TODO bad mercredi 15 avril"
+			}
 		}
 		_ = json.NewEncoder(w).Encode(bifrostResp{Choices: []struct {
 			Message bifrostMsg `json:"message"`
