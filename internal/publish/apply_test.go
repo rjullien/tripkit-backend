@@ -166,6 +166,39 @@ func TestParseSeedFile_QuebecShape(t *testing.T) {
 	}
 }
 
+func TestBuildCanonical_PersistsDailyBriefFlags(t *testing.T) {
+	code := `var SEED_TEST = {
+  "trip": {
+    "id": "test-2026",
+    "name": "Test",
+    "dailyBrief": true,
+    "whatsappGroup": "120363000000000001@g.us",
+    "travelers": [{"personId":"rene"}]
+  },
+  "days": [ { "day": 1, "title": "A" } ],
+  "hotels": {},
+  "lists": {}
+};`
+	seed, err := publish.ParseSeedFile(code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	people, err := publish.ParsePeopleFile(`var PEOPLE = { rene: { id: "rene", name: "René", login: "rene" } };`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := publish.BuildCanonical(seed, people, "jullien", "jullien", "abc", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.TripData["dailyBrief"] != true {
+		t.Fatalf("dailyBrief=%v", p.TripData["dailyBrief"])
+	}
+	if p.TripData["whatsappGroup"] != "120363000000000001@g.us" {
+		t.Fatalf("whatsappGroup=%v", p.TripData["whatsappGroup"])
+	}
+}
+
 func jsonContainsLogin(raw []byte) bool {
 	var m map[string]map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {

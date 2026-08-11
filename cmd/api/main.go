@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/rjullien/tripkit-backend/internal/dailybrief"
 	"github.com/rjullien/tripkit-backend/internal/database"
 	"github.com/rjullien/tripkit-backend/internal/handlers"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
@@ -41,6 +42,13 @@ func main() {
 	h.SetPublishRegistry(reg)
 	h.SetPublishManifestResolver(publish.NewManifestResolverFromEnv())
 	publish.StartRegistryRefresh(reg, sourcesLoader)
+
+	briefLoader := dailybrief.NewLoaderFromEnv()
+	briefCfg := briefLoader.Bootstrap()
+	log.Printf("dailybrief config: origin=%s model=%s gowa=%s", briefCfg.Origin, briefCfg.BriefModel, briefCfg.GowaBaseURL)
+	briefSvc := &dailybrief.Service{DB: db, Loader: briefLoader}
+	h.SetDailyBrief(briefSvc)
+	(&dailybrief.Worker{DB: db, Service: briefSvc}).Start()
 
 	// In-process worker: auto-on when TRIPKIT_GITHUB_TOKEN is set; override via TRIPKIT_PUBLISH_WORKER.
 	if publish.WorkerEnabled() {
@@ -135,6 +143,8 @@ func main() {
 		r.Get("/trips/{tripId}/days/{dayNum}", h.GetDay)
 		r.Put("/trips/{tripId}/days/{dayNum}", h.UpsertDay)
 		r.Delete("/trips/{tripId}/days/{dayNum}", h.DeleteDay)
+		r.Get("/trips/{tripId}/days/{dayNum}/brief", h.GetDayBrief)
+		r.Post("/trips/{tripId}/days/{dayNum}/brief/send", h.SendDayBrief)
 
 		// Hotels
 		r.Get("/trips/{tripId}/hotels", h.ListHotels)
