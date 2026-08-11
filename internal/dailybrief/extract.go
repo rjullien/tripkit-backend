@@ -240,19 +240,22 @@ func tripHasKids(tripData map[string]any) bool {
 func isTravelDay(dayData map[string]any, label string) bool {
 	dist := strings.ToLower(strings.TrimSpace(firstString(dayData, "dist")))
 	dur := strings.ToLower(strings.TrimSpace(firstString(dayData, "dur", "duration")))
-	lowLabel := strings.ToLower(label)
-	if strings.Contains(label, "🚗") || strings.Contains(label, "✈") || strings.Contains(lowLabel, "→") {
+	if strings.Contains(label, "🚗") || strings.Contains(label, "✈") {
 		return true
 	}
-	if dist != "" && dist != "-" && dist != "local" {
-		if strings.Contains(dist, "km") || strings.Contains(dist, "mi") {
-			return true
+	// dist "Local" / "-" = journée sur place
+	if dist == "" || dist == "-" || dist == "local" {
+		// Only duration with hours counts as travel when dist is local/empty
+		if dur != "" && dur != "-" && (strings.Contains(dur, "h") || strings.Contains(dur, "min")) {
+			// e.g. ferry day without km — still travel-ish; require from≠empty
+			if strings.TrimSpace(firstString(dayData, "from")) != "" && strings.Contains(strings.ToLower(label), "→") {
+				return true
+			}
 		}
+		return false
 	}
-	if dur != "" && dur != "-" {
-		if strings.Contains(dur, "h") || strings.Contains(dur, "min") {
-			return true
-		}
+	if strings.Contains(dist, "km") || strings.Contains(dist, "mi") {
+		return true
 	}
 	return false
 }

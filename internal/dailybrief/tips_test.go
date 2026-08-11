@@ -59,10 +59,10 @@ func TestSelectDayTips_TravelDay(t *testing.T) {
 }
 
 func TestIsTravelDay(t *testing.T) {
-	if !isTravelDay(map[string]any{"dist": "250 km", "dur": "3h"}, "Montréal → Québec") {
+	if !isTravelDay(map[string]any{"dist": "250 km", "dur": "3h"}, "🚗 Montréal → Québec") {
 		t.Fatal("expected travel")
 	}
-	if isTravelDay(map[string]any{"dist": "Local", "dur": "-"}, "Québec City — journée") {
-		t.Fatal("expected stay")
+	if isTravelDay(map[string]any{"dist": "Local", "dur": "-"}, "Québec City — Journée complète (2026-08-15 → 2026-08-18)") {
+		t.Fatal("expected stay (date range arrow must not imply travel)")
 	}
 }
