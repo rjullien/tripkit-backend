@@ -173,6 +173,7 @@ func TestBuildCanonical_PersistsDailyBriefFlags(t *testing.T) {
     "name": "Test",
     "dailyBrief": true,
     "whatsappGroup": "120363000000000001@g.us",
+    "briefSendTime": "07:30",
     "travelers": [{"personId":"rene"}]
   },
   "days": [ { "day": 1, "title": "A" } ],
@@ -196,6 +197,9 @@ func TestBuildCanonical_PersistsDailyBriefFlags(t *testing.T) {
 	}
 	if p.TripData["whatsappGroup"] != "120363000000000001@g.us" {
 		t.Fatalf("whatsappGroup=%v", p.TripData["whatsappGroup"])
+	}
+	if p.TripData["briefSendTime"] != "07:30" {
+		t.Fatalf("briefSendTime=%v", p.TripData["briefSendTime"])
 	}
 }
 

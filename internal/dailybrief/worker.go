@@ -11,7 +11,8 @@ import (
 )
 
 // Worker is an in-process minute ticker (no k8s CronJob).
-// For each enabled trip it evaluates "is it sendLocalHour in THIS day's TZ?"
+// For each enabled trip it evaluates "is it send time in THIS day's TZ?"
+// (trip.briefSendTime if set, else ops sendLocalHour/Minute)
 // so cross-timezone itineraries fire at local morning for that day.
 type Worker struct {
 	DB      *gorm.DB
@@ -43,7 +44,7 @@ func (w *Worker) Start() {
 
 func (w *Worker) tick() {
 	cfg := w.Service.cfg()
-	wantHour, wantMin := cfg.SendHourMinute()
+	globalHour, globalMin := cfg.SendHourMinute()
 	nowUTC := w.nowFn().UTC()
 
 	var trips []models.Trip
@@ -54,6 +55,10 @@ func (w *Worker) tick() {
 		enabled, group := TripFlags(trip)
 		if !enabled || group == "" {
 			continue
+		}
+		wantHour, wantMin := globalHour, globalMin
+		if h, m, ok := TripBriefSendTime(trip); ok {
+			wantHour, wantMin = h, m
 		}
 		if trip.StartDate == nil || trip.EndDate == nil {
 			continue

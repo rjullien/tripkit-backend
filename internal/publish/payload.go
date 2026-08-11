@@ -179,6 +179,8 @@ func BuildCanonical(seed SeedFile, people map[string]Person, family, sourceID, g
 		"homeTz":        stringOr(seed.Trip["homeTz"], "Europe/Paris"),
 		"dailyBrief":    seed.Trip["dailyBrief"],
 		"whatsappGroup": seed.Trip["whatsappGroup"],
+		// Optional per-trip wall-clock "HH:MM" (day location TZ). Overrides ops sendLocalHour/Minute.
+		"briefSendTime": seed.Trip["briefSendTime"],
 	}
 
 	// Hotels block also stored in trip.data (FE expects it).

@@ -3,6 +3,7 @@ package dailybrief
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -379,4 +380,35 @@ func TripFlags(trip models.Trip) (enabled bool, group string) {
 	enabled, _ = data["dailyBrief"].(bool)
 	group, _ = data["whatsappGroup"].(string)
 	return enabled, strings.TrimSpace(group)
+}
+
+// TripBriefSendTime reads optional seed trip.briefSendTime ("HH:MM" or "H:MM").
+// ok=false → worker must use ops/daily-brief.json sendLocalHour/Minute.
+func TripBriefSendTime(trip models.Trip) (hour, minute int, ok bool) {
+	if trip.Data == nil {
+		return 0, 0, false
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(*trip.Data), &data); err != nil {
+		return 0, 0, false
+	}
+	return ParseBriefSendTime(data["briefSendTime"])
+}
+
+// ParseBriefSendTime accepts "07:30", "7:30". Empty / invalid → ok=false.
+func ParseBriefSendTime(v any) (hour, minute int, ok bool) {
+	s := strings.TrimSpace(fmt.Sprint(v))
+	if s == "" || s == "<nil>" {
+		return 0, 0, false
+	}
+	parts := strings.Split(s, ":")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	h, errH := strconv.Atoi(strings.TrimSpace(parts[0]))
+	m, errM := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if errH != nil || errM != nil || h < 0 || h > 23 || m < 0 || m > 59 {
+		return 0, 0, false
+	}
+	return h, m, true
 }
