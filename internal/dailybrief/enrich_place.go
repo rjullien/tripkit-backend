@@ -16,27 +16,157 @@ import (
 var reHTMLTag = regexp.MustCompile(`<[^>]+>`)
 
 // EnrichPlaceContext adds Wikipedia place facts + traveler news (soft-fail).
+// Travel days: À savoir facts for départ + trajet + arrivée; Actualité stays on arrival city.
 func EnrichPlaceContext(data *DayBriefData) {
 	if data == nil {
 		return
 	}
-	place := strings.TrimSpace(data.PlaceName)
-	if place == "" {
-		place = strings.TrimSpace(data.Label)
+	if data.TravelDay {
+		enrichTravelPlaceFacts(data)
+	} else {
+		place := strings.TrimSpace(data.PlaceName)
+		if place == "" {
+			place = strings.TrimSpace(data.Label)
+		}
+		if place != "" {
+			if facts := fetchWikiFacts(place, 2); len(facts) > 0 {
+				data.PlaceFacts = facts
+			}
+		}
 	}
-	if place == "" {
+
+	// Actualité: arrival / on-site place (presence already rewrote PlaceName when needed).
+	newsPlace := strings.TrimSpace(data.PlaceName)
+	if newsPlace == "" {
+		newsPlace = strings.TrimSpace(data.To)
+	}
+	if newsPlace == "" {
+		newsPlace = strings.TrimSpace(data.Label)
+	}
+	if newsPlace == "" {
 		return
 	}
-	if facts := fetchWikiFacts(place); len(facts) > 0 {
-		data.PlaceFacts = facts
-	}
-	// Keep up to ~12 candidates; pipeline LLM curation (or fallback) picks ≤3.
-	if news := fetchTravelerNews(place); len(news) > 0 {
+	if news := fetchTravelerNews(newsPlace); len(news) > 0 {
 		data.Actualites = news
 	}
 }
 
-func fetchWikiFacts(place string) []string {
+func enrichTravelPlaceFacts(data *DayBriefData) {
+	depart := strings.TrimSpace(data.From)
+	arrive := strings.TrimSpace(data.To)
+	if arrive == "" {
+		arrive = strings.TrimSpace(data.PlaceName)
+	}
+	route := routePlaceHint(data)
+
+	seg := map[string][]string{}
+	var flat []string
+	add := func(key, place string, n int) {
+		place = strings.TrimSpace(place)
+		if place == "" {
+			return
+		}
+		facts := fetchWikiFacts(place, n)
+		if len(facts) == 0 {
+			return
+		}
+		labeled := make([]string, 0, len(facts))
+		prefix := map[string]string{
+			"depart":  "Départ — " + place + " : ",
+			"route":   "Trajet — " + place + " : ",
+			"arrivee": "Arrivée — " + place + " : ",
+		}[key]
+		for _, f := range facts {
+			line := prefix + f
+			labeled = append(labeled, line)
+			flat = append(flat, line)
+		}
+		seg[key] = labeled
+	}
+
+	add("depart", depart, 1)
+	if route != "" && !samePlace(route, depart) && !samePlace(route, arrive) {
+		add("route", route, 1)
+	} else if dist := strings.TrimSpace(data.Dist); dist != "" && dist != "-" && dist != "local" {
+		// Soft route line without wiki when no corridor named.
+		line := fmt.Sprintf("Trajet : %s", dist)
+		if dur := strings.TrimSpace(data.Duration); dur != "" && dur != "-" {
+			line += " (~" + dur + ")"
+		}
+		if depart != "" && arrive != "" {
+			line += " — " + depart + " → " + arrive
+		}
+		seg["route"] = []string{line}
+		flat = append(flat, line)
+	}
+	add("arrivee", arrive, 2)
+
+	if len(flat) > 5 {
+		flat = flat[:5]
+	}
+	data.PlaceFactsBySegment = seg
+	data.PlaceFacts = flat
+}
+
+func samePlace(a, b string) bool {
+	norm := func(s string) string {
+		s = strings.ToLower(strings.TrimSpace(s))
+		s = strings.ReplaceAll(s, "é", "e")
+		s = strings.ReplaceAll(s, "è", "e")
+		s = strings.ReplaceAll(s, "-", " ")
+		return s
+	}
+	return a != "" && b != "" && norm(a) == norm(b)
+}
+
+// routePlaceHint picks a corridor / waypoint name from timeline or known regions.
+func routePlaceHint(data *DayBriefData) string {
+	if data == nil {
+		return ""
+	}
+	var blob strings.Builder
+	blob.WriteString(data.Label)
+	blob.WriteByte(' ')
+	for _, e := range data.Timeline {
+		if l, _ := e["label"].(string); l != "" {
+			blob.WriteString(l)
+			blob.WriteByte(' ')
+		}
+	}
+	low := strings.ToLower(blob.String())
+	type hit struct {
+		needle string
+		name   string
+	}
+	// Longer / more specific first.
+	cues := []hit{
+		{"grands-jardins", "Parc national des Grands-Jardins"},
+		{"grands jardins", "Parc national des Grands-Jardins"},
+		{"charlevoix", "Charlevoix"},
+		{"saguenay", "Fjord du Saguenay"},
+		{"gaspésie", "Gaspésie"},
+		{"gaspesie", "Gaspésie"},
+		{"côte-nord", "Côte-Nord"},
+		{"cote-nord", "Côte-Nord"},
+		{"île d'orléans", "Île d'Orléans"},
+		{"ile d'orleans", "Île d'Orléans"},
+		{"fleuve", "Fleuve Saint-Laurent"},
+		{"route 138", "Route 138"},
+		{"route 132", "Route 132"},
+		{"laurentides", "Laurentides"},
+	}
+	for _, c := range cues {
+		if strings.Contains(low, c.needle) {
+			return c.name
+		}
+	}
+	return ""
+}
+
+func fetchWikiFacts(place string, maxFacts int) []string {
+	if maxFacts <= 0 {
+		maxFacts = 2
+	}
 	client := &http.Client{Timeout: 8 * time.Second}
 	title := wikiResolveTitle(client, place)
 	if title == "" {
@@ -71,7 +201,7 @@ func fetchWikiFacts(place string) []string {
 	}
 	extract := strings.TrimSpace(parsed.Extract)
 	if extract != "" {
-		// Split into 1–2 short sentences for À savoir.
+		// Split into short sentences for À savoir.
 		parts := splitSentences(extract)
 		for _, p := range parts {
 			p = strings.TrimSpace(p)
@@ -81,11 +211,25 @@ func fetchWikiFacts(place string) []string {
 			if len(p) > 220 {
 				p = p[:217] + "…"
 			}
+			// Skip if duplicate of description-ish
+			dup := false
+			for _, e := range out {
+				if strings.EqualFold(e, p) {
+					dup = true
+					break
+				}
+			}
+			if dup {
+				continue
+			}
 			out = append(out, p)
-			if len(out) >= 3 {
+			if len(out) >= maxFacts {
 				break
 			}
 		}
+	}
+	if len(out) > maxFacts {
+		out = out[:maxFacts]
 	}
 	return out
 }

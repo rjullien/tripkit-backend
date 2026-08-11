@@ -66,7 +66,9 @@ Règles :
 - Si un hôtel est fourni, mentionne-le clairement (nom + check-in si dispo).
 
 SECTIONS OBLIGATOIRES (toujours, dans cet esprit) :
-1) ⭐ *À savoir* — 2 à 4 pépites sympas sur le lieu / la zone (historique, géologique, anecdote). Base-toi sur highlights + placeFacts. Ne dilue PAS ces pépites dans le programme : elles vont DANS cette section.
+1) ⭐ *À savoir* — pépites sympas (historique, géologique, anecdote). Base-toi sur highlights + placeFacts (+ placeFactsBySegment). Ne dilue PAS ces pépites dans le programme : elles vont DANS cette section.
+   - Si travelDay=true : couvre le trajet complet — *Départ*, *Trajet*, *Arrivée* (1 ligne chaque quand les faits sont fournis, 3 à 5 max). Utilise les préfixes Départ/Trajet/Arrivée déjà dans placeFacts.
+   - Si travelDay=false : 2 à 4 pépites sur le lieu du jour.
 2) 📰 *Actualité* — jusqu'à 3 items issus de actualites[] : utilise *detail* s'il est fourni (sinon title), puis le *url* sur la ligne suivante s'il est présent. INTERDIT : politique, procès, polarisant, faits divers, listicles vagues sans détail. N'invente pas d'URL.
 3) 💡 *Astuce pratique* — UNE seule ligne, depuis practicalTip (obligatoire).
 
@@ -135,18 +137,21 @@ func (c *BifrostClient) FormatCorrect(enriched any, previousText string, qa QARe
 }
 
 const curateActuSystemPrompt = `Tu filtres et CREUSES des actualités pour un brief voyageur WhatsApp.
-Objectif : infos ACTIONNABLES pendant le séjour DANS CETTE VILLE (placeStayFrom → placeStayTo), surtout utiles aujourd'hui (date).
+Objectif : infos ACTIONNABLES pendant la présence physique dans la ville (placeStayFrom+fromTime → placeStayTo+toTime).
 
-GARDE seulement si le voyageur peut agir pendant cette fenêtre : lieu/événement nommé, fermeture utile, spectacle daté, resto, expo en cours.
+Règles présence :
+- Si actuFocus=arrival (départ matin) : priorise la ville d'ARRIVÉE ; ignore spectacles du soir dans la ville quittée.
+- Un événement le soir du jour de départ matin → REJETTE pour la ville de départ.
+- Un événement avant l'heure d'arrivée le jour d'arrivée → REJETTE.
+
+GARDE seulement si actionnable dans la fenêtre : lieu/événement nommé, fermeture utile, spectacle daté, resto, expo.
 REJETTE : politique, procès, faits divers, polarisant.
-REJETTE listicles vagues ("6 sorties", "20 shows en août", "à faire en…") sauf si le snippet donne un événement nommé + timing utilisable pendant placeStayFrom…placeStayTo.
-Si l'événement est clairement hors de la fenêtre sur place → rejette.
+REJETTE listicles vagues ("6 sorties", "20 shows en août") sauf si snippet donne un événement nommé + timing dans la fenêtre.
 
-Pour chaque item retenu, écris "detail" = UNE phrase concrète (quoi + où + quand si connu dans title/snippet).
-N'invente RIEN (pas de date/lieu/heure absents du title/snippet).
+Pour chaque item : "detail" = UNE phrase concrète (quoi + où + quand si connu dans title/snippet). N'invente RIEN.
 Recopie title/source/url EXACTEMENT depuis le candidat.
 
-Réponds UNIQUEMENT avec un JSON array (0 à 3 objets) :
+JSON array 0–3 :
 [{"title":"...","source":"...","url":"...","detail":"..."}]`
 
 // CurateActualites asks Bifrost to pick ≤3 actionable traveler headlines and dig a detail line.
@@ -158,24 +163,27 @@ func (c *BifrostClient) CurateActualites(data *DayBriefData, candidates []Actual
 		return nil, nil
 	}
 	ctx := map[string]any{
-		"placeName":      data.PlaceName,
-		"locationId":     data.LocationID,
-		"weekday":        data.Weekday,
-		"date":           data.Date,
-		"placeStayFrom":  data.PlaceStayFrom,
-		"placeStayTo":    data.PlaceStayTo,
-		"travelDay":      data.TravelDay,
-		"hasKids":        data.HasKids,
-		"weather":        data.Weather,
-		"highlights":     data.Highlights,
-		"candidates":     candidates,
+		"placeName":           data.PlaceName,
+		"locationId":          data.LocationID,
+		"weekday":             data.Weekday,
+		"date":                data.Date,
+		"placeStayFrom":       data.PlaceStayFrom,
+		"placeStayFromTime":   data.PlaceStayFromTime,
+		"placeStayTo":         data.PlaceStayTo,
+		"placeStayToTime":     data.PlaceStayToTime,
+		"actuFocus":           data.ActuFocus,
+		"travelDay":           data.TravelDay,
+		"hasKids":             data.HasKids,
+		"weather":             data.Weather,
+		"highlights":          data.Highlights,
+		"candidates":          candidates,
 	}
 	payload, err := json.Marshal(ctx)
 	if err != nil {
 		return nil, err
 	}
-	user := "Contexte jour + séjour sur place + candidats JSON:\n" + string(payload) +
-		"\n\nRetiens jusqu'à 3 actualités actionnables pour CE séjour dans la ville (JSON array uniquement)."
+	user := "Contexte jour + présence sur place + candidats JSON:\n" + string(payload) +
+		"\n\nRetiens jusqu'à 3 actualités actionnables dans la fenêtre de présence (JSON array uniquement)."
 
 	raw, err := c.chatOnce(curateActuSystemPrompt, user)
 	if err != nil {
