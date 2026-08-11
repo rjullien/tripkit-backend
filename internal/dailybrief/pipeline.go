@@ -85,6 +85,19 @@ func (s *Service) GenerateOpts(tripID string, dayNumber int, opts ExtractOpts) (
 	if lat, lon, ok := CoordsFromTripData(tripData, dayData); ok {
 		_ = EnrichDay(src, lat, lon)
 	}
+	EnrichPlaceContext(src)
+	SelectDayTips(src)
+	// Actualité is mandatory in the brief — soft placeholder if feeds are empty.
+	if len(src.Actualites) == 0 {
+		place := strings.TrimSpace(src.PlaceName)
+		if place == "" {
+			place = "la destination"
+		}
+		src.Actualites = []ActualiteItem{{
+			Title:  "Pas de une locale marquante ce matin — focus sur le programme à " + place,
+			Source: "TripKit",
+		}}
+	}
 
 	cfg := s.cfg()
 	bf := NewBifrostClient(cfg.BifrostBaseURL, cfg.BifrostAPIKey, cfg.BriefModel)

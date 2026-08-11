@@ -47,6 +47,9 @@ var (
 	rePhone        = regexp.MustCompile(`(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}`)
 	reURL          = regexp.MustCompile(`https?://[^\s)]+`)
 	rePhoneNoise   = regexp.MustCompile(`[-.\s()]`)
+	reASavoir      = regexp.MustCompile(`(?i)à savoir|a savoir|⭐|🌟`)
+	reActualite    = regexp.MustCompile(`(?i)actualit[eé]|📰`)
+	rePratique     = regexp.MustCompile(`(?i)astuce pratique|💡.*pratique|pratique`)
 )
 
 // RunQA validates Bifrost text against source data (deterministic).
@@ -132,6 +135,28 @@ func RunQA(text string, src *DayBriefData) QAResult {
 	}
 	if src.Weather != nil && !reWeather.MatchString(text) {
 		res.Completeness = append(res.Completeness, "weather absent")
+		if res.Verdict == QAPassed {
+			res.Verdict = QAWarning
+		}
+	}
+
+	// Mandatory brief sections
+	if !reASavoir.MatchString(text) {
+		res.Completeness = append(res.Completeness, "section À savoir missing")
+		res.Verdict = QAFailed
+	}
+	if !reActualite.MatchString(text) {
+		res.Completeness = append(res.Completeness, "section Actualité missing")
+		res.Verdict = QAFailed
+	}
+	if src.PracticalTip != nil && strings.TrimSpace(src.PracticalTip.Text) != "" {
+		if !rePratique.MatchString(text) {
+			res.Completeness = append(res.Completeness, "section Astuce pratique missing")
+			res.Verdict = QAFailed
+		}
+	}
+	if src.HasKids == false && (strings.Contains(strings.ToLower(text), "aire de jeu") || strings.Contains(strings.ToLower(text), "avec enfants")) {
+		res.Completeness = append(res.Completeness, "kids tip while hasKids=false")
 		if res.Verdict == QAPassed {
 			res.Verdict = QAWarning
 		}
