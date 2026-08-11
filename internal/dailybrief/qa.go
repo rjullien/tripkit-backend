@@ -92,7 +92,7 @@ func RunQA(text string, src *DayBriefData) QAResult {
 	}
 	if src.Hotel != nil {
 		name, _ := src.Hotel["name"].(string)
-		hasName := name != "" && strings.Contains(text, name)
+		hasName := name != "" && textContainsLoose(text, name)
 		if name != "" && !hasName {
 			res.Completeness = append(res.Completeness, "hotel.name absent")
 			if res.Verdict == QAPassed {
@@ -220,4 +220,28 @@ func timelineTimePresent(text, t string) bool {
 		}
 	}
 	return false
+}
+
+// textContainsLoose compares after normalizing unicode dashes/spaces.
+func textContainsLoose(haystack, needle string) bool {
+	if needle == "" {
+		return true
+	}
+	if strings.Contains(haystack, needle) {
+		return true
+	}
+	return strings.Contains(normalizeLoose(haystack), normalizeLoose(needle))
+}
+
+func normalizeLoose(s string) string {
+	r := strings.NewReplacer(
+		"\u2011", "-", // non-breaking hyphen
+		"\u2010", "-",
+		"\u2012", "-",
+		"\u2013", "-", // en dash
+		"\u2014", "-", // em dash
+		"\u2212", "-",
+		"\u00a0", " ",
+	)
+	return strings.ToLower(r.Replace(s))
 }
