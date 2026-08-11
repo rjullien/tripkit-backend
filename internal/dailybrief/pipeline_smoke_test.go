@@ -56,7 +56,7 @@ func TestPipeline_GenerateAndSend_Smoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&models.Trip{}, &models.Day{}, &models.DailyBriefSend{}); err != nil {
+	if err := db.AutoMigrate(&models.Trip{}, &models.Day{}, &models.DailyBriefSend{}, &models.DailyBriefUsedTip{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -156,7 +156,7 @@ func TestPipeline_RealBifrostGowa(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&models.Trip{}, &models.Day{}, &models.DailyBriefSend{}); err != nil {
+	if err := db.AutoMigrate(&models.Trip{}, &models.Day{}, &models.DailyBriefSend{}, &models.DailyBriefUsedTip{}); err != nil {
 		t.Fatal(err)
 	}
 	start := "2026-04-13"

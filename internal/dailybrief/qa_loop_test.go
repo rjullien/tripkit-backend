@@ -50,7 +50,7 @@ func TestGenerateOpts_QACorrectionOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = db.AutoMigrate(&models.Trip{}, &models.Day{}, &models.DailyBriefSend{})
+	_ = db.AutoMigrate(&models.Trip{}, &models.Day{}, &models.DailyBriefSend{}, &models.DailyBriefUsedTip{})
 	start := "2026-04-13"
 	td, _ := json.Marshal(map[string]any{
 		"dailyBrief": true, "whatsappGroup": "120363000000000001@g.us",

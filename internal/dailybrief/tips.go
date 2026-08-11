@@ -10,11 +10,12 @@ const maxActualites = 3
 
 // SelectDayTips fills CultureExpress, mandatory PracticalTip, and 0–5 optional tips.
 // Call after weather / placeFacts / actualites enrichment.
-func SelectDayTips(data *DayBriefData) {
+// usedCultureKeys = anti-redite keys already sent on this trip (may be nil).
+func SelectDayTips(data *DayBriefData, usedCultureKeys []string) {
 	if data == nil {
 		return
 	}
-	data.CultureExpress = pickCultureExpress(data.PlaceName, data.Label)
+	data.CultureExpress = pickCultureExpress(data.PlaceName, data.Label, usedCultureKeys)
 	data.PracticalTip = pickPracticalTip(data)
 
 	var candidates []Tip
@@ -82,41 +83,94 @@ func pickPracticalTip(data *DayBriefData) *Tip {
 	}
 }
 
-func pickCultureExpress(place, label string) *Tip {
+func pickCultureExpress(place, label string, usedKeys []string) *Tip {
 	blob := strings.ToLower(place + " " + label)
+	used := map[string]bool{}
+	for _, k := range usedKeys {
+		used[k] = true
+	}
+	type tipVar struct {
+		key  string
+		text string
+	}
 	type entry struct {
 		match []string
-		text  string
+		tips  []tipVar
 	}
 	bank := []entry{
-		{[]string{"québec", "quebec", "montreal", "montréal", "canada", "charlevoix", "saguenay", "gaspé", "gaspe", "tadoussac"},
-			`Au Québec on dit « bienvenue » pour « de rien ». Pourboire resto ~15 % si service non inclus.`},
+		{[]string{"québec", "quebec", "montreal", "montréal", "canada", "charlevoix", "saguenay", "gaspé", "gaspe", "tadoussac", "baie-saint-paul"},
+			[]tipVar{
+				{"qc.bienvenue", `Au Québec on dit « bienvenue » pour « de rien ». Pourboire resto ~15 % si service non inclus.`},
+				{"qc.tu", `Tutoiement facile ici : « tu » est la norme, même avec un commerçant — le « vous » sonne très formel.`},
+				{"qc.dep", `Le « dépanneur » = épicerie de coin (bière, snacks, essentiels). Ouvert tard, pratique en route.`},
+				{"qc.5a7", `Le « 5 à 7 » = afterwork québécois (souvent bière + bites). Bon moment pour discuter avec des locaux.`},
+				{"qc.char", `« Char » = voiture. « Magasiner » = faire du shopping. « Blonde » peut vouloir dire petite amie.`},
+				{"qc.cedille", `Accents locaux : « moé / toé » à l'oral. Souriez — on adore quand les voyageurs tentent un « salut ».`},
+			}},
 		{[]string{"paris", "france", "lyon", "bordeaux", "marseille", "nice", "langon"},
-			`« Bonjour » en entrant dans un commerce — sinon ça froisse. Pourboire resto : arrondi ou ~5–10 % si service déjà inclus.`},
+			[]tipVar{
+				{"fr.bonjour", `« Bonjour » en entrant dans un commerce — sinon ça froisse. Pourboire resto : arrondi ou ~5–10 % si service déjà inclus.`},
+				{"fr.vous", `Vouvoiement par défaut avec inconnus. Passe au tutoiement seulement si on te le propose.`},
+				{"fr.pain", `Boulangerie = rituel : pain du jour avant 13h souvent meilleur. « Une baguette tradition s'il vous plaît ».`},
+			}},
 		{[]string{"usa", "vegas", "new york", "california", "miami"},
-			`Pourboire resto 15–20 % quasi obligatoire. « Excuse me » pour attirer l'attention poliment.`},
+			[]tipVar{
+				{"us.tip", `Pourboire resto 15–20 % quasi obligatoire. « Excuse me » pour attirer l'attention poliment.`},
+				{"us.sales", `Le prix affiché est souvent hors taxe — compte +8–10 % à la caisse.`},
+			}},
 		{[]string{"spain", "espagne", "barcelona", "barcelone", "madrid", "balears", "mallorca", "majorque"},
-			`« ¡Hola! » / « gracias ». Dîner souvent tard (21h+). Pourboire léger (arrondi).`},
+			[]tipVar{
+				{"es.hola", `« ¡Hola! » / « gracias ». Dîner souvent tard (21h+). Pourboire léger (arrondi).`},
+				{"es.siesta", `Entre 14h–17h certains commerces ferment — anticipe courses et musées le matin.`},
+			}},
 		{[]string{"italy", "italie", "rome", "roma", "florence", "milan"},
-			`« Coperto » (couvert) parfois facturé à part — normal. Espresso se boit souvent debout au zinc.`},
+			[]tipVar{
+				{"it.coperto", `« Coperto » (couvert) parfois facturé à part — normal. Espresso se boit souvent debout au zinc.`},
+				{"it.acqua", `Demande « acqua naturale / frizzante » — l'eau n'est pas toujours gratuite à table.`},
+			}},
 		{[]string{"germany", "allemagne", "berlin", "munich", "münchen"},
-			`Cash encore fréquent dans petits commerces. « Bitte » / « Danke » suffisent au quotidien.`},
+			[]tipVar{
+				{"de.cash", `Cash encore fréquent dans petits commerces. « Bitte » / « Danke » suffisent au quotidien.`},
+				{"de.pfand", `Bouteilles consignées (Pfand) : rapporte-les pour récupérer quelques cents.`},
+			}},
 		{[]string{"japan", "japon", "tokyo", "osaka"},
-			`Pas de pourboire. Parler bas dans les transports. Files et ponctualité = respect.`},
+			[]tipVar{
+				{"jp.notip", `Pas de pourboire. Parler bas dans les transports. Files et ponctualité = respect.`},
+				{"jp.konbini", `Les konbini (7-Eleven, Lawson…) : cash, snacks, tickets, toilettes propres — alliés du voyageur.`},
+			}},
 		{[]string{"philippines", "manila", "cebu"},
-			`« Salamat » = merci. Attitude cool et souriante ; négocier avec le sourire sur marchés.`},
+			[]tipVar{
+				{"ph.salamat", `« Salamat » = merci. Attitude cool et souriante ; négocier avec le sourire sur marchés.`},
+				{"ph.jeep", `Jeepney / Grab : confirme le prix ou utilise l'app. Garde de petites coupures.`},
+			}},
 	}
 	for _, e := range bank {
+		matched := false
 		for _, m := range e.match {
 			if strings.Contains(blob, m) {
-				return &Tip{Kind: "culture_express", Title: "Culture express", Text: e.text}
+				matched = true
+				break
 			}
 		}
+		if !matched {
+			continue
+		}
+		// Prefer first unused tip in stable order (no LLM loop).
+		for _, v := range e.tips {
+			if used[v.key] {
+				continue
+			}
+			return &Tip{Kind: "culture_express", Title: "Culture express", Text: v.text, Key: v.key}
+		}
+		// All used → allow reuse of first (better than empty); history clears on last day.
+		v := e.tips[0]
+		return &Tip{Kind: "culture_express", Title: "Culture express", Text: v.text, Key: v.key}
 	}
 	return &Tip{
 		Kind:  "culture_express",
 		Title: "Culture express",
 		Text:  "Un sourire + « bonjour / hello / merci » dans la langue locale ouvre presque toutes les portes.",
+		Key:   "default.smile",
 	}
 }
 

@@ -103,7 +103,7 @@ func (s *Service) GenerateOpts(tripID string, dayNumber int, opts ExtractOpts) (
 		}
 	}
 
-	SelectDayTips(src)
+	SelectDayTips(src, LoadUsedTipKeys(s.DB, tripID, "culture_express"))
 	// Actualité is mandatory in the brief — soft placeholder if feeds are empty.
 	if len(src.Actualites) == 0 {
 		place := strings.TrimSpace(src.PlaceName)
@@ -229,6 +229,7 @@ func (s *Service) GenerateAndSendOpts(tripID string, dayNumber int, opt SendOpti
 		return nil, err
 	}
 	_ = s.recordSend(tripID, dayNumber, localDate, gen, to, msgID, true, "")
+	recordAntiRediteAfterSend(s.DB, gen, tripID, dayNumber)
 	if gen.QALoopUsed {
 		_ = s.notifyAdminQALoopUsed(gen)
 	}

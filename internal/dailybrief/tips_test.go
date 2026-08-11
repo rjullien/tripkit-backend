@@ -18,7 +18,7 @@ func TestSelectDayTips_QuebecStayRainNoKids(t *testing.T) {
 		Weather: map[string]any{"conditions": "Pluie", "weatherCode": 65},
 		Hotel:   map[string]any{"name": "Lofts", "checkin": "16:00"},
 	}
-	SelectDayTips(data)
+	SelectDayTips(data, nil)
 	if data.PracticalTip == nil || data.PracticalTip.Text == "" {
 		t.Fatal("practical tip mandatory")
 	}
@@ -48,7 +48,7 @@ func TestSelectDayTips_TravelDay(t *testing.T) {
 		TravelDay: true,
 		HasKids:   false,
 	}
-	SelectDayTips(data)
+	SelectDayTips(data, nil)
 	if data.PracticalTip == nil {
 		t.Fatal("practical required")
 	}

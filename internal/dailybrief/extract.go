@@ -73,6 +73,7 @@ type Tip struct {
 	Kind  string `json:"kind"` // culture_express|pratique|food|photo|plan_b|timing|transport|budget|famille|securite
 	Title string `json:"title"`
 	Text  string `json:"text"`
+	Key   string `json:"key,omitempty"` // anti-redite id (not shown in WhatsApp)
 }
 
 // ExtractDay loads trip + day from DB into DayBriefData (no LLM).
