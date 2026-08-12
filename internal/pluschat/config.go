@@ -21,7 +21,7 @@ const (
 	defaultRef        = "main"
 	defaultTTL        = 2 * time.Minute
 	defaultBifrostURL = "http://bifrost.openclaw.svc.cluster.local:8080/v1"
-	defaultModel      = "opencode-go/deepseek-v4-pro"
+	defaultModel      = "opencode-go/deepseek-v4-flash"
 	maxChatHistory    = 12
 )
 
