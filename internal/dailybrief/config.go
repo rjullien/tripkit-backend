@@ -22,7 +22,7 @@ const (
 	defaultTTL       = 2 * time.Minute
 	defaultGowaURL    = "http://gowa.gowa.svc.cluster.local:3000"
 	defaultBifrostURL = "http://bifrost.openclaw.svc.cluster.local:8080/v1"
-	defaultModel      = "opencode-go/deepseek-v4-pro"
+	defaultModel      = "opencode-go/deepseek-v4-flash"
 	defaultCron       = "30 6 * * *"
 )
 
