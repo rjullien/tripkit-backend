@@ -65,10 +65,14 @@ Daily Brief SoT (URLs + model + `adminPhone`): private `rjullien/tripkit/ops/dai
 | Method | Path | Status | Notes |
 | --- | --- | --- | --- |
 | `GET` | `/leo/status` | **used** | Ready flag + dashboard/telegram URLs (no secrets) |
-| `POST` | `/leo/chat/stream` | **used (Plus UI)** | SSE proxy → Hermes `stream:true`. Injects the **same** server `SystemPrompt` (seed repos / reject hors voyage). Keepalives every 15s. |
+| `POST` | `/leo/chat/stream` | **used (Plus UI)** | Creates a detached Léo job and SSE-subscribes. Live `delta` / `tool` / `done` while the app is open (same UX as before). First event is `meta` (`jobId`, `seq`). Disconnect does **not** cancel Hermes. Keepalives every 15s. |
+| `GET` | `/leo/jobs/{jobId}/stream?after=N` | **used (Plus UI)** | Catch-up + live subscribe after lock-phone / dropped SSE. Same event types. |
+| `POST` | `/leo/jobs/{jobId}/cancel` | **used (Plus UI)** | Explicit cancel only (Annuler). Stops Hermes. |
 | `POST` | `/leo/chat` | **deprecated / unused by FE** | Sync JSON chat. **Do not remove** — useful for curl/debug. Same prompt + ACL as stream. |
 
 Both chat paths call `leo.prepareMessages` → `leo.SystemPrompt` (Authelia user, allowlisted seed repos, reject phrase). Never trust the browser for scope.
+
+Jobs are **in-memory** on the API pod (single replica). Reconnect must hit the same process. TTL 15 min after finish. Plus Assistant (`/plus/chat/stream`) is unchanged — still request-scoped SSE.
 
 ### Plus Assistant (Bifrost direct)
 

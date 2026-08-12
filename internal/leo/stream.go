@@ -11,7 +11,6 @@ import (
 	"strings"
 )
 
-
 type openAIStreamReq struct {
 	Model     string        `json:"model"`
 	Messages  []ChatMessage `json:"messages"`
@@ -22,6 +21,8 @@ type openAIStreamReq struct {
 // StreamEvent is a normalized TripKit SSE payload (not raw OpenAI).
 // event names: delta | tool | done | error | meta
 type StreamEvent struct {
+	Seq    int    `json:"seq,omitempty"`
+	JobID  string `json:"jobId,omitempty"`
 	Text   string `json:"text,omitempty"`
 	Reply  string `json:"reply,omitempty"`
 	Model  string `json:"model,omitempty"`
@@ -92,7 +93,8 @@ func (c Config) StreamChat(ctx context.Context, pctx PromptContext, req ChatRequ
 	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("User-Agent", "tripkit-backend-leo-stream")
 
-	// No overall Timeout — stream can run for several minutes; ctx cancels on disconnect.
+	// No overall Timeout — stream can run for several minutes.
+	// ctx is the job context (10 min / explicit cancel), not the HTTP subscriber.
 	client := &http.Client{Timeout: 0}
 	if c.HTTPClient != nil && c.HTTPClient.Transport != nil {
 		client.Transport = c.HTTPClient.Transport
@@ -181,8 +183,8 @@ func consumeHermesSSE(r io.Reader, emit EmitFunc) error {
 		}
 		if chunk.Error != nil && chunk.Error.Message != "" {
 			return emit("error", StreamEvent{
-				Error: "Échec Léo. Réessaie.",
-				Code:  "leo_chat_failed",
+				Error:  "Échec Léo. Réessaie.",
+				Code:   "leo_chat_failed",
 				Detail: chunk.Error.Message,
 			})
 		}
