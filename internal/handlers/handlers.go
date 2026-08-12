@@ -19,7 +19,6 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/pluschat"
 	"github.com/rjullien/tripkit-backend/internal/publish"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 var _LOGGER = log.Default()
@@ -884,21 +883,24 @@ func (h *Handler) SyncList(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Step 2b: Apply custom-item deletions (tombstones).
+		// Read-then-write: do NOT use MAX(a,b) / GREATEST — MAX(a,b) is SQLite-only
+		// and GREATEST is Postgres-only. A failed ON CONFLICT aborts the whole
+		// transaction, so a "fallback" in the same tx never runs. The FE resends
+		// the full deletedCustom map on every pull/push, so the 2nd sync 500'd
+		// in prod after any delete or 🔒.
 		for itemID, deletedAt := range body.DeletedCustom {
 			if deletedAt == 0 {
 				deletedAt = time.Now().UnixMilli()
 			}
-			// Upsert tombstone keeping the latest deletedAt.
-			if err := tx.Clauses(clause.OnConflict{
-				Columns:   []clause.Column{{Name: "list_id"}, {Name: "item_id"}},
-				DoUpdates: clause.Assignments(map[string]any{"deleted_at": gorm.Expr("MAX(list_custom_deleteds.deleted_at, excluded.deleted_at)")}),
-			}).Create(&models.ListCustomDeleted{ListID: listID, ItemID: itemID, DeletedAt: deletedAt}).Error; err != nil {
-				// Fallback for drivers without MAX(...excluded) support: plain upsert.
-				if err2 := tx.Clauses(clause.OnConflict{
-					Columns:   []clause.Column{{Name: "list_id"}, {Name: "item_id"}},
-					DoUpdates: clause.AssignmentColumns([]string{"deleted_at"}),
-				}).Create(&models.ListCustomDeleted{ListID: listID, ItemID: itemID, DeletedAt: deletedAt}).Error; err2 != nil {
-					return err2
+			var tomb models.ListCustomDeleted
+			findErr := tx.Where("list_id = ? AND item_id = ?", listID, itemID).First(&tomb).Error
+			if findErr != nil {
+				if err := tx.Create(&models.ListCustomDeleted{ListID: listID, ItemID: itemID, DeletedAt: deletedAt}).Error; err != nil {
+					return err
+				}
+			} else if deletedAt > tomb.DeletedAt {
+				if err := tx.Model(&tomb).Update("deleted_at", deletedAt).Error; err != nil {
+					return err
 				}
 			}
 			// Remove the item itself (only if not re-created more recently).

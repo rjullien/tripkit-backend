@@ -568,6 +568,39 @@ func TestSync_Idempotent(t *testing.T) {
 	}
 }
 
+func TestSync_TombstoneResentTwice(t *testing.T) {
+	r := setupSync(t)
+	w := doSync(r, map[string]any{
+		"deviceId": "a", "lastSyncAt": 0,
+		"checks": map[string]any{},
+		"custom": map[string]any{"ci-gone": map[string]any{"text": "Parapluie", "section": 0, "createdAt": 1000}},
+		"hidden": []any{},
+	})
+	if w.Code != 200 {
+		t.Fatalf("create custom: %d %s", w.Code, w.Body.String())
+	}
+	tomb := map[string]any{
+		"deviceId": "a", "lastSyncAt": 0,
+		"checks":        map[string]any{},
+		"custom":        map[string]any{},
+		"deletedCustom": map[string]int64{"ci-gone": 2000},
+		"hidden":        []any{},
+	}
+	w = doSync(r, tomb)
+	if w.Code != 200 {
+		t.Fatalf("first tombstone sync: %d %s", w.Code, w.Body.String())
+	}
+	custom := parseResp(w)["merged"].(map[string]any)["custom"].(map[string]any)
+	if custom["ci-gone"] != nil {
+		t.Errorf("expected ci-gone gone after tombstone, still in merged")
+	}
+	// PWA resends the full deletedCustom map on every poll. Must stay 200.
+	w = doSync(r, tomb)
+	if w.Code != 200 {
+		t.Fatalf("second tombstone sync (FE always resends): %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestSync_CustomItemUnion(t *testing.T) {
 	r := setupSync(t)
 	doSync(r, map[string]any{"deviceId": "a", "lastSyncAt": 0, "checks": map[string]any{}, "custom": map[string]any{"ci-1": map[string]any{"text": "Beurre", "section": 0, "createdAt": 1000}}, "hidden": []any{}})
