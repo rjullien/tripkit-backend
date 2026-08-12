@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"gorm.io/gorm"
 )
 
 type openAIStreamReq struct {
@@ -32,9 +34,27 @@ type StreamEvent struct {
 type EmitFunc func(event string, data StreamEvent) error
 
 // StreamChat calls Bifrost with stream:true and emits TripKit SSE events.
+// Optional db loads today+tomorrow trip context into the system prompt.
 func (c Config) StreamChat(ctx context.Context, pctx PromptContext, req ChatRequest, emit EmitFunc) error {
+	return c.StreamChatDB(ctx, nil, pctx, req, emit)
+}
+
+// StreamChatDB is StreamChat with a DB for TripContext injection.
+func (c Config) StreamChatDB(ctx context.Context, db *gorm.DB, pctx PromptContext, req ChatRequest, emit EmitFunc) error {
 	if !c.Ready() {
 		return fmt.Errorf("plus chat not ready")
+	}
+	if db != nil {
+		tripID := strings.TrimSpace(pctx.TripID)
+		if tripID == "" {
+			tripID = strings.TrimSpace(req.TripID)
+		}
+		if tripID != "" {
+			if tc, err := BuildTripContext(db, tripID, NowFn()); err == nil {
+				pctx.Trip = tc
+				pctx.TripID = tripID
+			}
+		}
 	}
 	msgs, err := prepareMessages(pctx, req)
 	if err != nil {
@@ -44,7 +64,7 @@ func (c Config) StreamChat(ctx context.Context, pctx PromptContext, req ChatRequ
 	body, err := json.Marshal(openAIStreamReq{
 		Model:     c.ChatModel,
 		Messages:  msgs,
-		MaxTokens: 2000,
+		MaxTokens: 2500,
 		Stream:    true,
 	})
 	if err != nil {

@@ -175,14 +175,7 @@ func ExtractDayOpts(db *gorm.DB, tripID string, dayNumber int, opts ExtractOpts)
 	if hotelID, ok := dayData["hotelId"].(string); ok && hotelID != "" {
 		if hotels, ok := tripData["hotels"].(map[string]any); ok {
 			if h, ok := hotels[hotelID].(map[string]any); ok {
-				out.Hotel = map[string]any{
-					"id":        hotelID,
-					"name":      h["name"],
-					"checkin":   h["checkin"],
-					"checkout":  h["checkout"],
-					"breakfast": h["breakfast"],
-					"addr":      h["addr"],
-				}
+				out.Hotel = copyHotelAccess(hotelID, h)
 			}
 		}
 	}
@@ -191,6 +184,11 @@ func ExtractDayOpts(db *gorm.DB, tripID string, dayNumber int, opts ExtractOpts)
 		if err := db.Where("trip_id = ? AND day_num = ?", tripID, dayNumber).First(&hotelRow).Error; err == nil {
 			hm := map[string]any{}
 			_ = json.Unmarshal([]byte(hotelRow.Data), &hm)
+			if id, _ := hm["id"].(string); id == "" {
+				hm = copyHotelAccess("", hm)
+			} else {
+				hm = copyHotelAccess(id, hm)
+			}
 			out.Hotel = hm
 		}
 	}
@@ -491,4 +489,44 @@ func ParseBriefSendTime(v any) (hour, minute int, ok bool) {
 		return 0, 0, false
 	}
 	return h, m, true
+}
+
+// hotelAccessKeys are fields travelers ask about (codes, wifi, address, refs).
+var hotelAccessKeys = []string{
+	"name", "addr", "address", "phone", "pin", "wifi", "access", "ssid", "password",
+	"checkin", "checkout", "confirmationNumber", "pnr", "ref", "booking", "note",
+	"directions", "contact", "parking", "room", "bookingUrl", "payment", "cancellation",
+	"dates", "breakfast", "amenities", "host", "notes", "price",
+}
+
+// copyHotelAccess builds a hotel map with access/booking fields (for brief + Plus assistant).
+func copyHotelAccess(id string, h map[string]any) map[string]any {
+	if h == nil {
+		return nil
+	}
+	out := map[string]any{}
+	if id != "" {
+		out["id"] = id
+	}
+	for _, k := range hotelAccessKeys {
+		if v, ok := h[k]; ok && v != nil {
+			out[k] = v
+		}
+	}
+	// Nested wifi object {ssid, password} or flat fields.
+	if out["wifi"] == nil {
+		if ssid, ok := h["ssid"]; ok {
+			out["wifi"] = map[string]any{"ssid": ssid, "password": h["password"]}
+		}
+	}
+	if len(out) == 0 || (len(out) == 1 && out["id"] != nil) {
+		// Fallback: shallow copy all string/number fields if keys missing.
+		for k, v := range h {
+			out[k] = v
+		}
+		if id != "" {
+			out["id"] = id
+		}
+	}
+	return out
 }

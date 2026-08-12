@@ -3,6 +3,7 @@ package pluschat
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ChatMessage is one turn in the Plus assistant thread.
@@ -17,35 +18,49 @@ type ChatRequest struct {
 	TripID   string        `json:"tripId,omitempty"`
 }
 
-// PromptContext is server-side identity injected into the system prompt.
+// PromptContext is server-side identity + trip facts injected into the system prompt.
 type PromptContext struct {
 	Username string
 	TripID   string
+	Trip     *TripContext
 }
 
-// SystemPrompt builds the fixed assistant prompt (not seed-editing — that's Léo).
+// SystemPrompt builds the fixed assistant prompt (read-only — seed writes stay with Léo).
 func SystemPrompt(ctx PromptContext) string {
 	user := strings.TrimSpace(ctx.Username)
 	if user == "" {
 		user = "(inconnu)"
 	}
 	var b strings.Builder
-	b.WriteString("Tu es l'assistant voyage TripKit (réponses conversationnelles).\n")
-	b.WriteString("Tu n'as PAS d'outils : tu ne modifies pas les seeds, pas GitHub, pas WhatsApp.\n")
+	b.WriteString("Tu es l'assistant voyage TripKit (lecture seule).\n")
+	b.WriteString("Rôle : questions sur AUJOURD'HUI, DEMAIN et le voyage (météo, hôtel, codes, adresses, bookings, itinéraire).\n")
+	b.WriteString("Tu n'as PAS d'outils d'écriture : tu ne modifies pas les seeds, pas GitHub, pas WhatsApp.\n")
 	b.WriteString("Pour créer/modifier un seed → renvoyer l'utilisateur vers Léo (box Plus).\n\n")
+
 	b.WriteString("IDENTITÉ\n")
 	b.WriteString("- Utilisateur Authelia : ")
 	b.WriteString(user)
 	b.WriteByte('\n')
 	if trip := strings.TrimSpace(ctx.TripID); trip != "" {
-		b.WriteString("- Voyage actif (hint UI) : ")
+		b.WriteString("- Voyage actif : ")
 		b.WriteString(trip)
 		b.WriteByte('\n')
 	}
-	b.WriteString("\nSTYLE\n")
-	b.WriteString("- Français, concis, utile pour planifier / comprendre un voyage.\n")
-	b.WriteString("- Pas de jargon infra (Bifrost, pods, Infisical).\n")
-	b.WriteString("- Si tu n'es pas sûr : dis-le ; ne invente pas d'horaires / prix / résas.\n")
+
+	b.WriteString("\nRÈGLES\n")
+	b.WriteString("- Utilise le bloc CONTEXTE_JSON ci-dessous comme source de vérité.\n")
+	b.WriteString("- Interprète « aujourd'hui / demain / lundi / J3 » via nowLocal + calendar + today/tomorrow.\n")
+	b.WriteString("- Pour codes pin, wifi, confirmation, adresse hôtel : cite bookings.hotel (et dayBooking) sans inventer.\n")
+	b.WriteString("- Si une info manque dans le contexte : dis-le clairement.\n")
+	b.WriteString("- Français, concis, utile. Pas de jargon infra.\n")
+
+	if ctx.Trip != nil {
+		b.WriteString("\nCONTEXTE_JSON\n")
+		b.WriteString(FormatContextJSON(ctx.Trip))
+		b.WriteByte('\n')
+	} else {
+		b.WriteString("\n(Pas de contexte voyage chargé — demande le voyage actif.)\n")
+	}
 	return b.String()
 }
 
@@ -76,3 +91,6 @@ func prepareMessages(ctx PromptContext, req ChatRequest) ([]ChatMessage, error) 
 	out = append(out, msgs...)
 	return out, nil
 }
+
+// NowFn is overridable in tests.
+var NowFn = time.Now
