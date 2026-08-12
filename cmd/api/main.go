@@ -16,6 +16,7 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/database"
 	"github.com/rjullien/tripkit-backend/internal/handlers"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
+	"github.com/rjullien/tripkit-backend/internal/pluschat"
 	"github.com/rjullien/tripkit-backend/internal/publish"
 )
 
@@ -49,6 +50,11 @@ func main() {
 	briefSvc := &dailybrief.Service{DB: db, Loader: briefLoader}
 	h.SetDailyBrief(briefSvc)
 	(&dailybrief.Worker{DB: db, Service: briefSvc}).Start()
+
+	plusLoader := pluschat.NewLoaderFromEnv()
+	plusCfg := plusLoader.Bootstrap()
+	log.Printf("pluschat config: origin=%s model=%s enabled=%v", plusCfg.Origin, plusCfg.ChatModel, plusCfg.Enabled)
+	h.SetPlusChat(plusLoader)
 
 	// In-process worker: auto-on when TRIPKIT_GITHUB_TOKEN is set; override via TRIPKIT_PUBLISH_WORKER.
 	if publish.WorkerEnabled() {
@@ -127,6 +133,10 @@ func main() {
 		// Deprecated for Plus UI — keep for curl/debug (same SystemPrompt as stream).
 		r.Post("/leo/chat", h.LeoChat)
 		r.Post("/leo/chat/stream", h.LeoChatStream) // Plus UI
+
+		// Plus Assistant — Bifrost direct (ops/plus-chat.json model).
+		r.Get("/plus/chat/status", h.PlusChatStatus)
+		r.Post("/plus/chat/stream", h.PlusChatStream)
 
 		// Trips
 		r.Get("/trips", h.ListTrips)
