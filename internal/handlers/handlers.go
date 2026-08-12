@@ -16,6 +16,7 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/dailybrief"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/models"
+	"github.com/rjullien/tripkit-backend/internal/pluschat"
 	"github.com/rjullien/tripkit-backend/internal/publish"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -29,6 +30,7 @@ type Handler struct {
 	publishReg      *publish.Registry
 	publishManifest *publish.ManifestResolver
 	brief           *dailybrief.Service
+	plusChat        *pluschat.Loader
 }
 
 // New creates a new Handler with the given DB.
@@ -44,6 +46,11 @@ func (h *Handler) SetPublishRegistry(reg *publish.Registry) {
 // SetDailyBrief attaches the Daily Brief service.
 func (h *Handler) SetDailyBrief(svc *dailybrief.Service) {
 	h.brief = svc
+}
+
+// SetPlusChat attaches the Plus Bifrost-assistant config loader.
+func (h *Handler) SetPlusChat(loader *pluschat.Loader) {
+	h.plusChat = loader
 }
 
 // SetPublishManifestResolver attaches the family allowlist loader (publish-manifest.json).

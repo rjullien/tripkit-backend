@@ -70,6 +70,15 @@ Daily Brief SoT (URLs + model + `adminPhone`): private `rjullien/tripkit/ops/dai
 
 Both chat paths call `leo.prepareMessages` → `leo.SystemPrompt` (Authelia user, allowlisted seed repos, reject phrase). Never trust the browser for scope.
 
+### Plus Assistant (Bifrost direct)
+
+| Method | Path | Status | Notes |
+| --- | --- | --- | --- |
+| `GET` | `/plus/chat/status` | **used** | Ready + model from `ops/plus-chat.json` |
+| `POST` | `/plus/chat/stream` | **used (Plus UI)** | SSE → Bifrost `stream:true` (no tools). Model SoT git. |
+
+Config SoT: private `rjullien/tripkit/ops/plus-chat.json` (same Loader pattern as Daily Brief). Optional `TRIPKIT_BIFROST_API_KEY`.
+
 ## Quick Start
 ```bash
 go run ./cmd/api
