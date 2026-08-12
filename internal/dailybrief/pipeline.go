@@ -85,24 +85,24 @@ func (s *Service) GenerateOpts(tripID string, dayNumber int, opts ExtractOpts) (
 	if lat, lon, ok := CoordsFromTripData(tripData, dayData); ok {
 		_ = EnrichDay(src, lat, lon)
 	}
-	// Veille prep brief: skip place news/wiki noise (listes + timeline only).
-	if dayNumber != 0 {
+	// Prep briefs (day -1 = J0-1, day 0 = J0): skip place news/wiki noise.
+	if !IsPrepDay(dayNumber) {
 		EnrichPlaceContext(src)
 	}
 
 	cfg := s.cfg()
 	bf := NewBifrostClient(cfg.BifrostBaseURL, cfg.BifrostAPIKey, cfg.BriefModel)
 
-	// Veille (day 0) + départ (day 1): attach shared cloud list progress.
-	if dayNumber == 0 || dayNumber == 1 {
+	// Prep days + day-1 départ: attach shared cloud list progress.
+	if IsPrepDay(dayNumber) || dayNumber == 1 {
 		src.Prep = BuildPrepContext(s.DB, src)
 	}
 
 	var text string
 	qaLoopUsed := false
 
-	if dayNumber == 0 {
-		// Dedicated prep brief — no Actualité / Culture express loop.
+	if IsPrepDay(dayNumber) {
+		// Dedicated prep briefs — no Actualité / Culture express loop.
 		SelectDayTips(src, nil)
 		src.CultureExpress = nil
 		src.Actualites = nil

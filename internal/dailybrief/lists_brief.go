@@ -23,10 +23,12 @@ type ListBriefSummary struct {
 	PriorityOpen []string `json:"priorityOpen,omitempty"` // docs/tech first when packing
 }
 
-// PrepContext feeds the veille / départ last-check brief.
+// PrepContext feeds the two préparation briefs + optional day-1 inject.
 type PrepContext struct {
-	// Mode: "veille" (day 0 / J-1) or "depart" (day 1 morning last-check inject).
+	// Mode: "j0m1" (day -1 / J0-1), "j0" (day 0 / J0), or "depart" (day 1 inject).
 	Mode string `json:"mode"`
+	// Label for WhatsApp header (Brief J0-1 / Brief J0).
+	Title string `json:"title,omitempty"`
 	// VisibilityNote explains what the bot can / cannot see.
 	VisibilityNote string `json:"visibilityNote"`
 	Lists          []ListBriefSummary `json:"lists,omitempty"`
@@ -36,6 +38,11 @@ type PrepContext struct {
 	LastCheck []string `json:"lastCheck,omitempty"`
 	// Comment is a short Go-built status line (LLM may paraphrase).
 	Comment string `json:"comment,omitempty"`
+}
+
+// IsPrepDay is true for the two dedicated préparation briefs (day -1 and day 0).
+func IsPrepDay(dayNumber int) bool {
+	return dayNumber == -1 || dayNumber == 0
 }
 
 type seedListData struct {
@@ -161,28 +168,32 @@ func summarizeList(db *gorm.DB, l models.List) ListBriefSummary {
 	return sum
 }
 
-// BuildPrepContext assembles veille / départ prep payload from lists + day extract.
+// BuildPrepContext assembles prep payload from lists + day extract.
+// Two prep briefs: day -1 (J0-1) and day 0 (J0). Day 1 gets a light depart inject.
 func BuildPrepContext(db *gorm.DB, src *DayBriefData) *PrepContext {
 	if src == nil {
 		return nil
 	}
-	mode := ""
-	switch {
-	case src.DayNumber == 0:
-		mode = "veille"
-	case src.DayNumber == 1:
-		mode = "depart"
+	mode, title := "", ""
+	switch src.DayNumber {
+	case -1:
+		mode, title = "j0m1", "Brief J0-1 (J−2 avant départ)"
+	case 0:
+		mode, title = "j0", "Brief J0 (veille)"
+	case 1:
+		mode, title = "depart", "Dernier check listes"
 	default:
 		return nil
 	}
 	lists := LoadSharedListSummaries(db, src.TripID)
 	ctx := &PrepContext{
 		Mode:  mode,
+		Title: title,
 		Lists: lists,
 		VisibilityNote: "Je vois seulement les listes partagées (cloud TripKit). " +
 			"Valises perso, coches locales, et tout hors listes : je ne sais pas — j'espère que c'est fait.",
 		Downloads: extractDownloadReminders(src, lists),
-		LastCheck: extractLastCheck(src, lists),
+		LastCheck: extractLastCheck(src, lists, mode),
 		Comment:   listProgressComment(lists, mode),
 	}
 	return ctx
@@ -208,16 +219,25 @@ func listProgressComment(lists []ListBriefSummary, mode string) string {
 		}
 	}
 	base := "Listes cloud — " + strings.Join(parts, " · ")
-	if openCritical > 0 {
-		if mode == "depart" {
+	switch mode {
+	case "j0m1":
+		if openCritical > 0 {
+			return base + ". J0-1 : démarrez valise + avant-de-partir — encore beaucoup d'ouverts."
+		}
+		return base + ". Belle avance dès J0-1 — gardez le rythme jusqu'à demain (J0)."
+	case "j0":
+		if openCritical > 0 {
+			return base + ". J0 veille : priorité docs/tech + finir avant-de-partir avant demain."
+		}
+		return base + ". Listes partagées quasi closes — dernier tour ce soir."
+	case "depart":
+		if openCritical > 0 {
 			return base + ". Encore des points critiques ouverts — dernier check avant de partir."
 		}
-		return base + ". Priorité : docs/tech + avant-de-partir encore ouverts."
-	}
-	if mode == "depart" {
 		return base + ". Côté listes partagées, ça a l'air nickel — bon vol."
+	default:
+		return base
 	}
-	return base + ". Belle avance — finissez les derniers coches ce soir."
 }
 
 func extractDownloadReminders(src *DayBriefData, lists []ListBriefSummary) []string {
@@ -273,7 +293,7 @@ func extractDownloadReminders(src *DayBriefData, lists []ListBriefSummary) []str
 	return out
 }
 
-func extractLastCheck(src *DayBriefData, lists []ListBriefSummary) []string {
+func extractLastCheck(src *DayBriefData, lists []ListBriefSummary, mode string) []string {
 	var out []string
 	add := func(s string) {
 		s = strings.TrimSpace(stripHTML(s))
@@ -287,10 +307,19 @@ func extractLastCheck(src *DayBriefData, lists []ListBriefSummary) []string {
 			d, _ = e["d"].(string)
 		}
 		low := strings.ToLower(d)
-		if strings.Contains(low, "document") || strings.Contains(low, "passeport") ||
+		match := strings.Contains(low, "document") || strings.Contains(low, "passeport") ||
 			strings.Contains(low, "pnr") || strings.Contains(low, "eta") ||
-			strings.Contains(low, "charge") || strings.Contains(low, "coucher") ||
-			strings.Contains(low, "vol demain") || strings.Contains(low, "vérification") {
+			strings.Contains(low, "charge") || strings.Contains(low, "vérification")
+		if mode == "j0" || mode == "depart" {
+			match = match || strings.Contains(low, "coucher") || strings.Contains(low, "vol demain")
+		}
+		if mode == "j0m1" {
+			// Early prep: focus house + packing start, not "coucher tôt / vol demain".
+			match = strings.Contains(low, "avant de partir") || strings.Contains(low, "valise") ||
+				strings.Contains(low, "document") || strings.Contains(low, "télécharg") ||
+				strings.Contains(low, "telecharg") || strings.Contains(low, "enregistrement")
+		}
+		if match {
 			t, _ := e["time"].(string)
 			if t == "" {
 				t, _ = e["t"].(string)
@@ -311,9 +340,15 @@ func extractLastCheck(src *DayBriefData, lists []ListBriefSummary) []string {
 		}
 	}
 	if len(out) == 0 {
-		add("Passeports + cartes d'embarquement / PNR")
-		add("Téléphones chargés + batterie externe")
-		add("Dernier tour maison (eau, gaz, volets) si applicable")
+		if mode == "j0m1" {
+			add("Ouvrir les listes partagées TripKit (valise + avant de partir)")
+			add("Commencer docs/tech (passeports, eTA, Maps hors-ligne)")
+			add("Planifier courses / maison sur 48 h")
+		} else {
+			add("Passeports + cartes d'embarquement / PNR")
+			add("Téléphones chargés + batterie externe")
+			add("Dernier tour maison (eau, gaz, volets) si applicable")
+		}
 	}
 	if len(out) > 8 {
 		out = out[:8]

@@ -51,8 +51,8 @@ var (
 	reActualite    = regexp.MustCompile(`(?i)actualit[eé]|📰`)
 	rePratique     = regexp.MustCompile(`(?i)astuce pratique|💡.*pratique|pratique`)
 	reListesCloud  = regexp.MustCompile(`(?i)listes?\s*cloud|📋|checklist|valise|avant de partir`)
-	reDernierCheck = regexp.MustCompile(`(?i)dernier check|✅`)
-	reTelecharg    = regexp.MustCompile(`(?i)télécharg|telecharg|hors-ligne|hors ligne|📥`)
+	reDernierCheck = regexp.MustCompile(`(?i)dernier check|✅|\bcheck\b`)
+	reTelecharg    = regexp.MustCompile(`(?i)télécharg|telecharg|hors-ligne|hors ligne|📥|préparer|preparer`)
 	reVisibility   = regexp.MustCompile(`(?i)ne (vois|voit) pas|je ne sais pas|j['’]espère|perso|locales?`)
 )
 
@@ -97,7 +97,7 @@ func RunQA(text string, src *DayBriefData) QAResult {
 			}
 		}
 	}
-	prepMode := src.Prep != nil && src.Prep.Mode == "veille"
+	prepMode := src.Prep != nil && (src.Prep.Mode == "j0" || src.Prep.Mode == "j0m1" || src.Prep.Mode == "veille")
 	if prepMode {
 		runPrepQA(text, src, &res)
 	} else {

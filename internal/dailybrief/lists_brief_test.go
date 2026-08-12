@@ -100,7 +100,7 @@ func TestBuildPrepContext_Veille(t *testing.T) {
 		},
 	}
 	ctx := BuildPrepContext(db, src)
-	if ctx == nil || ctx.Mode != "veille" {
+	if ctx == nil || ctx.Mode != "j0" {
 		t.Fatalf("ctx %#v", ctx)
 	}
 	if len(ctx.Downloads) == 0 || len(ctx.LastCheck) == 0 {
@@ -109,21 +109,30 @@ func TestBuildPrepContext_Veille(t *testing.T) {
 	if ctx.VisibilityNote == "" || ctx.Comment == "" {
 		t.Fatal("missing note/comment")
 	}
+
+	src.DayNumber = -1
+	ctx = BuildPrepContext(db, src)
+	if ctx == nil || ctx.Mode != "j0m1" {
+		t.Fatalf("j0m1 ctx %#v", ctx)
+	}
 }
 
-func TestCandidateDayNumbers_IncludesDay0(t *testing.T) {
+func TestCandidateDayNumbers_IncludesPrepDays(t *testing.T) {
 	start, _ := time.Parse("2006-01-02", "2026-08-14")
 	end, _ := time.Parse("2006-01-02", "2026-09-01")
-	now, _ := time.Parse(time.RFC3339, "2026-08-13T06:00:00Z") // veille
+	now, _ := time.Parse(time.RFC3339, "2026-08-12T06:00:00Z") // J0-1
 	days := candidateDayNumbers(start, end, now)
-	found0 := false
+	foundM1, found0 := false, false
 	for _, d := range days {
+		if d == -1 {
+			foundM1 = true
+		}
 		if d == 0 {
 			found0 = true
 		}
 	}
-	if !found0 {
-		t.Fatalf("expected day 0 in %v", days)
+	if !foundM1 || !found0 {
+		t.Fatalf("expected day -1 and 0 in %v", days)
 	}
 }
 
@@ -132,7 +141,7 @@ func TestRunQA_PrepMode(t *testing.T) {
 		Weekday: "mercredi",
 		Date:    "2026-08-13",
 		Prep: &PrepContext{
-			Mode: "veille",
+			Mode: "j0",
 			Lists: []ListBriefSummary{{
 				Title: "Valise", TotalItems: 10, CheckedItems: 3,
 			}},

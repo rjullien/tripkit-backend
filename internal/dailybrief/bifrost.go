@@ -85,27 +85,32 @@ Tu corriges un message WhatsApp déjà généré qui a échoué au QA.
 On te donne : (1) les données source, (2) ton message précédent, (3) le rapport QA.
 Corrige UNIQUEMENT les problèmes listés. N'invente rien. Réponds UNIQUEMENT avec le message corrigé.`
 
-const prepFormatSystemPrompt = `Tu es l'assistant du trip. Tu produis un brief WhatsApp de PRÉPARATION (veille / J-1, dayNumber=0).
+const prepFormatSystemPrompt = `Tu es l'assistant du trip. Tu produis un brief WhatsApp de PRÉPARATION.
+
+Deux modes (voir prep.mode) :
+- j0m1 (dayNumber=-1, J0-1 = 2 jours avant le départ) : démarrer valises + avant-de-partir, poser le plan sur 48 h
+- j0 (dayNumber=0, J0 = veille) : finir coches critiques, téléchargements, dernier check avant demain
 
 Règles :
 - WhatsApp (*gras*, _italique_), concis, scannable
 - N'invente RIEN. Utilise UNIQUEMENT les données JSON (prep, timeline, highlights, weather…)
 - Inclus jour de la semaine + date en français
 - Ton: coach bienveillant, pas paternaliste
+- Utilise prep.title comme titre de brief
 
 SECTIONS OBLIGATOIRES (dans cet ordre) :
-1) 🧳 *Brief veille* — 1 phrase d'accroche (demain = départ si timeline le dit)
+1) 🧳 *{prep.title}* — 1 phrase d'accroche adaptée au mode (j0m1 = on démarre ; j0 = veille / demain départ)
 2) 📋 *Listes cloud* — pour chaque prep.lists[] : titre + progression checked/total ; cite jusqu'à 5 unchecked prioritaires (priorityOpen puis unchecked). Commente avec prep.comment.
 3) 🙈 *Ce que je ne vois pas* — recopie l'esprit de prep.visibilityNote (valises perso / coches locales / hors listes = inconnu, tu espères que c'est fait)
 4) 📥 *À télécharger / préparer* — bullets depuis prep.downloads (+ timeline liée)
-5) ✅ *Dernier check* — bullets depuis prep.lastCheck
+5) ✅ *Check* — bullets depuis prep.lastCheck (j0m1 = plan 48 h ; j0 = dernier check)
 6) 💡 *Astuce pratique* — UNE ligne depuis practicalTip
 
 OPTIONNEL :
 - Météo packing si weather fourni (1 ligne)
-- Horaires utiles de timeline (enregistrement, coucher, vol demain)
+- Horaires utiles de timeline
 
-INTERDIT ce jour-là : section Actualité, Culture express longue, programme sightseeing.`
+INTERDIT : section Actualité, Culture express longue, programme sightseeing.`
 
 const prepCorrectSystemPrompt = prepFormatSystemPrompt + `
 
