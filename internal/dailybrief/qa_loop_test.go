@@ -29,9 +29,12 @@ func TestGenerateOpts_QACorrectionOnce(t *testing.T) {
 		}
 		text := "TODO bad mercredi 15 avril"
 		switch {
-		case strings.Contains(sys, "filtres des titres"):
+		case strings.Contains(sys, "CREUSES des actualités") || strings.Contains(sys, "filtres des titres"):
 			text = `[{"title":"Expo du jour","source":"Le Soleil"}]`
+		case strings.Contains(sys, "anecdote « Culture express »"):
+			text = `{"text":"Tutoiement facile au Québec — le « vous » sonne très formel."}`
 		case strings.Contains(sys, "Corrige"):
+
 			text = "📅 *mercredi 15 avril*\n🏨 SpringHill check-in\n• 08:00 - Depart\n⭐ *À savoir*\n• Fait local\n📰 *Actualité*\n• Expo du jour\n💡 *Astuce pratique*\nPrendre le parapluie"
 		default:
 			// First Format fails QA; later Format (if any) stays bad unless Corrige above.

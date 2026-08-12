@@ -8,15 +8,29 @@ import (
 const maxOptionalTips = 5
 const maxActualites = 3
 
-// SelectDayTips fills CultureExpress, mandatory PracticalTip, and 0–5 optional tips.
+// SelectDayTips fills CultureExpress (bank fallback), mandatory PracticalTip, and 0–5 optional tips.
 // Call after weather / placeFacts / actualites enrichment.
-// usedCultureKeys = anti-redite keys already sent on this trip (may be nil).
-func SelectDayTips(data *DayBriefData, usedCultureKeys []string) {
+// used = anti-redite tips already sent on this trip (may be nil).
+// Culture express is preferably overwritten later by Bifrost GenerateCultureExpress; bank is safety net.
+func SelectDayTips(data *DayBriefData, used []UsedTip) {
 	if data == nil {
 		return
 	}
-	data.CultureExpress = pickCultureExpress(data.PlaceName, data.Label, usedCultureKeys)
-	data.PracticalTip = pickPracticalTip(data)
+	cultureKeys := make([]string, 0)
+	for _, u := range usedOfKind(used, kindCulture) {
+		cultureKeys = append(cultureKeys, u.Key)
+	}
+	// Also honor bare keys (older rows / tests).
+	if len(cultureKeys) == 0 {
+		for _, u := range used {
+			if u.Kind == "" || u.Kind == kindCulture {
+				cultureKeys = append(cultureKeys, u.Key)
+			}
+		}
+	}
+	keys := usedKeySet(used)
+	data.CultureExpress = pickCultureExpress(data.PlaceName, data.Label, cultureKeys)
+	data.PracticalTip = pickPracticalTip(data, keys)
 
 	var candidates []Tip
 	add := func(t *Tip) {
@@ -28,8 +42,9 @@ func SelectDayTips(data *DayBriefData, usedCultureKeys []string) {
 
 	add(tipPlanB(data))
 	add(tipTransport(data))
-	add(tipFood(data))
+	add(tipFood(data, keys))
 	add(tipPhoto(data))
+	// Timing: intentionally NOT anti-redite (operational reminder, OK to repeat).
 	add(tipTiming(data))
 	add(tipBudget(data))
 	add(tipFamille(data))
@@ -41,7 +56,7 @@ func SelectDayTips(data *DayBriefData, usedCultureKeys []string) {
 	data.Tips = candidates
 }
 
-func pickPracticalTip(data *DayBriefData) *Tip {
+func pickPracticalTip(data *DayBriefData, usedKeys map[string]bool) *Tip {
 	// Always one line — prioritize by day context.
 	if data.TravelDay {
 		dist := strings.TrimSpace(data.Dist)
@@ -76,9 +91,18 @@ func pickPracticalTip(data *DayBriefData) *Tip {
 	if place == "" {
 		place = "la zone du jour"
 	}
+	// Cash tip is anti-redite (generic fallback) — once per trip, then rotate to offline maps.
+	if usedKeys[kindPratiqueCash] {
+		return &Tip{
+			Kind:  "pratique",
+			Title: "Astuce pratique",
+			Text:  "Gardez cartes offline / captures des confirmations à portée de main — réseau parfois capricieux à " + place + ".",
+		}
+	}
 	return &Tip{
 		Kind:  "pratique",
 		Title: "Astuce pratique",
+		Key:   kindPratiqueCash,
 		Text:  "Gardez un peu de cash pour petits commerces / pourboires ; carte OK partout ailleurs à " + place + ".",
 	}
 }
@@ -198,9 +222,10 @@ func tipTransport(data *DayBriefData) *Tip {
 	return &Tip{Kind: "transport", Title: "Transport", Text: text}
 }
 
-func tipFood(data *DayBriefData) *Tip {
+func tipFood(data *DayBriefData, usedKeys map[string]bool) *Tip {
 	if data.Restaurant != nil {
 		if name, _ := data.Restaurant["name"].(string); strings.TrimSpace(name) != "" {
+			// Named resto tip may repeat (operational) — no anti-redite key.
 			return &Tip{
 				Kind:  "food",
 				Title: "Food tip",
@@ -213,9 +238,14 @@ func tipFood(data *DayBriefData) *Tip {
 	}
 	blob := strings.ToLower(data.PlaceName + " " + data.Label)
 	if strings.Contains(blob, "québec") || strings.Contains(blob, "quebec") {
+		const key = "food_generic.qc.poutine"
+		if usedKeys[key] {
+			return nil
+		}
 		return &Tip{
 			Kind:  "food",
 			Title: "Food tip",
+			Key:   key,
 			Text:  "Envie locale : poutine ou smoked meat pour un vrai break québécois entre deux flâneries.",
 		}
 	}
@@ -248,6 +278,8 @@ func tipTiming(data *DayBriefData) *Tip {
 	if data.TravelDay || len(data.Timeline) == 0 {
 		return nil
 	}
+	// Same line every stay day on purpose: crowd-avoidance reminder (not an anecdote).
+	// No anti-redite — repeating it is useful, not a "remake".
 	return &Tip{
 		Kind:  "timing",
 		Title: "Timing",

@@ -103,7 +103,21 @@ func (s *Service) GenerateOpts(tripID string, dayNumber int, opts ExtractOpts) (
 		}
 	}
 
-	SelectDayTips(src, LoadUsedTipKeys(s.DB, tripID, "culture_express"))
+	usedTips := LoadUsedTips(s.DB, tripID, "")
+	// Drop place facts already sent on this trip (À savoir anti-redite) before tip pick / Format.
+	src.PlaceFacts = filterPlaceFacts(src.PlaceFacts, usedTips)
+	if len(src.PlaceFactsBySegment) > 0 {
+		src.PlaceFactsBySegment = filterPlaceFactsBySegment(src.PlaceFactsBySegment, usedTips)
+	}
+
+	SelectDayTips(src, usedTips)
+	// Culture express: LLM creative + used texts in prompt + 1-shot redite check; bank = fallback.
+	cultureUsed := usedTexts(usedOfKind(usedTips, kindCulture))
+	if tip, err := bf.GenerateCultureExpress(src, cultureUsed); err != nil {
+		log.Printf("dailybrief: culture LLM failed, bank fallback: %v", err)
+	} else if tip != nil {
+		src.CultureExpress = tip
+	}
 	// Actualité is mandatory in the brief — soft placeholder if feeds are empty.
 	if len(src.Actualites) == 0 {
 		place := strings.TrimSpace(src.PlaceName)

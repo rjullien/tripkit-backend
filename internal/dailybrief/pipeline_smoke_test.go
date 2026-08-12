@@ -38,9 +38,13 @@ func TestPipeline_GenerateAndSend_Smoke(t *testing.T) {
 			return
 		}
 		body, _ := io.ReadAll(r.Body)
+		sys := string(body)
 		text := "📅 *mercredi 15 avril*\n🏨 SpringHill\n• 08:00 - Depart\n⭐ *À savoir*\n• Fait local\n📰 *Actualité*\n• Expo locale\n💡 *Astuce pratique*\nCash pour le parking"
-		if strings.Contains(string(body), "filtres des titres") {
+		switch {
+		case strings.Contains(sys, "CREUSES des actualités") || strings.Contains(sys, "filtres des titres"):
 			text = `[{"title":"Expo locale","source":"Le Soleil"}]`
+		case strings.Contains(sys, "anecdote « Culture express »"):
+			text = `{"text":"Au Québec, « dépanneur » veut dire épicerie de coin — ouverte tard."}`
 		}
 		resp := bifrostResp{Choices: []struct {
 			Message bifrostMsg `json:"message"`

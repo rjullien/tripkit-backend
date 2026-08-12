@@ -22,7 +22,8 @@ type DailyBriefUsedTip struct {
 	ID        uint      `gorm:"primaryKey;autoIncrement" json:"id"`
 	TripID    string    `gorm:"not null;uniqueIndex:idx_brief_used_trip_key;size:255" json:"trip_id"`
 	TipKey    string    `gorm:"not null;uniqueIndex:idx_brief_used_trip_key;size:64" json:"tip_key"`
-	Kind      string    `gorm:"not null;size:32;index" json:"kind"` // culture_express
+	Kind      string    `gorm:"not null;size:32;index" json:"kind"` // culture_express|food_generic|pratique_cash|place_fact
+	TipText   string    `gorm:"type:text" json:"tip_text"`          // original text for LLM "don't repeat" context
 	DayNumber int       `gorm:"not null" json:"day_number"`
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 }
