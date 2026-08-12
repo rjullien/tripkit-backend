@@ -107,7 +107,8 @@ func candidateDayNumbers(start, end time.Time, nowUTC time.Time) []int {
 	var out []int
 	seen := map[int]bool{}
 	for d := approx - 2; d <= approx+2; d++ {
-		if d < 1 || d > maxDay {
+		// day -1 = J0-1 (2 days before start); day 0 = J0 (veille); 1..maxDay = travel
+		if d < -1 || d > maxDay {
 			continue
 		}
 		if !seen[d] {

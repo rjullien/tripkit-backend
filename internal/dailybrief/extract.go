@@ -57,6 +57,8 @@ type DayBriefData struct {
 	PlaceStayTo      string `json:"placeStayTo,omitempty"`
 	PlaceStayToTime  string `json:"placeStayToTime,omitempty"`
 	ActuFocus        string `json:"actuFocus,omitempty"` // on_site | arrival
+	// Prep = veille (day 0) or départ last-check (day 1). Built in pipeline.
+	Prep *PrepContext `json:"prep,omitempty"`
 }
 
 // ActualiteItem is a traveler news item (actionable: detail + link when available).
@@ -100,11 +102,23 @@ func ExtractDayOpts(db *gorm.DB, tripID string, dayNumber int, opts ExtractOpts)
 	}
 
 	var day models.Day
-	if err := db.Where("trip_id = ? AND day_num = ?", tripID, dayNumber).First(&day).Error; err != nil {
+	err := db.Where("trip_id = ? AND day_num = ?", tripID, dayNumber).First(&day).Error
+	if err != nil && dayNumber == -1 {
+		// J0-1 without dedicated seed day: reuse day 0 template with adjusted date/label.
+		if err0 := db.Where("trip_id = ? AND day_num = ?", tripID, 0).First(&day).Error; err0 != nil {
+			return nil, fmt.Errorf("day %d not found (and no day 0 fallback): %w", dayNumber, err)
+		}
+		err = nil
+	}
+	if err != nil {
 		return nil, fmt.Errorf("day %d not found: %w", dayNumber, err)
 	}
 	dayData := map[string]any{}
 	_ = json.Unmarshal([]byte(day.Data), &dayData)
+	if dayNumber == -1 && day.DayNum == 0 {
+		// Synthesized from day 0 template.
+		dayData["label"] = "J0-1 — démarrer valises & avant de partir"
+	}
 
 	dateStr := ""
 	if trip.StartDate != nil && *trip.StartDate != "" {
@@ -301,7 +315,10 @@ func DayTimezone(db *gorm.DB, trip models.Trip, dayNumber int) string {
 	}
 	dayData := map[string]any{}
 	var day models.Day
-	if err := db.Where("trip_id = ? AND day_num = ?", trip.ID, dayNumber).First(&day).Error; err == nil {
+	if err := db.Where("trip_id = ? AND day_num = ?", trip.ID, dayNumber).First(&day).Error; err != nil && dayNumber == -1 {
+		_ = db.Where("trip_id = ? AND day_num = ?", trip.ID, 0).First(&day).Error
+	}
+	if day.ID != 0 || day.Data != "" {
 		_ = json.Unmarshal([]byte(day.Data), &dayData)
 	}
 	return resolveTZ(tripData, dayData)

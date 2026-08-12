@@ -23,7 +23,7 @@ func (h *Handler) GetDayBrief(w http.ResponseWriter, r *http.Request) {
 	}
 	tripID := chi.URLParam(r, "tripId")
 	dayNum, err := strconv.Atoi(chi.URLParam(r, "dayNum"))
-	if err != nil || dayNum < 1 {
+	if err != nil || dayNum < -1 {
 		writeError(w, http.StatusBadRequest, "invalid dayNum")
 		return
 	}
@@ -78,7 +78,7 @@ func (h *Handler) SendDayBrief(w http.ResponseWriter, r *http.Request) {
 	}
 	tripID := chi.URLParam(r, "tripId")
 	dayNum, err := strconv.Atoi(chi.URLParam(r, "dayNum"))
-	if err != nil || dayNum < 1 {
+	if err != nil || dayNum < -1 {
 		writeError(w, http.StatusBadRequest, "invalid dayNum")
 		return
 	}
