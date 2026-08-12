@@ -102,22 +102,21 @@ func ExtractDayOpts(db *gorm.DB, tripID string, dayNumber int, opts ExtractOpts)
 	}
 
 	var day models.Day
-	err := db.Where("trip_id = ? AND day_num = ?", tripID, dayNumber).First(&day).Error
-	if err != nil && dayNumber == -1 {
-		// J0-1 without dedicated seed day: reuse day 0 template with adjusted date/label.
-		if err0 := db.Where("trip_id = ? AND day_num = ?", tripID, 0).First(&day).Error; err0 != nil {
-			return nil, fmt.Errorf("day %d not found (and no day 0 fallback): %w", dayNumber, err)
-		}
-		err = nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("day %d not found: %w", dayNumber, err)
-	}
 	dayData := map[string]any{}
-	_ = json.Unmarshal([]byte(day.Data), &dayData)
-	if dayNumber == -1 && day.DayNum == 0 {
-		// Synthesized from day 0 template.
-		dayData["label"] = "J0-1 — démarrer valises & avant de partir"
+	if dayNumber == -1 {
+		// Virtual J0-1 prep brief (startDate−2): NOT a seed day.
+		// Frontier with teasers (SPEC-teasers endOffset=J-2) → practical listes brief.
+		// Always synthesize from day 0 template + adjusted calendar date.
+		if err := db.Where("trip_id = ? AND day_num = ?", tripID, 0).First(&day).Error; err != nil {
+			return nil, fmt.Errorf("J0-1 prep brief needs day 0 template: %w", err)
+		}
+		_ = json.Unmarshal([]byte(day.Data), &dayData)
+		applySyntheticJ0m1(dayData)
+	} else {
+		if err := db.Where("trip_id = ? AND day_num = ?", tripID, dayNumber).First(&day).Error; err != nil {
+			return nil, fmt.Errorf("day %d not found: %w", dayNumber, err)
+		}
+		_ = json.Unmarshal([]byte(day.Data), &dayData)
 	}
 
 	dateStr := ""
@@ -315,13 +314,45 @@ func DayTimezone(db *gorm.DB, trip models.Trip, dayNumber int) string {
 	}
 	dayData := map[string]any{}
 	var day models.Day
-	if err := db.Where("trip_id = ? AND day_num = ?", trip.ID, dayNumber).First(&day).Error; err != nil && dayNumber == -1 {
-		_ = db.Where("trip_id = ? AND day_num = ?", trip.ID, 0).First(&day).Error
+	lookup := dayNumber
+	if dayNumber == -1 {
+		lookup = 0 // virtual J0-1 uses day 0 location TZ
 	}
-	if day.ID != 0 || day.Data != "" {
+	if err := db.Where("trip_id = ? AND day_num = ?", trip.ID, lookup).First(&day).Error; err == nil {
 		_ = json.Unmarshal([]byte(day.Data), &dayData)
 	}
 	return resolveTZ(tripData, dayData)
+}
+
+// applySyntheticJ0m1 rewrites day-0 template into a J0-1 (J-2) prep brief payload.
+// No seed row: teasers own mystery/excitement until J-2; this message is operational.
+func applySyntheticJ0m1(dayData map[string]any) {
+	if dayData == nil {
+		return
+	}
+	dayData["label"] = "J0-1 — démarrer valises & avant de partir"
+	dayData["emoji"] = "🧳"
+	// Drop veille-only items (coucher tôt / vol demain) — keep house + packing + downloads.
+	raw := dayData["timeline"]
+	arr, ok := raw.([]any)
+	if !ok {
+		return
+	}
+	var kept []any
+	for _, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		d := strings.ToLower(firstString(m, "d", "label", "title"))
+		if strings.Contains(d, "coucher") || strings.Contains(d, "vol demain") {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	if len(kept) > 0 {
+		dayData["timeline"] = kept
+	}
 }
 
 func resolveTZ(tripData, dayData map[string]any) string {
