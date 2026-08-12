@@ -50,6 +50,10 @@ var (
 	reASavoir      = regexp.MustCompile(`(?i)à savoir|a savoir|⭐|🌟`)
 	reActualite    = regexp.MustCompile(`(?i)actualit[eé]|📰`)
 	rePratique     = regexp.MustCompile(`(?i)astuce pratique|💡.*pratique|pratique`)
+	reListesCloud  = regexp.MustCompile(`(?i)listes?\s*cloud|📋|checklist|valise|avant de partir`)
+	reDernierCheck = regexp.MustCompile(`(?i)dernier check|✅`)
+	reTelecharg    = regexp.MustCompile(`(?i)télécharg|telecharg|hors-ligne|hors ligne|📥`)
+	reVisibility   = regexp.MustCompile(`(?i)ne (vois|voit) pas|je ne sais pas|j['’]espère|perso|locales?`)
 )
 
 // RunQA validates Bifrost text against source data (deterministic).
@@ -93,72 +97,77 @@ func RunQA(text string, src *DayBriefData) QAResult {
 			}
 		}
 	}
-	if src.Hotel != nil {
-		name, _ := src.Hotel["name"].(string)
-		hasName := name != "" && textContainsLoose(text, name)
-		if name != "" && !hasName {
-			res.Completeness = append(res.Completeness, "hotel.name absent")
-			if res.Verdict == QAPassed {
-				res.Verdict = QAWarning
+	prepMode := src.Prep != nil && src.Prep.Mode == "veille"
+	if prepMode {
+		runPrepQA(text, src, &res)
+	} else {
+		if src.Hotel != nil {
+			name, _ := src.Hotel["name"].(string)
+			hasName := name != "" && textContainsLoose(text, name)
+			if name != "" && !hasName {
+				res.Completeness = append(res.Completeness, "hotel.name absent")
+				if res.Verdict == QAPassed {
+					res.Verdict = QAWarning
+				}
+			}
+			if !reHotelSection.MatchString(text) && !hasName {
+				res.Completeness = append(res.Completeness, "hotel section missing")
+				res.Verdict = QAFailed
 			}
 		}
-		if !reHotelSection.MatchString(text) && !hasName {
-			res.Completeness = append(res.Completeness, "hotel section missing")
+		if src.Restaurant != nil {
+			if name, _ := src.Restaurant["name"].(string); name != "" && !strings.Contains(text, name) {
+				res.Completeness = append(res.Completeness, "restaurant.name absent")
+				if res.Verdict == QAPassed {
+					res.Verdict = QAWarning
+				}
+			}
+		}
+		if len(src.Timeline) > 0 && !reTimeline.MatchString(text) {
+			res.Completeness = append(res.Completeness, "timeline hours missing")
 			res.Verdict = QAFailed
 		}
-	}
-	if src.Restaurant != nil {
-		if name, _ := src.Restaurant["name"].(string); name != "" && !strings.Contains(text, name) {
-			res.Completeness = append(res.Completeness, "restaurant.name absent")
+		for _, item := range src.Timeline {
+			if t, _ := item["time"].(string); t != "" && !timelineTimePresent(text, t) {
+				res.Completeness = append(res.Completeness, fmt.Sprintf("timeline time %s absent", t))
+				if res.Verdict == QAPassed {
+					res.Verdict = QAWarning
+				}
+			}
+		}
+		if src.MapURL != "" && !strings.Contains(text, src.MapURL) {
+			res.Completeness = append(res.Completeness, "mapUrl absent")
 			if res.Verdict == QAPassed {
 				res.Verdict = QAWarning
 			}
 		}
-	}
-	if len(src.Timeline) > 0 && !reTimeline.MatchString(text) {
-		res.Completeness = append(res.Completeness, "timeline hours missing")
-		res.Verdict = QAFailed
-	}
-	for _, item := range src.Timeline {
-		if t, _ := item["time"].(string); t != "" && !timelineTimePresent(text, t) {
-			res.Completeness = append(res.Completeness, fmt.Sprintf("timeline time %s absent", t))
+		if src.Weather != nil && !reWeather.MatchString(text) {
+			res.Completeness = append(res.Completeness, "weather absent")
 			if res.Verdict == QAPassed {
 				res.Verdict = QAWarning
 			}
 		}
-	}
-	if src.MapURL != "" && !strings.Contains(text, src.MapURL) {
-		res.Completeness = append(res.Completeness, "mapUrl absent")
-		if res.Verdict == QAPassed {
-			res.Verdict = QAWarning
-		}
-	}
-	if src.Weather != nil && !reWeather.MatchString(text) {
-		res.Completeness = append(res.Completeness, "weather absent")
-		if res.Verdict == QAPassed {
-			res.Verdict = QAWarning
-		}
-	}
 
-	// Mandatory brief sections
-	if !reASavoir.MatchString(text) {
-		res.Completeness = append(res.Completeness, "section À savoir missing")
-		res.Verdict = QAFailed
-	}
-	if !reActualite.MatchString(text) {
-		res.Completeness = append(res.Completeness, "section Actualité missing")
-		res.Verdict = QAFailed
-	}
-	if src.PracticalTip != nil && strings.TrimSpace(src.PracticalTip.Text) != "" {
-		if !rePratique.MatchString(text) {
-			res.Completeness = append(res.Completeness, "section Astuce pratique missing")
+		// Mandatory travel-day brief sections
+		if !reASavoir.MatchString(text) {
+			res.Completeness = append(res.Completeness, "section À savoir missing")
 			res.Verdict = QAFailed
 		}
-	}
-	if src.HasKids == false && (strings.Contains(strings.ToLower(text), "aire de jeu") || strings.Contains(strings.ToLower(text), "avec enfants")) {
-		res.Completeness = append(res.Completeness, "kids tip while hasKids=false")
-		if res.Verdict == QAPassed {
-			res.Verdict = QAWarning
+		if !reActualite.MatchString(text) {
+			res.Completeness = append(res.Completeness, "section Actualité missing")
+			res.Verdict = QAFailed
+		}
+		if src.PracticalTip != nil && strings.TrimSpace(src.PracticalTip.Text) != "" {
+			if !rePratique.MatchString(text) {
+				res.Completeness = append(res.Completeness, "section Astuce pratique missing")
+				res.Verdict = QAFailed
+			}
+		}
+		if src.HasKids == false && (strings.Contains(strings.ToLower(text), "aire de jeu") || strings.Contains(strings.ToLower(text), "avec enfants")) {
+			res.Completeness = append(res.Completeness, "kids tip while hasKids=false")
+			if res.Verdict == QAPassed {
+				res.Verdict = QAWarning
+			}
 		}
 	}
 
@@ -185,6 +194,41 @@ func RunQA(text string, src *DayBriefData) QAResult {
 		res.Summary = fmt.Sprintf("QA %s - %d problème(s) détecté(s)", res.Verdict, n)
 	}
 	return res
+}
+
+func runPrepQA(text string, src *DayBriefData, res *QAResult) {
+	if !reListesCloud.MatchString(text) {
+		res.Completeness = append(res.Completeness, "section Listes cloud missing")
+		res.Verdict = QAFailed
+	}
+	if !reDernierCheck.MatchString(text) {
+		res.Completeness = append(res.Completeness, "section Dernier check missing")
+		res.Verdict = QAFailed
+	}
+	if !reTelecharg.MatchString(text) {
+		res.Completeness = append(res.Completeness, "section télécharger/préparer missing")
+		res.Verdict = QAFailed
+	}
+	if !reVisibility.MatchString(text) {
+		res.Completeness = append(res.Completeness, "visibility / je ne sais pas missing")
+		res.Verdict = QAFailed
+	}
+	if src.PracticalTip != nil && strings.TrimSpace(src.PracticalTip.Text) != "" {
+		if !rePratique.MatchString(text) {
+			res.Completeness = append(res.Completeness, "section Astuce pratique missing")
+			res.Verdict = QAFailed
+		}
+	}
+	// Soft: mention at least one unchecked / progress digit if lists present.
+	if src.Prep != nil && len(src.Prep.Lists) > 0 {
+		hasProgress := strings.Contains(text, "/") || strings.Contains(text, "coches") || strings.Contains(text, "ouvert")
+		if !hasProgress {
+			res.Completeness = append(res.Completeness, "list progress not mentioned")
+			if res.Verdict == QAPassed {
+				res.Verdict = QAWarning
+			}
+		}
+	}
 }
 
 func humanDateFR(iso string) string {

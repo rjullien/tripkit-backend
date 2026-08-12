@@ -57,6 +57,8 @@ type DayBriefData struct {
 	PlaceStayTo      string `json:"placeStayTo,omitempty"`
 	PlaceStayToTime  string `json:"placeStayToTime,omitempty"`
 	ActuFocus        string `json:"actuFocus,omitempty"` // on_site | arrival
+	// Prep = veille (day 0) or départ last-check (day 1). Built in pipeline.
+	Prep *PrepContext `json:"prep,omitempty"`
 }
 
 // ActualiteItem is a traveler news item (actionable: detail + link when available).

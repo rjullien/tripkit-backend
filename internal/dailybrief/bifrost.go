@@ -76,13 +76,94 @@ SECTIONS OPTIONNELLES (si présentes dans les données) :
 - 🗣️ *Culture express* — depuis cultureExpress
 - Autres tips[] (photo, plan B, timing, food, transport, budget, famille, sécurité) : 0 à 5, seulement ceux fournis, une ligne chacun
 - Ne crée PAS de tip « famille / parc / enfants » si hasKids=false
-- Ne force PAS de tip route si travelDay=false`
+- Ne force PAS de tip route si travelDay=false
+- Si prep.mode=depart : ajoute une section courte ✅ *Dernier check listes* (progression + 3–5 priorityOpen / lastCheck). Mentionne prep.visibilityNote en une ligne (tu ne vois pas les valises perso / coches locales).`
 
 const correctSystemPrompt = formatSystemPrompt + `
 
 Tu corriges un message WhatsApp déjà généré qui a échoué au QA.
 On te donne : (1) les données source, (2) ton message précédent, (3) le rapport QA.
 Corrige UNIQUEMENT les problèmes listés. N'invente rien. Réponds UNIQUEMENT avec le message corrigé.`
+
+const prepFormatSystemPrompt = `Tu es l'assistant du trip. Tu produis un brief WhatsApp de PRÉPARATION (veille / J-1, dayNumber=0).
+
+Règles :
+- WhatsApp (*gras*, _italique_), concis, scannable
+- N'invente RIEN. Utilise UNIQUEMENT les données JSON (prep, timeline, highlights, weather…)
+- Inclus jour de la semaine + date en français
+- Ton: coach bienveillant, pas paternaliste
+
+SECTIONS OBLIGATOIRES (dans cet ordre) :
+1) 🧳 *Brief veille* — 1 phrase d'accroche (demain = départ si timeline le dit)
+2) 📋 *Listes cloud* — pour chaque prep.lists[] : titre + progression checked/total ; cite jusqu'à 5 unchecked prioritaires (priorityOpen puis unchecked). Commente avec prep.comment.
+3) 🙈 *Ce que je ne vois pas* — recopie l'esprit de prep.visibilityNote (valises perso / coches locales / hors listes = inconnu, tu espères que c'est fait)
+4) 📥 *À télécharger / préparer* — bullets depuis prep.downloads (+ timeline liée)
+5) ✅ *Dernier check* — bullets depuis prep.lastCheck
+6) 💡 *Astuce pratique* — UNE ligne depuis practicalTip
+
+OPTIONNEL :
+- Météo packing si weather fourni (1 ligne)
+- Horaires utiles de timeline (enregistrement, coucher, vol demain)
+
+INTERDIT ce jour-là : section Actualité, Culture express longue, programme sightseeing.`
+
+const prepCorrectSystemPrompt = prepFormatSystemPrompt + `
+
+Tu corriges un brief veille qui a échoué au QA. Corrige UNIQUEMENT les problèmes listés. N'invente rien.`
+
+// FormatPrep formats the day-0 veille brief (listes + downloads + last check).
+func (c *BifrostClient) FormatPrep(enriched any) (string, error) {
+	return c.formatWithSystem(prepFormatSystemPrompt, enriched)
+}
+
+// FormatPrepCorrect one-shot QA correction for prep brief.
+func (c *BifrostClient) FormatPrepCorrect(enriched any, previousText string, qa QAResult) (string, error) {
+	if c == nil || c.BaseURL == "" {
+		return "", fmt.Errorf("bifrost not configured")
+	}
+	srcJSON, err := json.Marshal(enriched)
+	if err != nil {
+		return "", err
+	}
+	qaJSON, err := json.Marshal(qa)
+	if err != nil {
+		return "", err
+	}
+	user := "Données source (JSON):\n" + string(srcJSON) +
+		"\n\nMessage précédent:\n" + previousText +
+		"\n\nRapport QA (JSON):\n" + string(qaJSON) +
+		"\n\nCorrige le brief veille pour passer le QA."
+	var lastErr error
+	for attempt := 0; attempt <= 2; attempt++ {
+		text, err := c.chatOnce(prepCorrectSystemPrompt, user)
+		if err == nil {
+			return text, nil
+		}
+		lastErr = err
+		time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+	}
+	return "", lastErr
+}
+
+func (c *BifrostClient) formatWithSystem(system string, enriched any) (string, error) {
+	if c == nil || c.BaseURL == "" {
+		return "", fmt.Errorf("bifrost not configured")
+	}
+	userPayload, err := json.Marshal(enriched)
+	if err != nil {
+		return "", err
+	}
+	var lastErr error
+	for attempt := 0; attempt <= 2; attempt++ {
+		text, err := c.chatOnce(system, string(userPayload))
+		if err == nil {
+			return text, nil
+		}
+		lastErr = err
+		time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+	}
+	return "", lastErr
+}
 
 // Format asks Bifrost to turn enriched day JSON into WhatsApp text.
 func (c *BifrostClient) Format(enriched any) (string, error) {

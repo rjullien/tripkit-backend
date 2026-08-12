@@ -85,10 +85,63 @@ func (s *Service) GenerateOpts(tripID string, dayNumber int, opts ExtractOpts) (
 	if lat, lon, ok := CoordsFromTripData(tripData, dayData); ok {
 		_ = EnrichDay(src, lat, lon)
 	}
-	EnrichPlaceContext(src)
+	// Veille prep brief: skip place news/wiki noise (listes + timeline only).
+	if dayNumber != 0 {
+		EnrichPlaceContext(src)
+	}
 
 	cfg := s.cfg()
 	bf := NewBifrostClient(cfg.BifrostBaseURL, cfg.BifrostAPIKey, cfg.BriefModel)
+
+	// Veille (day 0) + départ (day 1): attach shared cloud list progress.
+	if dayNumber == 0 || dayNumber == 1 {
+		src.Prep = BuildPrepContext(s.DB, src)
+	}
+
+	var text string
+	qaLoopUsed := false
+
+	if dayNumber == 0 {
+		// Dedicated prep brief — no Actualité / Culture express loop.
+		SelectDayTips(src, nil)
+		src.CultureExpress = nil
+		src.Actualites = nil
+		src.Tips = filterTipsForPrep(src.Tips)
+		if src.PracticalTip == nil || strings.TrimSpace(src.PracticalTip.Text) == "" {
+			src.PracticalTip = &Tip{
+				Kind:  "pratique",
+				Title: "Astuce pratique",
+				Text:  "Cochez les listes en mode partagé dans TripKit pour que tout le monde voie l'avancement.",
+			}
+		}
+		var prepErr error
+		text, prepErr = bf.FormatPrep(src)
+		if prepErr != nil {
+			return nil, prepErr
+		}
+		qa := RunQA(text, src)
+		if qa.Verdict == QAFailed {
+			corrected, corrErr := bf.FormatPrepCorrect(src, text, qa)
+			if corrErr != nil {
+				log.Printf("dailybrief: prep QA correction failed: %v", corrErr)
+			} else {
+				qaLoopUsed = true
+				text = corrected
+				qa = RunQA(text, src)
+			}
+		}
+		return &GenerateResult{
+			Text:        text,
+			DayNumber:   dayNumber,
+			GeneratedAt: time.Now().UTC(),
+			Weather:     src.Weather,
+			QA:          qa,
+			Sent:        false,
+			Timezone:    src.Timezone,
+			QALoopUsed:  qaLoopUsed,
+			Source:      src,
+		}, nil
+	}
 
 	// Extra LLM call: curate + dig Actualité (actionable detail; drop listicles / junk).
 	if len(src.Actualites) > 0 {
@@ -131,12 +184,11 @@ func (s *Service) GenerateOpts(tripID string, dayNumber int, opts ExtractOpts) (
 		}}
 	}
 
-	text, err := bf.Format(src)
+	text, err = bf.Format(src)
 	if err != nil {
 		return nil, err
 	}
 	qa := RunQA(text, src)
-	qaLoopUsed := false
 	if qa.Verdict == QAFailed {
 		corrected, corrErr := bf.FormatCorrect(src, text, qa)
 		if corrErr != nil {
@@ -158,6 +210,17 @@ func (s *Service) GenerateOpts(tripID string, dayNumber int, opts ExtractOpts) (
 		QALoopUsed:  qaLoopUsed,
 		Source:      src,
 	}, nil
+}
+
+func filterTipsForPrep(tips []Tip) []Tip {
+	// Veille: keep at most rain Plan B; drop sightseeing tips.
+	var out []Tip
+	for _, t := range tips {
+		if t.Kind == "plan_b" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func fallbackActualites(candidates []ActualiteItem) []ActualiteItem {
