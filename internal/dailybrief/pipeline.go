@@ -243,8 +243,49 @@ func (s *Service) GenerateAndSend(tripID string, dayNumber int, force bool) (*Se
 	return s.GenerateAndSendOpts(tripID, dayNumber, SendOptions{Force: force})
 }
 
+// HasSentBrief reports whether a successful send already exists for this trip/day/local date.
+func HasSentBrief(db *gorm.DB, tripID string, dayNumber int, localDate string) bool {
+	if db == nil || tripID == "" || localDate == "" {
+		return false
+	}
+	var n int64
+	_ = db.Model(&models.DailyBriefSend{}).
+		Where("trip_id = ? AND day_number = ? AND local_date = ? AND sent = ?", tripID, dayNumber, localDate, true).
+		Count(&n).Error
+	return n > 0
+}
+
 // GenerateAndSendOpts supports force + To override (admin test DM).
 func (s *Service) GenerateAndSendOpts(tripID string, dayNumber int, opt SendOptions) (*SendResult, error) {
+	// Resolve local date + cheap idempotence *before* LLM generate (send window retries every minute).
+	tzName := "UTC"
+	var trip models.Trip
+	if err := s.DB.First(&trip, "id = ?", tripID).Error; err == nil {
+		tzName = DayTimezone(s.DB, trip, dayNumber)
+	}
+	localDate := time.Now().UTC().Format("2006-01-02")
+	if loc, err := time.LoadLocation(tzName); err == nil {
+		localDate = time.Now().In(loc).Format("2006-01-02")
+	}
+
+	if !opt.Force {
+		var existing models.DailyBriefSend
+		err := s.DB.Where("trip_id = ? AND day_number = ? AND local_date = ? AND sent = ?", tripID, dayNumber, localDate, true).
+			First(&existing).Error
+		if err == nil {
+			return &SendResult{
+				Sent:          true,
+				Group:         existing.WhatsAppTo,
+				MessageLength: existing.MessageLen,
+				MessageID:     existing.MessageID,
+				QAVerdict:     QAVerdict(existing.QAVerdict),
+				SentAt:        existing.CreatedAt,
+				Timezone:      tzName,
+				Error:         "already_sent",
+			}, nil
+		}
+	}
+
 	extractOpts := ExtractOpts{RequireConfigured: !opt.SkipConfigGate}
 	gen, err := s.GenerateOpts(tripID, dayNumber, extractOpts)
 	if err != nil {
@@ -259,13 +300,15 @@ func (s *Service) GenerateAndSendOpts(tripID string, dayNumber int, opt SendOpti
 		return nil, fmt.Errorf("no WhatsApp destination (seed whatsappGroup empty and no to= override)")
 	}
 
-	localDate := time.Now().UTC().Format("2006-01-02")
+	// Prefer TZ from extract when available (same as historical behaviour).
 	if gen.Source != nil && gen.Source.Timezone != "" {
-		if loc, err := time.LoadLocation(gen.Source.Timezone); err == nil {
+		tzName = gen.Source.Timezone
+		if loc, err := time.LoadLocation(tzName); err == nil {
 			localDate = time.Now().In(loc).Format("2006-01-02")
 		}
 	}
 
+	// Re-check after generate (concurrent tick / TZ refine).
 	if !opt.Force {
 		var existing models.DailyBriefSend
 		err := s.DB.Where("trip_id = ? AND day_number = ? AND local_date = ? AND sent = ?", tripID, dayNumber, localDate, true).

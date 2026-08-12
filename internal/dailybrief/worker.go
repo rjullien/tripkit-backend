@@ -10,6 +10,11 @@ import (
 	"gorm.io/gorm"
 )
 
+// sendWindowMinutes: fire when local time is in [want, want+window).
+// Exact-minute match alone drops sends if a tick is late (pod restart, GC, slow prior tick).
+// Idempotence is daily_brief_sends(sent=true); retries inside the window are cheap skips.
+const sendWindowMinutes = 15
+
 // Worker is an in-process minute ticker (no k8s CronJob).
 // For each enabled trip it evaluates "is it send time in THIS day's TZ?"
 // (trip.briefSendTime if set, else ops sendLocalHour/Minute)
@@ -33,7 +38,7 @@ func (w *Worker) Start() {
 		w.nowFn = time.Now
 	}
 	go func() {
-		log.Printf("dailybrief: worker started (tick=%s, in-process — not k8s CronJob)", w.every)
+		log.Printf("dailybrief: worker started (tick=%s, window=%dm, in-process — not k8s CronJob)", w.every, sendWindowMinutes)
 		t := time.NewTicker(w.every)
 		defer t.Stop()
 		for range t.C {
@@ -78,7 +83,7 @@ func (w *Worker) tick() {
 				loc = time.UTC
 			}
 			localNow := nowUTC.In(loc)
-			if localNow.Hour() != wantHour || localNow.Minute() != wantMin {
+			if !inSendWindow(localNow, wantHour, wantMin, sendWindowMinutes) {
 				continue
 			}
 			expectedDate := start.AddDate(0, 0, dayNumber-1)
@@ -87,13 +92,44 @@ func (w *Worker) tick() {
 			if !localDate.Equal(expDate) {
 				continue
 			}
-			if _, err := w.Service.GenerateAndSend(trip.ID, dayNumber, false); err != nil {
-				log.Printf("dailybrief: send %s day=%d tz=%s: %v", trip.ID, dayNumber, tzName, err)
+			dateStr := localDate.Format("2006-01-02")
+			if HasSentBrief(w.DB, trip.ID, dayNumber, dateStr) {
+				continue
+			}
+			log.Printf("dailybrief: due %s day=%d tz=%s target=%02d:%02d local=%s now=%s",
+				trip.ID, dayNumber, tzName, wantHour, wantMin, dateStr, localNow.Format("15:04"))
+			res, err := w.Service.GenerateAndSend(trip.ID, dayNumber, false)
+			if err != nil {
+				log.Printf("dailybrief: fail %s day=%d tz=%s: %v", trip.ID, dayNumber, tzName, err)
+				continue
+			}
+			if res != nil && res.Error == "already_sent" {
+				log.Printf("dailybrief: skip %s day=%d already_sent", trip.ID, dayNumber)
+				continue
+			}
+			if res != nil && res.Sent {
+				log.Printf("dailybrief: sent %s day=%d tz=%s local=%s msg=%s",
+					trip.ID, dayNumber, tzName, dateStr, res.MessageID)
 			} else {
-				log.Printf("dailybrief: sent %s day=%d tz=%s local=%s", trip.ID, dayNumber, tzName, localDate.Format("2006-01-02"))
+				log.Printf("dailybrief: skip %s day=%d (not sent)", trip.ID, dayNumber)
 			}
 		}
 	}
+}
+
+// inSendWindow reports whether localNow falls in [wantHour:wantMin, +windowMins).
+// Does not wrap past midnight (morning briefs only; evening edge cases clip at 24:00).
+func inSendWindow(localNow time.Time, wantHour, wantMin, windowMins int) bool {
+	if windowMins < 1 {
+		windowMins = 1
+	}
+	nowM := localNow.Hour()*60 + localNow.Minute()
+	wantM := wantHour*60 + wantMin
+	endM := wantM + windowMins
+	if endM > 24*60 {
+		endM = 24 * 60
+	}
+	return nowM >= wantM && nowM < endM
 }
 
 // candidateDayNumbers returns day indices that might match "today" around nowUTC.
