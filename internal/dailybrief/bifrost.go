@@ -241,6 +241,92 @@ func fallbackDetail(it ActualiteItem) string {
 	return strings.TrimSpace(it.Title)
 }
 
+const cultureExpressSystemPrompt = `Tu inventes UNE anecdote « Culture express » pour un brief voyageur WhatsApp.
+Règles :
+- 1 à 2 phrases max (~220 caractères), ton chaleureux, concret, utile sur place
+- Sujets OK : formule locale, étiquette, vocabulaire, geste social, petite coutume
+- INTERDIT : météo, hôtel, itinéraire, heures, restos nommés, actualité, politique
+- N'invente PAS d'histoire « historique » douteuse — préfère usages / langage
+- Si une liste « déjà envoyés » est fournie, propose un sujet CLAIREMENT différent
+- Réponds UNIQUEMENT en JSON : {"text":"..."}`
+
+// GenerateCultureExpress asks Bifrost for a fresh culture tip; 1 redite retry then caller falls back to bank.
+func (c *BifrostClient) GenerateCultureExpress(data *DayBriefData, usedTexts []string) (*Tip, error) {
+	if c == nil || c.BaseURL == "" {
+		return nil, fmt.Errorf("bifrost not configured")
+	}
+	place := ""
+	label := ""
+	if data != nil {
+		place = strings.TrimSpace(data.PlaceName)
+		label = strings.TrimSpace(data.Label)
+	}
+	ctx := map[string]any{
+		"placeName": place,
+		"label":     label,
+		"travelDay": data != nil && data.TravelDay,
+		"hasKids":   data != nil && data.HasKids,
+		"alreadySent": usedTexts,
+	}
+	payload, err := json.Marshal(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var previous string
+	for attempt := 0; attempt < 2; attempt++ {
+		user := "Contexte JSON:\n" + string(payload) +
+			"\n\nPropose une Culture express inédite (JSON {\"text\":...} uniquement)."
+		if previous != "" {
+			user += "\n\nTa proposition précédente était trop proche d'un tip déjà envoyé :\n" + previous +
+				"\n\nPropose autre chose (autre sujet)."
+		}
+		raw, err := c.chatOnce(cultureExpressSystemPrompt, user)
+		if err != nil {
+			return nil, err
+		}
+		text, err := parseCultureExpressJSON(raw)
+		if err != nil {
+			return nil, err
+		}
+		if isRedite(text, usedTexts) {
+			previous = text
+			continue
+		}
+		return &Tip{
+			Kind:  kindCulture,
+			Title: "Culture express",
+			Text:  text,
+			Key:   tipKeyFromText(kindCulture, text),
+		}, nil
+	}
+	return nil, fmt.Errorf("culture express still redite after retry")
+}
+
+func parseCultureExpressJSON(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "```") {
+		raw = strings.TrimPrefix(raw, "```json")
+		raw = strings.TrimPrefix(raw, "```")
+		raw = strings.TrimSuffix(strings.TrimSpace(raw), "```")
+		raw = strings.TrimSpace(raw)
+	}
+	var obj struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(raw), &obj); err != nil {
+		return "", fmt.Errorf("culture json: %w (%s)", err, truncate(raw, 120))
+	}
+	text := strings.TrimSpace(obj.Text)
+	if text == "" {
+		return "", fmt.Errorf("culture express empty text")
+	}
+	if len(text) > 320 {
+		text = text[:317] + "…"
+	}
+	return text, nil
+}
+
 func (c *BifrostClient) chatOnce(system, userContent string) (string, error) {
 	body, err := json.Marshal(bifrostReq{
 		Model: c.Model,
