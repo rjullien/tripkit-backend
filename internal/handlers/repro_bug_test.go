@@ -2,6 +2,8 @@ package handlers_test
 
 import (
 	"encoding/json"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -210,6 +212,22 @@ func TestReproD_DeletedCustomResurrects(t *testing.T) {
 	}
 	if c.hasCustom("c-cable") {
 		t.Errorf("BUG: item custom supprimé est RESSUSCITÉ après resync")
+	}
+
+	// PWA resends deletedCustom on every later poll (12s). Must stay 200.
+	m = sync(t, r, c)
+	if serverHasCustom(m, "c-cable") {
+		t.Errorf("BUG: c-cable reappeared on second tombstone sync")
+	}
+}
+
+func TestHandlers_NoSQLiteOnlyMAXOnTombstones(t *testing.T) {
+	src, err := os.ReadFile("handlers.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(src), "MAX(list_custom_deleteds") {
+		t.Fatal("SQLite-only MAX() in tombstone upsert — Postgres returns 500 on every later sync")
 	}
 }
 
