@@ -61,21 +61,38 @@ func TestSystemPrompt_ScopedUser(t *testing.T) {
 	for _, needle := range []string{
 		"Utilisateur Authelia : nadia",
 		"Repo seed autorisé UNIQUEMENT : rjullien/tripkit-seeds-nadia",
-		"Je suis Léo, ton agent de planification de voyage",
-		"je ne peux pas répondre à d'autres questions",
+		"vaguement liée au voyage",
 		"Voyage actif",
 		"sicile-2026",
-		"économie de tokens",
 	} {
 		if !strings.Contains(p, needle) {
 			t.Fatalf("prompt missing %q\n%s", needle, p)
 		}
 	}
-	if strings.Contains(p, "rjullien/tripkit-seeds-laurine") {
-		t.Fatal("scoped prompt must not mention laurine repo")
+	for _, banned := range []string{
+		"je ne peux pas répondre à d'autres questions",
+		"économie de tokens",
+		"météo, resto, etc.",
+		"rjullien/tripkit-seeds-laurine",
+	} {
+		if strings.Contains(p, banned) {
+			t.Fatalf("prompt must not contain %q\n%s", banned, p)
+		}
 	}
 	if strings.Contains(p, "Repo seed autorisé UNIQUEMENT : rjullien/tripkit-seeds\n") {
 		t.Fatal("scoped prompt must not authorize jullien repo for Nadia")
+	}
+}
+
+func TestSystemPrompt_TripQuestionsInScope(t *testing.T) {
+	p := SystemPrompt(PromptContext{Username: "rene", AllowedRepos: []string{"rjullien/tripkit-seeds"}, IsAdmin: true})
+	for _, needle := range []string{
+		"Questions voyage : TOUJOURS répondre",
+		"Resto / météo / activités",
+	} {
+		if !strings.Contains(p, needle) {
+			t.Fatalf("prompt missing %q\n%s", needle, p)
+		}
 	}
 }
 
