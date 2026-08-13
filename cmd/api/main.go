@@ -15,6 +15,7 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/dailybrief"
 	"github.com/rjullien/tripkit-backend/internal/database"
 	"github.com/rjullien/tripkit-backend/internal/handlers"
+	"github.com/rjullien/tripkit-backend/internal/leo"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/pluschat"
 	"github.com/rjullien/tripkit-backend/internal/publish"
@@ -55,6 +56,11 @@ func main() {
 	plusCfg := plusLoader.Bootstrap()
 	log.Printf("pluschat config: origin=%s model=%s enabled=%v", plusCfg.Origin, plusCfg.ChatModel, plusCfg.Enabled)
 	h.SetPlusChat(plusLoader)
+
+	leoOps := leo.NewOpsLoaderFromEnv()
+	leoCfg := leoOps.Bootstrap()
+	log.Printf("leo ops: origin=%s default=%s models=%d", leoCfg.Origin, leoCfg.DefaultModel, len(leoCfg.Models))
+	h.SetLeoOps(leoOps)
 
 	// In-process worker: auto-on when TRIPKIT_GITHUB_TOKEN is set; override via TRIPKIT_PUBLISH_WORKER.
 	if publish.WorkerEnabled() {

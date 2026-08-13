@@ -86,6 +86,22 @@ func waitSSE(t *testing.T, rec *sseRec, substr string, d time.Duration) {
 	t.Fatalf("timeout waiting for %q in:\n%s", substr, rec.String())
 }
 
+func waitJobID(t *testing.T, rec *sseRec, d time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if id := parseSSEJobID(rec.String()); id != "" {
+			return id
+		}
+		select {
+		case <-rec.n:
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	t.Fatalf("timeout waiting for jobId in:\n%s", rec.String())
+	return ""
+}
+
 func parseSSEJobID(raw string) string {
 	for _, block := range strings.Split(raw, "\n\n") {
 		var data string
@@ -263,7 +279,7 @@ func TestLeoJob_CancelStopsRun(t *testing.T) {
 		t.Fatal("run did not start")
 	}
 	waitSSE(t, rec, "event: meta", 2*time.Second)
-	jobID := parseSSEJobID(rec.String())
+	jobID := waitJobID(t, rec, 2*time.Second)
 
 	req := httptest.NewRequest(http.MethodPost, "/leo/jobs/"+jobID+"/cancel", strings.NewReader("{}"))
 	req.Header.Set("Content-Type", "application/json")
@@ -306,7 +322,7 @@ func TestLeoJob_WrongUser403(t *testing.T) {
 	rec := newSSERec()
 	go r.ServeHTTP(rec, leoPOST("rene", leoChatBody))
 	waitSSE(t, rec, "event: meta", 2*time.Second)
-	jobID := parseSSEJobID(rec.String())
+	jobID := waitJobID(t, rec, 2*time.Second)
 
 	req := httptest.NewRequest(http.MethodGet, "/leo/jobs/"+jobID+"/stream", nil)
 	req.Header.Set("Remote-User", "nadia")
@@ -316,4 +332,48 @@ func TestLeoJob_WrongUser403(t *testing.T) {
 		t.Fatalf("status=%d %s", w.Code, w.Body.String())
 	}
 	close(gate)
+}
+
+func TestLeoStatus_IncludesAllowlist(t *testing.T) {
+	h, _ := leoTestRouter(t)
+	r := chi.NewRouter()
+	r.Get("/leo/status", h.LeoStatus)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/leo/status", nil))
+	if w.Code != 200 {
+		t.Fatalf("status=%d %s", w.Code, w.Body.String())
+	}
+	var st leo.Status
+	if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
+		t.Fatal(err)
+	}
+	if st.DefaultModel == "" || len(st.Models) < 2 {
+		t.Fatalf("status=%s", w.Body.String())
+	}
+	found := false
+	for _, m := range st.Models {
+		if m.ID == "opencode-go/deepseek-v4-pro" && m.Label != "" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing pro in %s", w.Body.String())
+	}
+}
+
+func TestLeoChatStream_PassesRequestedModel(t *testing.T) {
+	h, r := leoTestRouter(t)
+	var got string
+	h.leoRun = func(ctx context.Context, pctx leo.PromptContext, req leo.ChatRequest, emit leo.EmitFunc) error {
+		got = req.Model
+		return emit("done", leo.StreamEvent{Reply: "ok", Model: req.Model})
+	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, leoPOST("rene", `{"messages":[{"role":"user","content":"ping"}],"model":"opencode-go/deepseek-v4-pro"}`))
+	if w.Code != 200 {
+		t.Fatalf("status=%d %s", w.Code, w.Body.String())
+	}
+	if got != "opencode-go/deepseek-v4-pro" {
+		t.Fatalf("run got model=%q", got)
+	}
 }

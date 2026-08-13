@@ -32,6 +32,7 @@ type Handler struct {
 	publishManifest *publish.ManifestResolver
 	brief           *dailybrief.Service
 	plusChat        *pluschat.Loader
+	leoOps          *leo.OpsLoader
 	leoJobs         *leo.Hub
 	leoRun          func(ctx context.Context, pctx leo.PromptContext, req leo.ChatRequest, emit leo.EmitFunc) error
 }
@@ -54,6 +55,11 @@ func (h *Handler) SetDailyBrief(svc *dailybrief.Service) {
 // SetPlusChat attaches the Plus Bifrost-assistant config loader.
 func (h *Handler) SetPlusChat(loader *pluschat.Loader) {
 	h.plusChat = loader
+}
+
+// SetLeoOps attaches the Léo model allowlist loader (ops/leo.json).
+func (h *Handler) SetLeoOps(loader *leo.OpsLoader) {
+	h.leoOps = loader
 }
 
 // SetPublishManifestResolver attaches the family allowlist loader (publish-manifest.json).
