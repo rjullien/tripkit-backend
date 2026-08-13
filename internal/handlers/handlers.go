@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rjullien/tripkit-backend/internal/config"
 	"github.com/rjullien/tripkit-backend/internal/dailybrief"
+	"github.com/rjullien/tripkit-backend/internal/leo"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/models"
 	"github.com/rjullien/tripkit-backend/internal/pluschat"
@@ -30,11 +32,13 @@ type Handler struct {
 	publishManifest *publish.ManifestResolver
 	brief           *dailybrief.Service
 	plusChat        *pluschat.Loader
+	leoJobs         *leo.Hub
+	leoRun          func(ctx context.Context, pctx leo.PromptContext, req leo.ChatRequest, emit leo.EmitFunc) error
 }
 
 // New creates a new Handler with the given DB.
 func New(db *gorm.DB) *Handler {
-	return &Handler{db: db}
+	return &Handler{db: db, leoJobs: leo.NewHub()}
 }
 
 // SetPublishRegistry attaches the trusted publish source registry.
@@ -1051,8 +1055,8 @@ func (h *Handler) DebugListTrips(w http.ResponseWriter, r *http.Request) {
 	if sqlDB != nil {
 		stats := sqlDB.Stats()
 		results["db_stats"] = map[string]any{
-			"open": stats.OpenConnections,
-			"idle": stats.Idle,
+			"open":  stats.OpenConnections,
+			"idle":  stats.Idle,
 			"inUse": stats.InUse,
 		}
 	}

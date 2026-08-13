@@ -132,7 +132,9 @@ func main() {
 		r.Get("/leo/status", h.LeoStatus)
 		// Deprecated for Plus UI — keep for curl/debug (same SystemPrompt as stream).
 		r.Post("/leo/chat", h.LeoChat)
-		r.Post("/leo/chat/stream", h.LeoChatStream) // Plus UI
+		r.Post("/leo/chat/stream", h.LeoChatStream) // Plus UI — live SSE + detached job
+		r.Get("/leo/jobs/{jobId}/stream", h.LeoJobStream)
+		r.Post("/leo/jobs/{jobId}/cancel", h.LeoJobCancel)
 
 		// Plus Assistant — Bifrost direct (ops/plus-chat.json model).
 		r.Get("/plus/chat/status", h.PlusChatStatus)
