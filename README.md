@@ -70,7 +70,7 @@ Daily Brief SoT (URLs + model + `adminPhone`): private `rjullien/tripkit/ops/dai
 | `POST` | `/leo/jobs/{jobId}/cancel` | **used (Plus UI)** | Explicit cancel only (Annuler). Stops Hermes. |
 | `POST` | `/leo/chat` | **deprecated / unused by FE** | Sync JSON chat. **Do not remove** — useful for curl/debug. Same prompt + ACL as stream. |
 
-Both chat paths call `leo.prepareMessages` → `leo.SystemPrompt` (Authelia user, allowlisted seed repos, reject phrase). Never trust the browser for scope.
+Both chat paths call `leo.prepareMessages` → `leo.SystemPrompt` (Authelia user, allowlisted seed repos). Trip-related Q&A (resto, météo, idées…) is in scope; refuse only off-topic / other repos / secrets. Never trust the browser for scope.
 
 Jobs are **in-memory** on the API pod (single replica). Reconnect must hit the same process. TTL 15 min after finish. Plus Assistant (`/plus/chat/stream`) is unchanged — still request-scoped SSE.
 
