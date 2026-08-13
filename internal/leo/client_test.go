@@ -126,6 +126,12 @@ func TestChat_Success(t *testing.T) {
 		if body.MaxTokens != maxReplyTokens {
 			t.Fatalf("max_tokens=%d want %d", body.MaxTokens, maxReplyTokens)
 		}
+		if body.Model != defaultLeoModel {
+			t.Fatalf("model=%q want default %q", body.Model, defaultLeoModel)
+		}
+		if body.Provider != hermesProvider {
+			t.Fatalf("provider=%q", body.Provider)
+		}
 		if len(body.Messages) < 2 || body.Messages[0].Role != "system" {
 			t.Fatalf("messages=%+v", body.Messages)
 		}
@@ -163,5 +169,8 @@ func TestChat_Success(t *testing.T) {
 	}
 	if resp.Reply != "OK je m'en occupe" {
 		t.Fatalf("reply=%q", resp.Reply)
+	}
+	if resp.Model != defaultLeoModel {
+		t.Fatalf("resp.model=%q (must be allowlisted id, not hermes echo)", resp.Model)
 	}
 }

@@ -317,3 +317,47 @@ func TestLeoJob_WrongUser403(t *testing.T) {
 	}
 	close(gate)
 }
+
+func TestLeoStatus_IncludesAllowlist(t *testing.T) {
+	h, _ := leoTestRouter(t)
+	r := chi.NewRouter()
+	r.Get("/leo/status", h.LeoStatus)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/leo/status", nil))
+	if w.Code != 200 {
+		t.Fatalf("status=%d %s", w.Code, w.Body.String())
+	}
+	var st leo.Status
+	if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
+		t.Fatal(err)
+	}
+	if st.DefaultModel == "" || len(st.Models) < 2 {
+		t.Fatalf("status=%s", w.Body.String())
+	}
+	found := false
+	for _, m := range st.Models {
+		if m.ID == "opencode-go/deepseek-v4-pro" && m.Label != "" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing pro in %s", w.Body.String())
+	}
+}
+
+func TestLeoChatStream_PassesRequestedModel(t *testing.T) {
+	h, r := leoTestRouter(t)
+	var got string
+	h.leoRun = func(ctx context.Context, pctx leo.PromptContext, req leo.ChatRequest, emit leo.EmitFunc) error {
+		got = req.Model
+		return emit("done", leo.StreamEvent{Reply: "ok", Model: req.Model})
+	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, leoPOST("rene", `{"messages":[{"role":"user","content":"ping"}],"model":"opencode-go/deepseek-v4-pro"}`))
+	if w.Code != 200 {
+		t.Fatalf("status=%d %s", w.Code, w.Body.String())
+	}
+	if got != "opencode-go/deepseek-v4-pro" {
+		t.Fatalf("run got model=%q", got)
+	}
+}

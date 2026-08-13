@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 )
 
 type openAIStreamReq struct {
 	Model     string        `json:"model"`
+	Provider  string        `json:"provider,omitempty"`
 	Messages  []ChatMessage `json:"messages"`
 	MaxTokens int           `json:"max_tokens,omitempty"`
 	Stream    bool          `json:"stream"`
@@ -21,15 +23,16 @@ type openAIStreamReq struct {
 // StreamEvent is a normalized TripKit SSE payload (not raw OpenAI).
 // event names: delta | tool | done | error | meta
 type StreamEvent struct {
-	Seq    int    `json:"seq,omitempty"`
-	JobID  string `json:"jobId,omitempty"`
-	Text   string `json:"text,omitempty"`
-	Reply  string `json:"reply,omitempty"`
-	Model  string `json:"model,omitempty"`
-	Error  string `json:"error,omitempty"`
-	Code   string `json:"code,omitempty"`
-	Tool   any    `json:"tool,omitempty"`
-	Detail string `json:"detail,omitempty"`
+	Seq      int    `json:"seq,omitempty"`
+	JobID    string `json:"jobId,omitempty"`
+	Text     string `json:"text,omitempty"`
+	Reply    string `json:"reply,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Error    string `json:"error,omitempty"`
+	Code     string `json:"code,omitempty"`
+	Tool     any    `json:"tool,omitempty"`
+	Detail   string `json:"detail,omitempty"`
+	Upstream string `json:"upstream,omitempty"` // Hermes echo (often "hermes-agent")
 }
 
 // EmitFunc writes one SSE event to the client.
@@ -74,9 +77,13 @@ func (c Config) StreamChat(ctx context.Context, pctx PromptContext, req ChatRequ
 		return err
 	}
 
+	resolved := c.opsOrDefault().Resolve(req.Model)
+	log.Printf("leo stream: hermes model=%s provider=%s", resolved, hermesProvider)
+
 	// No max_tokens on stream — seed edits need room; sync Chat still caps replies.
 	body, err := json.Marshal(openAIStreamReq{
-		Model:    "default",
+		Model:    resolved,
+		Provider: hermesProvider,
 		Messages: msgs,
 		Stream:   true,
 	})
@@ -123,7 +130,14 @@ func (c Config) StreamChat(ctx context.Context, pctx PromptContext, req ChatRequ
 		}
 	}
 
-	return consumeHermesSSE(res.Body, emit)
+	stamp := func(event string, data StreamEvent) error {
+		data.Model = resolved
+		return emit(event, data)
+	}
+	if err := stamp("meta", StreamEvent{}); err != nil {
+		return err
+	}
+	return consumeHermesSSE(res.Body, stamp)
 }
 
 func consumeHermesSSE(r io.Reader, emit EmitFunc) error {
@@ -152,7 +166,7 @@ func consumeHermesSSE(r io.Reader, emit EmitFunc) error {
 
 		if data == "[DONE]" {
 			doneEmitted = true
-			return emit("done", StreamEvent{Reply: full.String(), Model: model})
+			return emit("done", StreamEvent{Reply: full.String(), Upstream: model})
 		}
 
 		if ev == "hermes.tool.progress" {
@@ -199,7 +213,7 @@ func consumeHermesSSE(r io.Reader, emit EmitFunc) error {
 			return nil
 		}
 		full.WriteString(text)
-		return emit("delta", StreamEvent{Text: text, Model: model})
+		return emit("delta", StreamEvent{Text: text, Upstream: model})
 	}
 
 	for sc.Scan() {
@@ -232,7 +246,7 @@ func consumeHermesSSE(r io.Reader, emit EmitFunc) error {
 		return nil
 	}
 	// Stream ended without [DONE] — still close with accumulated text.
-	return emit("done", StreamEvent{Reply: full.String(), Model: model})
+	return emit("done", StreamEvent{Reply: full.String(), Upstream: model})
 }
 
 // StreamHTTPClient returns a client suitable for long SSE (no hard Timeout).

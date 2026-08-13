@@ -115,7 +115,17 @@ func (h *Handler) runLeo(ctx context.Context, pctx leo.PromptContext, req leo.Ch
 	if h.leoRun != nil {
 		return h.leoRun(ctx, pctx, req, emit)
 	}
-	return leo.LoadConfigFromEnv().StreamChat(ctx, pctx, req, emit)
+	return h.leoConfig().StreamChat(ctx, pctx, req, emit)
+}
+
+func (h *Handler) leoConfig() leo.Config {
+	cfg := leo.LoadConfigFromEnv()
+	if h.leoOps != nil {
+		cfg.Ops = h.leoOps.Get()
+	} else {
+		cfg.Ops = leo.DefaultOpsConfig()
+	}
+	return cfg
 }
 
 func streamLeoJob(w http.ResponseWriter, r *http.Request, job *leo.Job, after int) {

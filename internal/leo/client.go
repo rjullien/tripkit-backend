@@ -29,6 +29,7 @@ type Config struct {
 	DashboardURL string
 	TelegramURL  string
 	HTTPClient   *http.Client
+	Ops          OpsConfig // allowlist; zero value → DefaultOpsConfig
 }
 
 // LoadConfigFromEnv reads TRIPKIT_HERMES_* / TRIPKIT_LEO_* vars.
@@ -57,10 +58,12 @@ func (c Config) Ready() bool {
 
 // Status is returned by GET /leo/status.
 type Status struct {
-	Ready        bool   `json:"ready"`
-	Reason       string `json:"reason,omitempty"`
-	DashboardURL string `json:"dashboardUrl,omitempty"`
-	TelegramURL  string `json:"telegramUrl,omitempty"`
+	Ready        bool          `json:"ready"`
+	Reason       string        `json:"reason,omitempty"`
+	DashboardURL string        `json:"dashboardUrl,omitempty"`
+	TelegramURL  string        `json:"telegramUrl,omitempty"`
+	DefaultModel string        `json:"defaultModel,omitempty"`
+	Models       []ModelOption `json:"models,omitempty"`
 }
 
 // StatusPayload builds the public status (no secrets).
@@ -78,6 +81,25 @@ func (c Config) StatusPayload() Status {
 	return s
 }
 
+func (c Config) opsOrDefault() OpsConfig {
+	if strings.TrimSpace(c.Ops.DefaultModel) == "" || len(c.Ops.Models) == 0 {
+		return DefaultOpsConfig()
+	}
+	return c.Ops.normalized()
+}
+
+// WithOps attaches the public allowlist to a status payload.
+func (s Status) WithOps(ops OpsConfig) Status {
+	if strings.TrimSpace(ops.DefaultModel) == "" || len(ops.Models) == 0 {
+		ops = DefaultOpsConfig()
+	} else {
+		ops = ops.normalized()
+	}
+	s.DefaultModel = ops.DefaultModel
+	s.Models = append([]ModelOption(nil), ops.Models...)
+	return s
+}
+
 // ChatMessage is one OpenAI-style message.
 type ChatMessage struct {
 	Role    string `json:"role"`
@@ -88,6 +110,7 @@ type ChatMessage struct {
 type ChatRequest struct {
 	Messages []ChatMessage `json:"messages"`
 	TripID   string        `json:"tripId,omitempty"`
+	Model    string        `json:"model,omitempty"` // requested id; BE allowlists
 }
 
 // ChatResponse is what the FE consumes.
@@ -99,6 +122,7 @@ type ChatResponse struct {
 
 type openAIReq struct {
 	Model     string        `json:"model"`
+	Provider  string        `json:"provider,omitempty"`
 	Messages  []ChatMessage `json:"messages"`
 	MaxTokens int           `json:"max_tokens,omitempty"`
 }
@@ -198,8 +222,10 @@ func (c Config) Chat(ctx PromptContext, req ChatRequest) (*ChatResponse, error) 
 		return nil, err
 	}
 
+	resolved := c.opsOrDefault().Resolve(req.Model)
 	body, err := json.Marshal(openAIReq{
-		Model:     "default",
+		Model:     resolved,
+		Provider:  hermesProvider,
 		Messages:  out,
 		MaxTokens: maxReplyTokens,
 	})
@@ -256,7 +282,7 @@ func (c Config) Chat(ctx PromptContext, req ChatRequest) (*ChatResponse, error) 
 	msg := parsed.Choices[0].Message
 	return &ChatResponse{
 		Reply:   msg.Content,
-		Model:   parsed.Model,
+		Model:   resolved,
 		RawRole: msg.Role,
 	}, nil
 }

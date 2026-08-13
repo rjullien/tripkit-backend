@@ -13,7 +13,11 @@ import (
 // LeoStatus returns whether the Hermes proxy is configured (no secrets).
 func (h *Handler) LeoStatus(w http.ResponseWriter, r *http.Request) {
 	cfg := leo.LoadConfigFromEnv()
-	writeJSON(w, http.StatusOK, cfg.StatusPayload())
+	ops := leo.DefaultOpsConfig()
+	if h.leoOps != nil {
+		ops = h.leoOps.Get()
+	}
+	writeJSON(w, http.StatusOK, cfg.StatusPayload().WithOps(ops))
 }
 
 // LeoChat proxies a short non-streaming chat turn to Hermes-Léo.
@@ -43,7 +47,7 @@ func (h *Handler) LeoChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	admin := isRequestAdmin(r) || config.IsAdmin(user)
-	resp, err := cfg.Chat(leoPromptContext(h.publishReg, user, admin, req.TripID), req)
+	resp, err := h.leoConfig().Chat(leoPromptContext(h.publishReg, user, admin, req.TripID), req)
 	if err != nil {
 		msg := err.Error()
 		status := http.StatusBadGateway
