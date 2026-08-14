@@ -39,7 +39,12 @@ func RunQA(text string, in *Input) QAResult {
 		return res
 	}
 	n := utf8len(text)
-	if n < 220 || n > 1200 {
+	minLen := 220
+	followUp := len(in.AlreadyPosted) > 0
+	if followUp {
+		minLen = 120
+	}
+	if n < minLen || n > 1200 {
 		res.fail("longueur")
 	}
 	if reQAPnr.MatchString(text) || reQAFlight.MatchString(text) {
@@ -51,10 +56,15 @@ func RunQA(text string, in *Input) QAResult {
 	if reQAPack.MatchString(text) {
 		res.fail("packing")
 	}
+	if isRedite(text, priorTexts(in.AlreadyPosted)) {
+		res.fail("redite")
+	}
 	folded := fold(text)
 	from := fold(in.From)
 	to := fold(in.To)
-	if from == "" && to == "" {
+	if followUp {
+		// Prior steps already placed the day; don't force Nice/Montréal again.
+	} else if from == "" && to == "" {
 		// no toponyme to require
 	} else if from != "" && strings.Contains(folded, from) {
 		// ok
@@ -63,7 +73,7 @@ func RunQA(text string, in *Input) QAResult {
 	} else {
 		res.fail("toponyme")
 	}
-	if in.Kind == "opening" && len(in.Phases) > 0 {
+	if !followUp && in.Kind == "opening" && len(in.Phases) > 0 {
 		found := 0
 		for _, p := range in.Phases {
 			if phaseMentioned(folded, p) {

@@ -75,6 +75,7 @@ func autoMigrate(db *gorm.DB) (*gorm.DB, error) {
 		&models.DailyBriefSend{},
 		&models.DailyBriefUsedTip{},
 		&models.PolarstepsCaption{},
+		&models.PolarstepsStep{},
 	); err != nil {
 		return nil, err
 	}

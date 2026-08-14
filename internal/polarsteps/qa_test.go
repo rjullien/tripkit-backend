@@ -72,3 +72,32 @@ func TestRunQA_NoteWarning(t *testing.T) {
 		t.Fatalf("issues=%v", qa.Issues)
 	}
 }
+
+func TestRunQA_RediteFails(t *testing.T) {
+	in := &Input{
+		Kind:          "daily",
+		AlreadyPosted: []PriorStep{{Day: 1, Seq: 1, Text: golden}},
+	}
+	qa := RunQA(golden, in)
+	if qa.Verdict != QAFailed {
+		t.Fatalf("expected redite FAILED, got %s %v", qa.Verdict, qa.Issues)
+	}
+}
+
+func TestRunQA_FollowUpSkipsToponyme(t *testing.T) {
+	in := &Input{
+		Kind:          "daily",
+		From:          "Nice",
+		To:            "Montréal",
+		AlreadyPosted: []PriorStep{{Day: 1, Seq: 1, Text: golden}},
+	}
+	text := `Trois baleines au large de Tadoussac cet après-midi, trop beau.
+
+Le bateau a ralenti, tout le monde dehors sur le pont. Resto changé ce soir.
+
+On rentre fatigués et contents, la mer encore dans les yeux.`
+	qa := RunQA(text, in)
+	if qa.Verdict == QAFailed {
+		t.Fatalf("follow-up without Nice/Montréal should pass, got %s %v", qa.Verdict, qa.Issues)
+	}
+}

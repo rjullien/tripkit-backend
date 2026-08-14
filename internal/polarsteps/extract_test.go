@@ -81,6 +81,25 @@ func TestTripActive(t *testing.T) {
 	}
 }
 
+func TestPolarstepsWindow_GraceAfterEnd(t *testing.T) {
+	start, end := "2026-08-14", "2026-09-01"
+	if !PolarstepsWindow(start, end, "2026-09-01") {
+		t.Fatal("last day must stay open")
+	}
+	if !PolarstepsWindow(start, end, "2026-09-06") {
+		t.Fatal("end+5d still open to finalize steps")
+	}
+	if PolarstepsWindow(start, end, "2026-09-07") {
+		t.Fatal("end+6d must close")
+	}
+	if !shouldPurgeHistory(end, "2026-09-07") {
+		t.Fatal("purge on end+6d")
+	}
+	if shouldPurgeHistory(end, "2026-09-06") {
+		t.Fatal("do not purge on end+5d")
+	}
+}
+
 func TestTripPolarstepsAbsent(t *testing.T) {
 	g := TripPolarsteps(map[string]any{})
 	if g.Enabled {
