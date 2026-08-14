@@ -13,17 +13,19 @@ import (
 
 // SourceCatalogItem is one entry from GET /publish/sources.
 type SourceCatalogItem struct {
-	SourceID   string   `json:"sourceId"`
-	Repo       string   `json:"repo"`
-	Ref        string   `json:"ref"`
-	Enabled    bool     `json:"enabled"`
-	Family     string   `json:"family"`
-	TripID     string   `json:"tripId"`
-	SeedPath   string   `json:"seedPath"`
-	Title      string   `json:"title,omitempty"`
-	Operation  string   `json:"operation"` // create | update
-	InProd     bool     `json:"inProd"`
-	Assets     []string `json:"assets,omitempty"`
+	SourceID        string   `json:"sourceId"`
+	Repo            string   `json:"repo"`
+	Ref             string   `json:"ref"`
+	OwnerLogins     []string `json:"ownerLogins,omitempty"`
+	PublisherLogins []string `json:"publisherLogins,omitempty"`
+	Enabled         bool     `json:"enabled"`
+	Family          string   `json:"family"`
+	TripID          string   `json:"tripId"`
+	SeedPath        string   `json:"seedPath"`
+	Title           string   `json:"title,omitempty"`
+	Operation       string   `json:"operation"` // create | update
+	InProd          bool     `json:"inProd"`
+	Assets          []string `json:"assets,omitempty"`
 }
 
 // ListPublishSources returns trusted seeds the caller may see.
@@ -62,17 +64,19 @@ func (h *Handler) ListPublishSources(w http.ResponseWriter, r *http.Request) {
 				title = trip.Name
 			}
 			out = append(out, SourceCatalogItem{
-				SourceID:  src.ID,
-				Repo:      src.Repo,
-				Ref:       src.Ref,
-				Enabled:   src.Enabled,
-				Family:    src.ExpectedFamily,
-				TripID:    seed.TripID,
-				SeedPath:  seed.Path,
-				Title:     title,
-				Operation: op,
-				InProd:    inProd,
-				Assets:    seed.Assets,
+				SourceID:        src.ID,
+				Repo:            src.Repo,
+				Ref:             src.Ref,
+				OwnerLogins:     src.OwnerLogins,
+				PublisherLogins: src.PublisherLogins,
+				Enabled:         src.Enabled,
+				Family:          src.ExpectedFamily,
+				TripID:          seed.TripID,
+				SeedPath:        seed.Path,
+				Title:           title,
+				Operation:       op,
+				InProd:          inProd,
+				Assets:          seed.Assets,
 			})
 		}
 	}
