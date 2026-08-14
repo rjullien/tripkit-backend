@@ -19,6 +19,7 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/models"
 	"github.com/rjullien/tripkit-backend/internal/pluschat"
+	"github.com/rjullien/tripkit-backend/internal/polarsteps"
 	"github.com/rjullien/tripkit-backend/internal/publish"
 	"gorm.io/gorm"
 )
@@ -32,6 +33,7 @@ type Handler struct {
 	publishManifest *publish.ManifestResolver
 	brief           *dailybrief.Service
 	plusChat        *pluschat.Loader
+	polarsteps      *polarsteps.Service
 	leoOps          *leo.OpsLoader
 	leoJobs         *leo.Hub
 	leoRun          func(ctx context.Context, pctx leo.PromptContext, req leo.ChatRequest, emit leo.EmitFunc) error
@@ -55,6 +57,11 @@ func (h *Handler) SetDailyBrief(svc *dailybrief.Service) {
 // SetPlusChat attaches the Plus Bifrost-assistant config loader.
 func (h *Handler) SetPlusChat(loader *pluschat.Loader) {
 	h.plusChat = loader
+}
+
+// SetPolarsteps attaches the Polarsteps caption service (Plus box, text only).
+func (h *Handler) SetPolarsteps(svc *polarsteps.Service) {
+	h.polarsteps = svc
 }
 
 // SetLeoOps attaches the Léo model allowlist loader (ops/leo.json).

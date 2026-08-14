@@ -18,6 +18,7 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/leo"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/pluschat"
+	"github.com/rjullien/tripkit-backend/internal/polarsteps"
 	"github.com/rjullien/tripkit-backend/internal/publish"
 )
 
@@ -56,6 +57,11 @@ func main() {
 	plusCfg := plusLoader.Bootstrap()
 	log.Printf("pluschat config: origin=%s model=%s enabled=%v", plusCfg.Origin, plusCfg.ChatModel, plusCfg.Enabled)
 	h.SetPlusChat(plusLoader)
+
+	psLoader := polarsteps.NewLoaderFromEnv()
+	psCfg := psLoader.Bootstrap()
+	log.Printf("polarsteps config: origin=%s model=%s enabled=%v", psCfg.Origin, psCfg.CaptionModel, psCfg.Enabled)
+	h.SetPolarsteps(&polarsteps.Service{DB: db, Loader: psLoader})
 
 	leoOps := leo.NewOpsLoaderFromEnv()
 	leoCfg := leoOps.Bootstrap()
@@ -145,6 +151,11 @@ func main() {
 		// Plus Assistant — Bifrost direct (ops/plus-chat.json model).
 		r.Get("/plus/chat/status", h.PlusChatStatus)
 		r.Post("/plus/chat/stream", h.PlusChatStream)
+
+		// Polarsteps journal draft (Plus box, text only — no GoWA).
+		r.Get("/trips/{tripId}/polarsteps/status", h.PolarstepsStatus)
+		r.Get("/trips/{tripId}/polarsteps/caption", h.PolarstepsCaption)
+		r.Post("/trips/{tripId}/polarsteps/caption", h.GeneratePolarstepsCaption)
 
 		// Trips
 		r.Get("/trips", h.ListTrips)

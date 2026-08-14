@@ -2,6 +2,7 @@ package publish_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/rjullien/tripkit-backend/internal/database"
@@ -200,6 +201,39 @@ func TestBuildCanonical_PersistsDailyBriefFlags(t *testing.T) {
 	}
 	if p.TripData["briefSendTime"] != "07:30" {
 		t.Fatalf("briefSendTime=%v", p.TripData["briefSendTime"])
+	}
+}
+
+func TestBuildCanonical_PersistsPolarsteps(t *testing.T) {
+	code := `var SEED_TEST = {
+  "trip": {
+    "id": "test-2026",
+    "name": "Test",
+    "polarsteps": {"enabled": true, "tripUrl": "https://www.polarsteps.com/x/y/"},
+    "travelers": [{"personId":"rene"}]
+  },
+  "days": [ { "day": 1, "title": "A" } ],
+  "hotels": {},
+  "lists": {}
+};`
+	seed, err := publish.ParseSeedFile(code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	people, err := publish.ParsePeopleFile(`var PEOPLE = { rene: { id: "rene", name: "René", login: "rene" } };`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := publish.BuildCanonical(seed, people, "jullien", "jullien", "abc", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(p.TripData["polarsteps"])
+	if !strings.Contains(string(raw), `"enabled":true`) {
+		t.Fatalf("polarsteps=%s", raw)
+	}
+	if !strings.Contains(string(raw), "polarsteps.com") {
+		t.Fatalf("tripUrl missing: %s", raw)
 	}
 }
 
