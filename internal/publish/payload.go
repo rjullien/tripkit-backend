@@ -40,20 +40,20 @@ type ChecklistConfig struct {
 
 // CanonicalPayload is the import-ready representation after parse + people resolve.
 type CanonicalPayload struct {
-	TripID      string
-	Name        string
-	Emoji       *string
-	StartDate   *string
-	EndDate     *string
-	TripData    map[string]any
-	Days        []map[string]any
-	Hotels      []HotelUpsert
-	Lists       map[string]ListUpsert
-	Assets      []AssetFile
-	ACLMembers  []string
-	GitSHA      string
-	SourceID    string
-	Family      string
+	TripID     string
+	Name       string
+	Emoji      *string
+	StartDate  *string
+	EndDate    *string
+	TripData   map[string]any
+	Days       []map[string]any
+	Hotels     []HotelUpsert
+	Lists      map[string]ListUpsert
+	Assets     []AssetFile
+	ACLMembers []string
+	GitSHA     string
+	SourceID   string
+	Family     string
 }
 
 // HotelUpsert is one hotel row keyed by first day number (seed-import compatible).
@@ -181,6 +181,7 @@ func BuildCanonical(seed SeedFile, people map[string]Person, family, sourceID, g
 		"whatsappGroup": seed.Trip["whatsappGroup"],
 		// Optional per-trip wall-clock "HH:MM" (day location TZ). Overrides ops sendLocalHour/Minute.
 		"briefSendTime": seed.Trip["briefSendTime"],
+		"polarsteps":    seed.Trip["polarsteps"],
 	}
 
 	// Hotels block also stored in trip.data (FE expects it).

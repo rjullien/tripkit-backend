@@ -83,6 +83,18 @@ Jobs are **in-memory** on the API pod (single replica). Reconnect must hit the s
 
 Config SoT: private `rjullien/tripkit/ops/plus-chat.json` (same Loader pattern as Daily Brief). Optional `TRIPKIT_BIFROST_API_KEY`.
 
+### Polarsteps caption (Plus box)
+
+Text-only journal draft. No photos, no Polarsteps API, **no GoWA**.
+
+| Method | Path | Status | Notes |
+| --- | --- | --- | --- |
+| `GET` | `/trips/{tripId}/polarsteps/status` | **used (Plus UI)** | `enabled` / `ready` — seed flag + ops + trip actif |
+| `GET` | `/trips/{tripId}/polarsteps/caption` | **used (Plus UI)** | Last saved draft for the local day |
+| `POST` | `/trips/{tripId}/polarsteps/caption` | **used (Plus UI)** | ExtractDay → Bifrost flash → QA. `422` if QA FAILED (no copyable text, no save) |
+
+Config SoT: private `rjullien/tripkit/ops/polarsteps-caption.json`. Seed gate: `trip.polarsteps.enabled`. Optional `TRIPKIT_BIFROST_API_KEY` (same as Plus chat).
+
 ## Quick Start
 ```bash
 go run ./cmd/api
