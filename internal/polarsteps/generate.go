@@ -101,11 +101,17 @@ func (s *Service) Status(tripID string, now time.Time) (map[string]any, error) {
 		localDate = now.In(loc).Format("2006-01-02")
 	}
 	active := TripActive(start, end, localDate)
+	open := PolarstepsWindow(start, end, localDate)
+	if shouldPurgeHistory(end, localDate) {
+		purgeTripHistory(s.DB, tripID)
+	}
+	priors := loadPriors(s.DB, tripID)
 	out["tripUrl"] = gate.TripURL
 	out["seedEnabled"] = seedOn
 	out["active"] = active
-	out["enabled"] = ops.Enabled && seedOn && active
-	out["ready"] = ops.Ready() && seedOn && active
+	out["enabled"] = ops.Enabled && seedOn && open
+	out["ready"] = ops.Ready() && seedOn && open
+	out["stepsCount"] = len(priors)
 	return out, nil
 }
 
@@ -136,6 +142,12 @@ func (s *Service) Generate(tripID, userNote, clientNowISO string) (*Result, int,
 	if in.Day < 1 {
 		return nil, 400, fmt.Errorf("pas de texte Polarsteps avant J1")
 	}
+	priors := loadPriors(s.DB, tripID)
+	in.AlreadyPosted = priors
+	in.Happened = filterHappened(in.Happened, priors)
+	if len(priors) > 0 && in.Kind == "opening" {
+		in.Kind = "daily"
+	}
 
 	c := s.completer()
 	if c == nil {
@@ -149,21 +161,20 @@ func (s *Service) Generate(tripID, userNote, clientNowISO string) (*Result, int,
 	if err != nil {
 		return nil, 502, err
 	}
+	used := priorTexts(priors)
+	if isRedite(text, used) {
+		retried, err2 := c.Complete(retryPrompt, string(payload))
+		if err2 == nil && strings.TrimSpace(retried) != "" {
+			text = retried
+		}
+	}
 	qa := RunQA(text, in)
 	res := &Result{Day: in.Day, Kind: in.Kind, UserNote: in.UserNote, QA: qa}
 	if qa.Verdict == QAFailed {
 		return res, 422, nil
 	}
 	res.Text = text
-	row := models.PolarstepsCaption{
-		TripID:    tripID,
-		DayNumber: in.Day,
-		Kind:      in.Kind,
-		Text:      text,
-		UserNote:  in.UserNote,
-		QAVerdict: string(qa.Verdict),
-	}
-	if err := s.DB.Save(&row).Error; err != nil {
+	if err := saveStep(s.DB, tripID, in, text, string(qa.Verdict)); err != nil {
 		return nil, 500, err
 	}
 	return res, 200, nil
@@ -185,9 +196,20 @@ func (s *Service) Last(tripID, clientNowISO string) (*Result, error) {
 	if in.Day < 1 {
 		return &Result{Day: in.Day, Kind: in.Kind, QA: QAResult{Verdict: QAPassed, Summary: "empty"}}, nil
 	}
-	var row models.PolarstepsCaption
-	if err := s.DB.Where("trip_id = ? AND day_number = ?", tripID, in.Day).First(&row).Error; err != nil {
+	var row models.PolarstepsStep
+	if err := s.DB.Where("trip_id = ? AND day_number = ?", tripID, in.Day).
+		Order("seq desc").First(&row).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
+			var legacy models.PolarstepsCaption
+			if err2 := s.DB.Where("trip_id = ? AND day_number = ?", tripID, in.Day).First(&legacy).Error; err2 == nil {
+				return &Result{
+					Day:      legacy.DayNumber,
+					Kind:     legacy.Kind,
+					Text:     legacy.Text,
+					UserNote: legacy.UserNote,
+					QA:       QAResult{Verdict: QAVerdict(legacy.QAVerdict), Summary: legacy.QAVerdict},
+				}, nil
+			}
 			return &Result{Day: in.Day, Kind: in.Kind, QA: QAResult{Verdict: QAPassed, Summary: "empty"}}, nil
 		}
 		return nil, err

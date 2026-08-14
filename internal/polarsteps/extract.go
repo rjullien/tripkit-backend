@@ -20,19 +20,20 @@ type Happened struct {
 
 // Input is the JSON sent to the LLM (no PNR / packing / wifi).
 type Input struct {
-	Kind            string     `json:"kind"`
-	NowLocal        string     `json:"nowLocal"`
-	WindowFromLocal string     `json:"windowFromLocal"`
-	UserNote        string     `json:"userNote,omitempty"`
-	Day             int        `json:"day"`
-	Label           string     `json:"label,omitempty"`
-	From            string     `json:"from,omitempty"`
-	To              string     `json:"to,omitempty"`
-	Travelers       []string   `json:"travelers,omitempty"`
-	TripName        string     `json:"tripName"`
-	Nights          int        `json:"nights,omitempty"`
-	Phases          []string   `json:"phases,omitempty"`
-	Happened        []Happened `json:"happened,omitempty"`
+	Kind            string      `json:"kind"`
+	NowLocal        string      `json:"nowLocal"`
+	WindowFromLocal string      `json:"windowFromLocal"`
+	UserNote        string      `json:"userNote,omitempty"`
+	Day             int         `json:"day"`
+	Label           string      `json:"label,omitempty"`
+	From            string      `json:"from,omitempty"`
+	To              string      `json:"to,omitempty"`
+	Travelers       []string    `json:"travelers,omitempty"`
+	TripName        string      `json:"tripName"`
+	Nights          int         `json:"nights,omitempty"`
+	Phases          []string    `json:"phases,omitempty"`
+	Happened        []Happened  `json:"happened,omitempty"`
+	AlreadyPosted   []PriorStep `json:"alreadyPosted,omitempty"`
 }
 
 // SeedGate is polarsteps config from trip.data.
@@ -86,6 +87,40 @@ func TripActive(start, end, localDate string) bool {
 		return false
 	}
 	return true
+}
+
+// PolarstepsWindow is startDate ≤ localDate ≤ endDate+5d (finalize steps after the trip).
+func PolarstepsWindow(start, end, localDate string) bool {
+	if start == "" || localDate == "" {
+		return false
+	}
+	if localDate < start {
+		return false
+	}
+	if end == "" {
+		return true
+	}
+	until := addISODays(end, historyGraceDays)
+	if until == "" {
+		return localDate <= end
+	}
+	return localDate <= until
+}
+
+func shouldPurgeHistory(end, localDate string) bool {
+	if end == "" || localDate == "" {
+		return false
+	}
+	until := addISODays(end, historyGraceDays)
+	return until != "" && localDate > until
+}
+
+func addISODays(iso string, n int) string {
+	t, err := time.Parse("2006-01-02", iso)
+	if err != nil {
+		return ""
+	}
+	return t.AddDate(0, 0, n).Format("2006-01-02")
 }
 
 // BuildInput loads today's elapsed programme for Polarsteps.

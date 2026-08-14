@@ -89,9 +89,11 @@ Text-only journal draft. No photos, no Polarsteps API, **no GoWA**.
 
 | Method | Path | Status | Notes |
 | --- | --- | --- | --- |
-| `GET` | `/trips/{tripId}/polarsteps/status` | **used (Plus UI)** | `enabled` / `ready` — seed flag + ops + trip actif |
-| `GET` | `/trips/{tripId}/polarsteps/caption` | **used (Plus UI)** | Last saved draft for the local day |
-| `POST` | `/trips/{tripId}/polarsteps/caption` | **used (Plus UI)** | ExtractDay → Bifrost flash → QA. `422` if QA FAILED (no copyable text, no save) |
+| `GET` | `/trips/{tripId}/polarsteps/status` | **used (Plus UI)** | `enabled` / `ready` — seed + ops + window (trip + 5 days after `endDate`) |
+| `GET` | `/trips/{tripId}/polarsteps/caption` | **used (Plus UI)** | Last saved step for the local day |
+| `POST` | `/trips/{tripId}/polarsteps/caption` | **used (Plus UI)** | ExtractDay → Bifrost flash → QA. Appends a step (anti-redite vs history). `422` if QA FAILED |
+
+History: every successful generate is a new `polarsteps_steps` row (several per day). Prompt + QA refuse repeats. Rows are **purged 5 days after `endDate`**.
 
 Config SoT: private `rjullien/tripkit/ops/polarsteps-caption.json`. Seed gate: `trip.polarsteps.enabled`. Optional `TRIPKIT_BIFROST_API_KEY` (same as Plus chat).
 
