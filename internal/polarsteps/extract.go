@@ -41,14 +41,10 @@ type SeedGate struct {
 	TripURL string
 }
 
-// TripPolarsteps reads trip.data.polarsteps.
+// TripPolarsteps reads trip.data.polarsteps (flat publish payload or nested trip).
 func TripPolarsteps(tripData map[string]any) SeedGate {
-	raw, ok := tripData["polarsteps"]
-	if !ok {
-		return SeedGate{}
-	}
-	m, ok := raw.(map[string]any)
-	if !ok {
+	m, _ := polarstepsMap(tripData)
+	if m == nil {
 		return SeedGate{}
 	}
 	g := SeedGate{}
@@ -59,6 +55,23 @@ func TripPolarsteps(tripData map[string]any) SeedGate {
 		g.TripURL = strings.TrimSpace(s)
 	}
 	return g
+}
+
+func polarstepsMap(tripData map[string]any) (map[string]any, bool) {
+	if tripData == nil {
+		return nil, false
+	}
+	if raw, ok := tripData["polarsteps"]; ok && raw != nil {
+		m, _ := raw.(map[string]any)
+		return m, true
+	}
+	if nested, ok := tripData["trip"].(map[string]any); ok && nested != nil {
+		if raw, ok := nested["polarsteps"]; ok && raw != nil {
+			m, _ := raw.(map[string]any)
+			return m, true
+		}
+	}
+	return nil, false
 }
 
 // TripActive reports startDate ≤ localDate ≤ endDate.

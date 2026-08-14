@@ -76,7 +76,7 @@ func seedQuebecPolarsteps(t *testing.T, h *Handler) {
 	}
 }
 
-func TestPolarstepsStatus_HiddenWithoutSeed(t *testing.T) {
+func TestPolarstepsStatus_MissingSeedShowsWhenActive(t *testing.T) {
 	h, r := polarstepsRouter(t, fakeCaption{text: polarstepsGolden})
 	start, end := "2026-08-14", "2026-09-01"
 	data := `{"homeTz":"Europe/Paris"}`
@@ -90,8 +90,8 @@ func TestPolarstepsStatus_HiddenWithoutSeed(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), `"enabled":false`) {
-		t.Fatalf("body=%s", w.Body.String())
+	if !strings.Contains(w.Body.String(), `"enabled":true`) {
+		t.Fatalf("missing seed flag on an active trip should show: %s", w.Body.String())
 	}
 }
 

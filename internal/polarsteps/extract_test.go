@@ -84,6 +84,15 @@ func TestTripActive(t *testing.T) {
 func TestTripPolarstepsAbsent(t *testing.T) {
 	g := TripPolarsteps(map[string]any{})
 	if g.Enabled {
-		t.Fatal("absent must be disabled")
+		t.Fatal("absent must be disabled at the helper (Status treats missing as on)")
+	}
+}
+
+func TestTripPolarstepsNestedTrip(t *testing.T) {
+	g := TripPolarsteps(map[string]any{
+		"trip": map[string]any{"polarsteps": map[string]any{"enabled": true, "tripUrl": "https://polarsteps.com/x"}},
+	})
+	if !g.Enabled || g.TripURL == "" {
+		t.Fatalf("nested: %+v", g)
 	}
 }
