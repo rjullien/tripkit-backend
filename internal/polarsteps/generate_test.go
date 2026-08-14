@@ -121,7 +121,7 @@ func TestGenerate_NoSaveOnQAFail(t *testing.T) {
 	}
 }
 
-func TestStatus_HiddenWithoutSeedFlag(t *testing.T) {
+func TestStatus_MissingSeedFlagShowsWhenActive(t *testing.T) {
 	db, err := database.InitMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -142,10 +142,39 @@ func TestStatus_HiddenWithoutSeedFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st["enabled"] != false {
-		t.Fatalf("status=%v", st)
+	if st["enabled"] != true || st["seedEnabled"] != true {
+		t.Fatalf("missing flag on an active trip should show: %v", st)
 	}
-	_, code, err := svc.Generate("quebec-2026", "", "")
+}
+
+func TestStatus_ExplicitFalseHides(t *testing.T) {
+	db, err := database.InitMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, end := "2026-08-14", "2026-09-01"
+	data := map[string]any{
+		"homeTz":     "Europe/Paris",
+		"polarsteps": map[string]any{"enabled": false},
+	}
+	raw, _ := json.Marshal(data)
+	s := string(raw)
+	_ = db.Create(&models.Trip{
+		ID: "usa-2026", Name: "USA",
+		StartDate: &start, EndDate: &end, Data: &s,
+	}).Error
+	svc := &Service{DB: db, Now: func() time.Time {
+		tm, _ := time.Parse(time.RFC3339, "2026-08-14T12:00:00Z")
+		return tm
+	}}
+	st, err := svc.Status("usa-2026", svc.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st["enabled"] != false {
+		t.Fatalf("explicit false must hide: %v", st)
+	}
+	_, code, err := svc.Generate("usa-2026", "", "")
 	if err == nil || code != 404 {
 		t.Fatalf("disabled generate code=%d err=%v", code, err)
 	}

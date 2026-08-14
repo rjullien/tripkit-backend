@@ -69,7 +69,14 @@ func (s *Service) Status(tripID string, now time.Time) (map[string]any, error) {
 	if trip.Data != nil {
 		_ = json.Unmarshal([]byte(*trip.Data), &tripData)
 	}
+	_, hasGate := polarstepsMap(tripData)
 	gate := TripPolarsteps(tripData)
+	seedOn := gate.Enabled
+	if !hasGate {
+		// Live Québec was published before trip.polarsteps.enabled. Show the
+		// box while the trip is happening; explicit enabled:false still hides.
+		seedOn = true
+	}
 	start, end := "", ""
 	if trip.StartDate != nil {
 		start = *trip.StartDate
@@ -95,10 +102,10 @@ func (s *Service) Status(tripID string, now time.Time) (map[string]any, error) {
 	}
 	active := TripActive(start, end, localDate)
 	out["tripUrl"] = gate.TripURL
-	out["seedEnabled"] = gate.Enabled
+	out["seedEnabled"] = seedOn
 	out["active"] = active
-	out["enabled"] = ops.Enabled && gate.Enabled && active
-	out["ready"] = ops.Ready() && gate.Enabled && active
+	out["enabled"] = ops.Enabled && seedOn && active
+	out["ready"] = ops.Ready() && seedOn && active
 	return out, nil
 }
 
