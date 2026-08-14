@@ -133,3 +133,59 @@ func TestDiscoverySearch_JobThenCache(t *testing.T) {
 		t.Fatalf("results=%s", got)
 	}
 }
+
+type stubEd struct {
+	items []discovery.Item
+	last  discovery.EditorialQuery
+}
+
+func (s *stubEd) Search(_ context.Context, q discovery.EditorialQuery) ([]discovery.Item, error) {
+	s.last = q
+	out := append([]discovery.Item(nil), s.items...)
+	return out, nil
+}
+
+func TestDiscoverySearch_EditorialFestivals(t *testing.T) {
+	h, r := discoveryRouter(t)
+	seedDiscoveryTrip(t, h)
+	ed := &stubEd{items: []discovery.Item{{
+		ID: "editorial:festivals:festifoule", ThemeID: "festivals",
+		Name: "Festifoule", When: "2026-08-21", URL: "https://festifoule.ca",
+		Note: "Tadoussac", Source: "editorial",
+	}}}
+	h.SetDiscovery(&discovery.Service{
+		DB:        h.db,
+		Overpass:  stubQ{},
+		Editorial: ed,
+		Now:       func() time.Time { return time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC) },
+	})
+
+	body := `{"themes":["festivals"],"scope":{"dayNum":8}}`
+	req := httptest.NewRequest(http.MethodPost, "/trips/quebec-2026/discovery/search", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Remote-User", "rene")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("search %d %s", rec.Code, rec.Body.String())
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var got string
+	for time.Now().Before(deadline) {
+		req = httptest.NewRequest(http.MethodGet, "/trips/quebec-2026/discovery/results?dayNum=8", nil)
+		rec = httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		got = rec.Body.String()
+		if rec.Code == 200 && strings.Contains(got, "Festifoule") {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !strings.Contains(got, "Festifoule") || !strings.Contains(got, `"source":"editorial"`) {
+		t.Fatalf("results=%s last=%+v", got, ed.last)
+	}
+	if ed.last.DateISO != "2026-08-21" {
+		t.Fatalf("dateISO=%q", ed.last.DateISO)
+	}
+}

@@ -18,10 +18,12 @@ type ProgressFunc func(themeID, label string, items []Item, cached bool)
 
 // Service runs point searches (vue Jour) against Overpass + DB cache.
 type Service struct {
-	DB       *gorm.DB
-	Loader   *Loader
-	Overpass Querier
-	Now      func() time.Time
+	DB        *gorm.DB
+	Loader    *Loader
+	Overpass  Querier
+	Editorial EditorialSearcher
+	Now       func() time.Time
+	cacheMu   sync.Mutex
 }
 
 func (s *Service) now() time.Time {
@@ -173,8 +175,8 @@ func dateForDay(startISO string, dayNum int) string {
 	return t.AddDate(0, 0, dayNum-1).Format("2006-01-02")
 }
 
-// Search runs geo themes around the day's location. Editorial themes are skipped (lot 1a).
-// Overpass failures are soft: the theme contributes zero items, the rest continue.
+// Search runs geo themes around the day's location, then editorial themes via Léo.
+// Overpass / Léo failures are soft: the theme contributes zero items, the rest continue.
 func (s *Service) Search(ctx context.Context, tripID string, sc Scope, themeIDs []string, progress ProgressFunc) (*Result, error) {
 	lat, lon, place, dateISO, err := s.ResolvePoint(tripID, sc)
 	if err != nil {
@@ -199,17 +201,25 @@ func (s *Service) Search(ctx context.Context, tripID string, sc Scope, themeIDs 
 		Place:   place,
 		Lat:     lat,
 		Lon:     lon,
-		Themes:  nil,
 		ByTheme: map[string][]Item{},
 	}
 
-	var wg sync.WaitGroup
+	var geo []Theme
+	var editorial []Theme
 	for _, theme := range wanted {
-		theme := theme
-		if theme.Engine != engineGeo {
-			continue
+		switch theme.Engine {
+		case engineGeo:
+			geo = append(geo, theme)
+			res.Themes = append(res.Themes, theme.ID)
+		case engineEditorial:
+			editorial = append(editorial, theme)
+			res.Themes = append(res.Themes, theme.ID)
 		}
-		res.Themes = append(res.Themes, theme.ID)
+	}
+
+	var wg sync.WaitGroup
+	for _, theme := range geo {
+		theme := theme
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -243,8 +253,58 @@ func (s *Service) Search(ctx context.Context, tripID string, sc Scope, themeIDs 
 	if ctx.Err() != nil {
 		return res, ctx.Err()
 	}
+
+	if len(editorial) > 0 {
+		tripName := s.lookupTripName(tripID)
+		for _, theme := range editorial {
+			if ctx.Err() != nil {
+				break
+			}
+			items, cached := s.loadCache(tripID, key, theme.ID, editorialTTLHours*time.Hour)
+			if !cached {
+				got, qerr := s.searchEditorial(ctx, EditorialQuery{
+					Theme:    theme,
+					Place:    place,
+					TripName: tripName,
+					DateISO:  dateISO,
+					Lat:      lat,
+					Lon:      lon,
+				})
+				if qerr != nil {
+					log.Printf("discovery: editorial theme=%s: %v (soft-fail)", theme.ID, qerr)
+					got = nil
+				}
+				items = got
+				s.saveCache(tripID, key, theme.ID, items)
+			}
+			res.ByTheme[theme.ID] = items
+			res.Items = append(res.Items, items...)
+			if progress != nil {
+				progress(theme.ID, theme.Label, items, cached)
+			}
+		}
+	}
+
 	res.Items = rankItems(res.Items)
 	return res, nil
+}
+
+func (s *Service) searchEditorial(ctx context.Context, q EditorialQuery) ([]Item, error) {
+	if s == nil || s.Editorial == nil {
+		return nil, fmt.Errorf("leo editorial not configured")
+	}
+	return s.Editorial.Search(ctx, q)
+}
+
+func (s *Service) lookupTripName(tripID string) string {
+	if s == nil || s.DB == nil {
+		return ""
+	}
+	var trip models.Trip
+	if err := s.DB.Session(&gorm.Session{}).Select("name").First(&trip, "id = ?", tripID).Error; err != nil {
+		return ""
+	}
+	return trip.Name
 }
 
 func pickThemes(all []Theme, ids []string) []Theme {
@@ -277,9 +337,7 @@ func (s *Service) Results(tripID string, sc Scope, themeIDs []string) (*Result, 
 			return nil, err
 		}
 		for _, t := range themes {
-			if t.Engine == engineGeo {
-				themeIDs = append(themeIDs, t.ID)
-			}
+			themeIDs = append(themeIDs, t.ID)
 		}
 	}
 	res := s.cachedResults(tripID, sc, themeIDs)
