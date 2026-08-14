@@ -37,6 +37,8 @@ type Item struct {
 	Lon     float64 `json:"lon"`
 	DistKm  float64 `json:"distKm"`
 	URL     string  `json:"url,omitempty"`
+	When    string  `json:"when,omitempty"`
+	Note    string  `json:"note,omitempty"`
 	Source  string  `json:"source,omitempty"` // osm | editorial
 	Cached  bool    `json:"cached,omitempty"`
 }
@@ -53,10 +55,11 @@ type Result struct {
 }
 
 const (
-	engineGeo       = "geo"
-	engineEditorial = "editorial"
-	originTemplate  = "template"
-	originAdded     = "added"
-	originOverride  = "override"
-	geoTTLHours     = 24
+	engineGeo         = "geo"
+	engineEditorial   = "editorial"
+	originTemplate    = "template"
+	originAdded       = "added"
+	originOverride    = "override"
+	geoTTLHours       = 24
+	editorialTTLHours = 6
 )

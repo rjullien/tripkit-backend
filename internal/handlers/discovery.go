@@ -58,7 +58,7 @@ func (h *Handler) discoveryOrigin() string {
 	return h.discovery.Loader.Get().Origin
 }
 
-// DiscoverySearch starts an Overpass job (geo themes) and returns {jobId}.
+// DiscoverySearch starts a discovery job (Overpass geo + Léo editorial) and returns {jobId}.
 // Subscribe with GET /leo/jobs/{jobId}/stream. Events: theme | result | done | error.
 // POST /trips/{tripId}/discovery/search
 func (h *Handler) DiscoverySearch(w http.ResponseWriter, r *http.Request) {

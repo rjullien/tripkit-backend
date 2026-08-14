@@ -51,6 +51,11 @@ func (f *fakeQ) reset() {
 
 func seedTrip(t *testing.T, db *gorm.DB) {
 	t.Helper()
+	seedTripNamed(t, db, "quebec-2026")
+}
+
+func seedTripNamed(t *testing.T, db *gorm.DB, id string) {
+	t.Helper()
 	start, end := "2026-08-14", "2026-09-01"
 	data := map[string]any{
 		"locations": map[string]any{
@@ -64,7 +69,7 @@ func seedTrip(t *testing.T, db *gorm.DB) {
 	raw, _ := json.Marshal(data)
 	s := string(raw)
 	if err := db.Create(&models.Trip{
-		ID: "quebec-2026", Name: "Boucle Québec",
+		ID: id, Name: "Boucle Québec",
 		StartDate: &start, EndDate: &end, Data: &s,
 	}).Error; err != nil {
 		t.Fatal(err)
@@ -72,7 +77,7 @@ func seedTrip(t *testing.T, db *gorm.DB) {
 	day, _ := json.Marshal(map[string]any{
 		"label": "Tadoussac", "to": "Tadoussac", "locationId": "tadoussac",
 	})
-	if err := db.Create(&models.Day{TripID: "quebec-2026", DayNum: 8, Data: string(day)}).Error; err != nil {
+	if err := db.Create(&models.Day{TripID: id, DayNum: 8, Data: string(day)}).Error; err != nil {
 		t.Fatal(err)
 	}
 }
@@ -170,6 +175,115 @@ func TestRankItems(t *testing.T) {
 	got := rankItems([]Item{{Name: "far", DistKm: 12}, {Name: "near", DistKm: 1.2}})
 	if got[0].Name != "near" {
 		t.Fatalf("%+v", got)
+	}
+}
+
+type fakeEd struct {
+	mu    sync.Mutex
+	calls []EditorialQuery
+	items []Item
+	err   error
+}
+
+func (f *fakeEd) Search(_ context.Context, q EditorialQuery) ([]Item, error) {
+	f.mu.Lock()
+	f.calls = append(f.calls, q)
+	f.mu.Unlock()
+	if f.err != nil {
+		return nil, f.err
+	}
+	return append([]Item(nil), f.items...), nil
+}
+
+func (f *fakeEd) snapshot() []EditorialQuery {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]EditorialQuery(nil), f.calls...)
+}
+
+func (f *fakeEd) reset() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = nil
+}
+
+func TestSearch_EditorialDateISOSoftFailAndCache(t *testing.T) {
+	db, err := database.InitMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedTripNamed(t, db, "quebec-ed")
+	ed := &fakeEd{
+		items: []Item{{
+			ID: "editorial:festivals:festifoule", ThemeID: "festivals",
+			Name: "Festifoule", When: "2026-08-21", URL: "https://festifoule.ca",
+			Source: "editorial",
+		}},
+	}
+	svc := &Service{
+		DB: db, Overpass: &fakeQ{}, Editorial: ed,
+		Now: func() time.Time { return time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC) },
+	}
+	res, err := svc.Search(context.Background(), "quebec-ed", Scope{DayNum: 8}, []string{"festivals"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := ed.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("calls=%d", len(calls))
+	}
+	if calls[0].DateISO != "2026-08-21" {
+		t.Fatalf("dateISO=%q (must be the displayed day, not now)", calls[0].DateISO)
+	}
+	if calls[0].Place != "Tadoussac" || calls[0].TripName != "Boucle Québec" {
+		t.Fatalf("query=%+v", calls[0])
+	}
+	if !calls[0].Theme.Seasonal {
+		t.Fatal("festivals should be seasonal")
+	}
+	if len(res.ByTheme["festivals"]) != 1 || res.ByTheme["festivals"][0].Name != "Festifoule" {
+		t.Fatalf("%+v", res.ByTheme["festivals"])
+	}
+
+	ed.reset()
+	res2, err := svc.Search(context.Background(), "quebec-ed", Scope{DayNum: 8}, []string{"festivals"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ed.snapshot()) != 0 {
+		t.Fatal("expected editorial cache hit")
+	}
+	if len(res2.Items) != 1 || !res2.Items[0].Cached {
+		t.Fatalf("cached %+v", res2.Items)
+	}
+
+	edFail := &fakeEd{err: context.DeadlineExceeded}
+	svc.Editorial = edFail
+	svc.Now = func() time.Time { return time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC) } // past 6h TTL
+	res3, err := svc.Search(context.Background(), "quebec-ed", Scope{DayNum: 8}, []string{"festivals"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res3.ByTheme["festivals"]) != 0 {
+		t.Fatalf("soft-fail got %+v", res3.ByTheme["festivals"])
+	}
+}
+
+func TestSearch_EditorialNilIsSoftFail(t *testing.T) {
+	db, err := database.InitMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedTripNamed(t, db, "quebec-ed-nil")
+	svc := &Service{DB: db, Overpass: &fakeQ{}, Now: func() time.Time {
+		return time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	}}
+	res, err := svc.Search(context.Background(), "quebec-ed-nil", Scope{DayNum: 8}, []string{"spectacles"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.ByTheme["spectacles"]) != 0 {
+		t.Fatalf("%+v", res.ByTheme["spectacles"])
 	}
 }
 

@@ -67,7 +67,11 @@ func main() {
 	discLoader := discovery.NewLoaderFromEnv()
 	discCfg := discLoader.Bootstrap()
 	log.Printf("discovery config: origin=%s themes=%d overpass=%s", discCfg.Origin, len(discCfg.Themes), discCfg.Overpass.BaseURL)
-	h.SetDiscovery(&discovery.Service{DB: db, Loader: discLoader})
+	h.SetDiscovery(&discovery.Service{
+		DB:        db,
+		Loader:    discLoader,
+		Editorial: discovery.NewLeoEditorialFromEnv(),
+	})
 
 	leoOps := leo.NewOpsLoaderFromEnv()
 	leoCfg := leoOps.Bootstrap()
