@@ -51,8 +51,8 @@ func TestDefaultDogfoodRegistry_JullienEnabled(t *testing.T) {
 	if _, ok := publish.FindSeedRef(s.Seeds, "quebec-2026"); !ok {
 		t.Fatal("quebec-2026 must be catalogue fallback until GitHub token is live")
 	}
-	if _, ok := publish.FindSeedRef(s.Seeds, "publish-demo-2026"); !ok {
-		t.Fatal("publish-demo-2026 must be catalogue fallback")
+	if _, ok := publish.FindSeedRef(s.Seeds, "publish-demo-2026"); ok {
+		t.Fatal("publish-demo-2026 must not stay in catalogue fallback")
 	}
 	nadia, ok := reg.Get("nadia")
 	if !ok || nadia.Enabled {
