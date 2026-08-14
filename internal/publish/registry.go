@@ -223,11 +223,6 @@ func DefaultDogfoodRegistry() *Registry {
 					Title:  "Québec 2026",
 					Assets: []string{"quebec-map.html", "quebec-meteo.html"},
 				},
-				{
-					TripID: "publish-demo-2026",
-					Path:   "publish-demo-2026.js",
-					Title:  "Démo Publish (test FE)",
-				},
 			},
 		},
 		{
