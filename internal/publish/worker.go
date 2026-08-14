@@ -2,6 +2,7 @@ package publish
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path"
@@ -33,12 +34,12 @@ func WorkerEnabled() bool {
 
 // Worker processes queued publish jobs in-process (progressive V1).
 type Worker struct {
-	DB      *gorm.DB
-	Reg     *Registry
-	GitHub  *GitHubClient
-	Log     *log.Logger
-	Every   time.Duration
-	stopCh  chan struct{}
+	DB     *gorm.DB
+	Reg    *Registry
+	GitHub *GitHubClient
+	Log    *log.Logger
+	Every  time.Duration
+	stopCh chan struct{}
 }
 
 // Start launches the poll loop.
@@ -192,6 +193,24 @@ func (w *Worker) Process(job *models.PublishJob) {
 	if err != nil {
 		fail("build_failed", []JobError{{Code: "build_failed", Message: err.Error()}})
 		return
+	}
+
+	opt, err := ExtractOptional(zipBytes, []string{"travel-profile.js"})
+	if err != nil {
+		fail("extract_failed", []JobError{{Code: "extract_failed", Message: err.Error()}})
+		return
+	}
+	if raw, ok := opt["travel-profile.js"]; ok && len(raw) > 0 {
+		profile, err := ParseTravelProfile(string(raw))
+		if err != nil {
+			fail("parse_failed", []JobError{{Code: "parse_failed", Message: err.Error(), Path: "travel-profile.js"}})
+			return
+		}
+		if fam, _ := profile["family"].(string); fam != "" && cfg.Family != "" && !strings.EqualFold(fam, cfg.Family) {
+			fail("qa_failed", []JobError{{Code: "qa_failed", Message: fmt.Sprintf("travel-profile.family %q != checklist-config.family %q", fam, cfg.Family)}})
+			return
+		}
+		payload.TripData["travelProfile"] = profile
 	}
 
 	job.Stage = StageApplying
