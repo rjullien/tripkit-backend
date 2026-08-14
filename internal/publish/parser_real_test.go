@@ -74,3 +74,22 @@ func TestParseRealNadiaPeople(t *testing.T) {
 		t.Fatal("nadia missing")
 	}
 }
+
+func TestParseTravelProfile(t *testing.T) {
+	code := `var TRAVEL_PROFILE = {
+  family: "jullien",
+  themes: { disabled: ["eau"], added: [], overrides: {} }
+};`
+	m, err := publish.ParseTravelProfile(code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m["family"] != "jullien" {
+		t.Fatalf("%v", m["family"])
+	}
+	themes, _ := m["themes"].(map[string]any)
+	disabled, _ := themes["disabled"].([]any)
+	if len(disabled) != 1 || disabled[0] != "eau" {
+		t.Fatalf("disabled=%v", disabled)
+	}
+}

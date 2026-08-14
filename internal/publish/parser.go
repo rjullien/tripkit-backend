@@ -136,6 +136,22 @@ func ParseChecklistConfig(code string) (ChecklistConfig, error) {
 	return cfg, nil
 }
 
+// ParseTravelProfile parses travel-profile.js (family tastes). Optional at publish time.
+func ParseTravelProfile(code string) (map[string]any, error) {
+	raw, _, err := ParseJSObject(code)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, fmt.Errorf("travel-profile json: %w", err)
+	}
+	if m == nil {
+		return map[string]any{}, nil
+	}
+	return m, nil
+}
+
 // StructuralValidate performs hard gates (not full seed-qa).
 func StructuralValidate(seed SeedFile, expectedTripID, expectedFamily string, cfgFamily string) []string {
 	var errs []string

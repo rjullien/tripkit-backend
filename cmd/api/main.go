@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/rjullien/tripkit-backend/internal/dailybrief"
 	"github.com/rjullien/tripkit-backend/internal/database"
+	"github.com/rjullien/tripkit-backend/internal/discovery"
 	"github.com/rjullien/tripkit-backend/internal/handlers"
 	"github.com/rjullien/tripkit-backend/internal/leo"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
@@ -62,6 +63,15 @@ func main() {
 	psCfg := psLoader.Bootstrap()
 	log.Printf("polarsteps config: origin=%s model=%s enabled=%v", psCfg.Origin, psCfg.CaptionModel, psCfg.Enabled)
 	h.SetPolarsteps(&polarsteps.Service{DB: db, Loader: psLoader})
+
+	discLoader := discovery.NewLoaderFromEnv()
+	discCfg := discLoader.Bootstrap()
+	log.Printf("discovery config: origin=%s themes=%d overpass=%s", discCfg.Origin, len(discCfg.Themes), discCfg.Overpass.BaseURL)
+	h.SetDiscovery(&discovery.Service{
+		DB:        db,
+		Loader:    discLoader,
+		Editorial: discovery.NewLeoEditorialFromEnv(),
+	})
 
 	leoOps := leo.NewOpsLoaderFromEnv()
 	leoCfg := leoOps.Bootstrap()
@@ -156,6 +166,11 @@ func main() {
 		r.Get("/trips/{tripId}/polarsteps/status", h.PolarstepsStatus)
 		r.Get("/trips/{tripId}/polarsteps/caption", h.PolarstepsCaption)
 		r.Post("/trips/{tripId}/polarsteps/caption", h.GeneratePolarstepsCaption)
+
+		r.Get("/discovery/themes", h.DiscoveryCatalog)
+		r.Get("/trips/{tripId}/discovery/themes", h.DiscoveryThemes)
+		r.Post("/trips/{tripId}/discovery/search", h.DiscoverySearch)
+		r.Get("/trips/{tripId}/discovery/results", h.DiscoveryResults)
 
 		// Trips
 		r.Get("/trips", h.ListTrips)

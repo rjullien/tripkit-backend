@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rjullien/tripkit-backend/internal/config"
 	"github.com/rjullien/tripkit-backend/internal/dailybrief"
+	"github.com/rjullien/tripkit-backend/internal/discovery"
 	"github.com/rjullien/tripkit-backend/internal/leo"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/models"
@@ -34,6 +35,7 @@ type Handler struct {
 	brief           *dailybrief.Service
 	plusChat        *pluschat.Loader
 	polarsteps      *polarsteps.Service
+	discovery       *discovery.Service
 	leoOps          *leo.OpsLoader
 	leoJobs         *leo.Hub
 	leoRun          func(ctx context.Context, pctx leo.PromptContext, req leo.ChatRequest, emit leo.EmitFunc) error
@@ -62,6 +64,11 @@ func (h *Handler) SetPlusChat(loader *pluschat.Loader) {
 // SetPolarsteps attaches the Polarsteps caption service (Plus box, text only).
 func (h *Handler) SetPolarsteps(svc *polarsteps.Service) {
 	h.polarsteps = svc
+}
+
+// SetDiscovery attaches the thematic search service (vue Jour).
+func (h *Handler) SetDiscovery(svc *discovery.Service) {
+	h.discovery = svc
 }
 
 // SetLeoOps attaches the Léo model allowlist loader (ops/leo.json).
