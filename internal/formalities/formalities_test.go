@@ -86,7 +86,7 @@ func TestDetectCountries(t *testing.T) {
 			want: []string{"AE", "FR", "TH"},
 		},
 		{
-			name: "empty trip data",
+			name:     "empty trip data",
 			tripData: map[string]any{},
 			want:     []string{},
 		},

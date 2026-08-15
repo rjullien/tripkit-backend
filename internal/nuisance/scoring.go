@@ -102,10 +102,21 @@ func ScoreCategory(cat NuisanceCategory, items []discovery.Item, refLat, refLon 
 	return result
 }
 
+// ScoreCategoryUnavailable builds the result for a category whose data source
+// failed. Alias of UnavailableCategory with an optional reason (tests of #63).
+func ScoreCategoryUnavailable(cat NuisanceCategory, reason string) CategoryResult {
+	got := UnavailableCategory(cat)
+	if reason != "" {
+		got.Detail = "Donnée indisponible (" + reason + ")."
+	}
+	return got
+}
+
 // GlobalVerdict returns the highest severity across all category results,
 // with the precedence ELEVE > INDETERMINE > MODERE > FAIBLE. An unavailable
 // category outranks MODERE on purpose: a partially failed analysis must not
-// surface as a verdict the user could read as reassuring.
+// surface as a verdict the user could read as reassuring. Matches the frontend
+// construction-contract worstNuisanceVerdict.
 func GlobalVerdict(results []CategoryResult) string {
 	hasIndetermine := false
 	hasYellow := false
@@ -126,6 +137,16 @@ func GlobalVerdict(results []CategoryResult) string {
 		return LevelModere
 	}
 	return LevelFaible
+}
+
+// HasUnknown reports whether any category could not be evaluated.
+func HasUnknown(results []CategoryResult) bool {
+	for _, r := range results {
+		if r.Level == LevelIndetermine {
+			return true
+		}
+	}
+	return false
 }
 
 // VerdictEmoji returns the emoji for a verdict level.

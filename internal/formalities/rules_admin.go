@@ -1,5 +1,7 @@
 package formalities
 
+import "strings"
+
 // AdminRule defines an entry requirement for a destination country.
 type AdminRule struct {
 	Country   string   // destination country code
@@ -192,9 +194,10 @@ func MatchAdminRules(countries []string, nationalities []string) []AdminCheckIte
 			Label:     rule.Label,
 			Status:    status,
 			AppliesTo: matchedNationalities(rule, nationalities),
-			Detail:    rule.Cost,
+			Detail:    adminDetail(rule),
 			URL:       rule.URL,
 			Cost:      rule.Cost,
+			Deadline:  rule.Delay,
 		})
 	}
 
@@ -255,4 +258,21 @@ func hasAny(set map[string]bool, list []string) bool {
 		}
 	}
 	return false
+}
+
+// adminDetail builds the human-readable detail line for a rule: cost and lead
+// time when known. Previously this field carried the bare cost string, which
+// read as "21 USD" with no indication of what it referred to.
+func adminDetail(rule AdminRule) string {
+	var parts []string
+	if c := strings.TrimSpace(rule.Cost); c != "" {
+		parts = append(parts, "Coût : "+c)
+	}
+	if d := strings.TrimSpace(rule.Delay); d != "" {
+		parts = append(parts, "Délai : "+d)
+	}
+	if len(parts) == 0 {
+		return "Aucune démarche payante identifiée."
+	}
+	return strings.Join(parts, " · ")
 }

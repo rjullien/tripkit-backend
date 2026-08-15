@@ -16,8 +16,8 @@ type NuisanceCategory struct {
 	YellowBelow float64
 
 	// Count-based (nightlife): Red if count > RedAbove, Yellow if >= YellowAbove.
-	CountBased bool
-	RedAbove   int
+	CountBased  bool
+	RedAbove    int
 	YellowAbove int
 }
 
@@ -52,13 +52,13 @@ var Categories = []NuisanceCategory{
 		YellowBelow: 300,
 	},
 	{
-		ID:         "nightlife",
-		Label:      "Vie nocturne",
-		Emoji:      "🎵",
-		Tags:       []string{"amenity=nightclub", "amenity=bar"},
-		RadiusKm:   0.2,
-		CountBased: true,
-		RedAbove:   5,
+		ID:          "nightlife",
+		Label:       "Vie nocturne",
+		Emoji:       "🎵",
+		Tags:        []string{"amenity=nightclub", "amenity=bar"},
+		RadiusKm:    0.2,
+		CountBased:  true,
+		RedAbove:    5,
 		YellowAbove: 2,
 	},
 	{

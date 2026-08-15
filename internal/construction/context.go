@@ -51,8 +51,8 @@ type ActivityBrief struct {
 
 // ActivitiesSummary provides Leo with an overview of existing activities.
 type ActivitiesSummary struct {
-	Count  int                `json:"count"`
-	ByDay  map[int][]ActivityBrief `json:"byDay,omitempty"`
+	Count int                     `json:"count"`
+	ByDay map[int][]ActivityBrief `json:"byDay,omitempty"`
 }
 
 // Context carries trip-level construction data for mode-specific prompts.
@@ -160,8 +160,8 @@ func BuildLeoContext(db *gorm.DB, tripID string) (*Context, error) {
 // ── Internal JSON shapes matching trip.Data ──────────────────────────────────
 
 type tripData struct {
-	People        []personEntry          `json:"people"`
-	TravelProfile *travelProfile         `json:"travelProfile"`
+	People        []personEntry            `json:"people"`
+	TravelProfile *travelProfile           `json:"travelProfile"`
 	Activities    map[string]activityEntry `json:"activities"`
 }
 

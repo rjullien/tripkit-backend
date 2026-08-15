@@ -53,6 +53,7 @@ type CheckResult struct {
 	Alternatives     []string         `json:"alternatives"`
 	Incomplete       bool             `json:"incomplete,omitempty"`
 	FailedCategories []string         `json:"failedCategories,omitempty"`
+	Partial          bool             `json:"partial,omitempty"`
 	AnalyzedAt       time.Time        `json:"analyzedAt"`
 }
 
@@ -146,6 +147,7 @@ func (s *Service) runCheck(ctx context.Context, req CheckRequest, emit leo.EmitF
 			Alternatives:     syn.Alternatives,
 			Incomplete:       len(lr.FailedCategories) > 0,
 			FailedCategories: lr.FailedCategories,
+			Partial:          lr.Partial,
 			AnalyzedAt:       s.now(),
 		}
 
@@ -231,9 +233,6 @@ func (s *Service) analyzeLocation(ctx context.Context, tripID string, loc locati
 			} else {
 				got, err := s.Overpass.Search(ctx, loc.lat, loc.lon, theme)
 				if err != nil {
-					// A failed query has NO data: score INDETERMINE instead of
-					// zero items (which would read as "nothing nearby"), and do
-					// not cache the failure.
 					log.Printf("nuisance: overpass category=%s location=%s: %v (unavailable)", cat.ID, loc.id, err)
 					lr.Categories = append(lr.Categories, UnavailableCategory(cat))
 					lr.FailedCategories = append(lr.FailedCategories, cat.ID)
@@ -248,6 +247,7 @@ func (s *Service) analyzeLocation(ctx context.Context, tripID string, loc locati
 	}
 
 	lr.Verdict = GlobalVerdict(lr.Categories)
+	lr.Partial = HasUnknown(lr.Categories)
 	return lr
 }
 

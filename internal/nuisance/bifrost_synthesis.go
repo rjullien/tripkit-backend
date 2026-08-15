@@ -9,24 +9,29 @@ import (
 )
 
 const synthesisSystem = `Tu es un assistant de voyage expert en analyse de nuisances.
-On te fournit les résultats d'une analyse de nuisances pour un ou plusieurs lieux.
+On te fournit les résultats DÉJÀ calculés d'une analyse de nuisances pour un ou plusieurs lieux.
 Tu dois rédiger un rapport synthétique en français avec :
 1. Un résumé du verdict global
 2. Pour chaque lieu avec un score ELEVE ou MODERE, une recommandation concrète
 3. Si possible, des alternatives (lieux plus calmes à proximité)
+
+Règles strictes :
+- Ne recalcule ni ne conteste les niveaux fournis, et n'invente aucune distance.
+- Une catégorie INDETERMINE signifie que la donnée manque : dis-le explicitement,
+  ne la présente jamais comme calme ni comme bruyante.
+- Si un lieu est marqué incomplet, précise que la vérification est partielle.
 
 Réponds en JSON avec la structure :
 {"recommendations": [{"locationId": "...", "text": "...", "alternatives": ["..."]}]}`
 
 // LocationResults groups the scoring output for one location.
 type LocationResults struct {
-	LocationID   string           `json:"locationId"`
-	LocationName string           `json:"locationName"`
-	Verdict      string           `json:"verdict"`
-	Categories   []CategoryResult `json:"categories"`
-	// FailedCategories lists the category IDs whose source query failed; a
-	// non-empty slice means the analysis is incomplete.
-	FailedCategories []string `json:"failedCategories,omitempty"`
+	LocationID       string           `json:"locationId"`
+	LocationName     string           `json:"locationName"`
+	Verdict          string           `json:"verdict"`
+	Categories       []CategoryResult `json:"categories"`
+	FailedCategories []string         `json:"failedCategories,omitempty"`
+	Partial          bool             `json:"partial,omitempty"`
 }
 
 // Synthesize calls Bifrost once with ALL locations' results and returns
@@ -67,6 +72,9 @@ func buildSynthesisPrompt(allResults []LocationResults) string {
 	b.WriteString("Voici les résultats d'analyse de nuisances :\n\n")
 	for _, lr := range allResults {
 		fmt.Fprintf(&b, "## %s (%s)\nVerdict: %s %s\n", lr.LocationName, lr.LocationID, VerdictEmoji(lr.Verdict), lr.Verdict)
+		if lr.Partial {
+			b.WriteString("Analyse INCOMPLETE : au moins une categorie n'a pas pu etre evaluee.\n")
+		}
 		for _, cat := range lr.Categories {
 			fmt.Fprintf(&b, "- %s %s: %s - %s\n", cat.Emoji, cat.Category, cat.Level, cat.Detail)
 		}
