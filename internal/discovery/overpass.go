@@ -57,6 +57,9 @@ func (c *Client) Search(ctx context.Context, lat, lon float64, theme Theme) ([]I
 	}
 	out := make([]Item, 0, len(items))
 	for _, it := range items {
+		if excludedName(it.Name, theme.ExcludeNames) {
+			continue
+		}
 		it.ThemeID = theme.ID
 		it.Source = "osm"
 		it.DistKm = round1(haversineKm(lat, lon, it.Lat, it.Lon))
@@ -160,6 +163,20 @@ func parseOverpassJSON(raw []byte) ([]Item, error) {
 		})
 	}
 	return out, nil
+}
+
+func excludedName(name string, needles []string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	if n == "" {
+		return false
+	}
+	for _, raw := range needles {
+		needle := strings.ToLower(strings.TrimSpace(raw))
+		if needle != "" && strings.Contains(n, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func osmName(tags map[string]string) string {

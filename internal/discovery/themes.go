@@ -71,6 +71,9 @@ func mergeOverride(base, ov Theme) Theme {
 	if len(ov.QueryHints) > 0 {
 		base.QueryHints = ov.QueryHints
 	}
+	if len(ov.ExcludeNames) > 0 {
+		base.ExcludeNames = ov.ExcludeNames
+	}
 	if ov.Corridor {
 		base.Corridor = true
 	}

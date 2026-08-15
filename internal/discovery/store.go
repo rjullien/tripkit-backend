@@ -41,6 +41,16 @@ func itoa(n int) string {
 	return sign + string(b[i:])
 }
 
+func (s *Service) cacheThemeKey(themeID string) string {
+	v := 1
+	if s != nil {
+		if n := s.cfg().Version; n > 0 {
+			v = n
+		}
+	}
+	return themeID + "@v" + itoa(v)
+}
+
 func (s *Service) loadCache(tripID, key, themeID string, ttl time.Duration) ([]Item, bool) {
 	if s == nil || s.DB == nil {
 		return nil, false
@@ -97,7 +107,7 @@ func (s *Service) cachedResults(tripID string, sc Scope, themeIDs []string) *Res
 		if th, ok := themeByID(effective, id); ok && th.Engine == engineEditorial {
 			ttl = editorialTTLHours * time.Hour
 		}
-		items, ok := s.loadCache(tripID, key, id, ttl)
+		items, ok := s.loadCache(tripID, key, s.cacheThemeKey(id), ttl)
 		if !ok {
 			continue
 		}
