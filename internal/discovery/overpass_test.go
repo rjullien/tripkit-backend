@@ -11,6 +11,16 @@ import (
 	"time"
 )
 
+func TestNewClient_HTTPTimeoutExceedsQL(t *testing.T) {
+	c := NewClient(OverpassConfig{TimeoutSec: 25})
+	if c.Timeout != 25*time.Second {
+		t.Fatalf("QL timeout=%v", c.Timeout)
+	}
+	if c.HTTPClient == nil || c.HTTPClient.Timeout != 30*time.Second {
+		t.Fatalf("HTTP timeout=%v", c.HTTPClient.Timeout)
+	}
+}
+
 func TestBuildOverpassQL_UsesCatalogueTags(t *testing.T) {
 	theme := Theme{ID: "outlets", RadiusKm: 25, Overpass: []string{"shop=outlet", "shop=mall"}}
 	q := buildOverpassQL(48.14, -69.71, theme, 25)

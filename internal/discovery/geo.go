@@ -1,6 +1,9 @@
 package discovery
 
-import "math"
+import (
+	"math"
+	"sort"
+)
 
 func haversineKm(lat1, lon1, lat2, lon2 float64) float64 {
 	const r = 6371.0
@@ -18,12 +21,8 @@ func round1(v float64) float64 {
 
 func rankItems(items []Item) []Item {
 	out := append([]Item(nil), items...)
-	for i := 0; i < len(out); i++ {
-		for j := i + 1; j < len(out); j++ {
-			if out[j].DistKm < out[i].DistKm {
-				out[i], out[j] = out[j], out[i]
-			}
-		}
-	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].DistKm < out[j].DistKm
+	})
 	return out
 }

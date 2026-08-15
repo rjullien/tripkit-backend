@@ -23,7 +23,6 @@ type Service struct {
 	Overpass  Querier
 	Editorial EditorialSearcher
 	Now       func() time.Time
-	cacheMu   sync.Mutex
 }
 
 func (s *Service) now() time.Time {
@@ -236,9 +235,10 @@ func (s *Service) Search(ctx context.Context, tripID string, sc Scope, themeIDs 
 				if qerr != nil {
 					log.Printf("discovery: overpass theme=%s: %v (soft-fail)", theme.ID, qerr)
 					got = nil
+				} else {
+					s.saveCache(tripID, key, theme.ID, got)
 				}
 				items = got
-				s.saveCache(tripID, key, theme.ID, items)
 			}
 			mu.Lock()
 			res.ByTheme[theme.ID] = items
@@ -273,9 +273,10 @@ func (s *Service) Search(ctx context.Context, tripID string, sc Scope, themeIDs 
 				if qerr != nil {
 					log.Printf("discovery: editorial theme=%s: %v (soft-fail)", theme.ID, qerr)
 					got = nil
+				} else {
+					s.saveCache(tripID, key, theme.ID, got)
 				}
 				items = got
-				s.saveCache(tripID, key, theme.ID, items)
 			}
 			res.ByTheme[theme.ID] = items
 			res.Items = append(res.Items, items...)

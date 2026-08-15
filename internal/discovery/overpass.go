@@ -36,7 +36,9 @@ func NewClient(cfg OverpassConfig) *Client {
 		BaseURL: strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"),
 		Timeout: timeout,
 		HTTPClient: &http.Client{
-			Timeout: timeout,
+			// QL timeout is visible to the caller; HTTP budget is a bit larger
+			// so a server-side Overpass timeout is not masked as a client deadline.
+			Timeout: timeout + 5*time.Second,
 		},
 	}
 }

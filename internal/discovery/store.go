@@ -10,7 +10,11 @@ import (
 
 func scopeKey(sc Scope) string {
 	if sc.LocationID != "" {
-		return "loc:" + sc.LocationID
+		key := "loc:" + sc.LocationID
+		if sc.DateISO != "" {
+			return key + ":" + sc.DateISO
+		}
+		return key
 	}
 	if sc.DayNum != 0 || sc.DateISO != "" {
 		return "day:" + itoa(sc.DayNum)
@@ -41,8 +45,6 @@ func (s *Service) loadCache(tripID, key, themeID string, ttl time.Duration) ([]I
 	if s == nil || s.DB == nil {
 		return nil, false
 	}
-	s.cacheMu.Lock()
-	defer s.cacheMu.Unlock()
 	var row models.DiscoveryCache
 	err := s.DB.Where("trip_id = ? AND scope_key = ? AND theme_id = ?", tripID, key, themeID).First(&row).Error
 	if err != nil {
@@ -70,8 +72,6 @@ func (s *Service) saveCache(tripID, key, themeID string, items []Item) {
 	if err != nil {
 		return
 	}
-	s.cacheMu.Lock()
-	defer s.cacheMu.Unlock()
 	row := models.DiscoveryCache{
 		TripID:    tripID,
 		ScopeKey:  key,
@@ -88,9 +88,13 @@ func (s *Service) saveCache(tripID, key, themeID string, items []Item) {
 func (s *Service) cachedResults(tripID string, sc Scope, themeIDs []string) *Result {
 	key := scopeKey(sc)
 	res := &Result{Scope: sc, Themes: themeIDs, ByTheme: map[string][]Item{}}
+	effective := s.cfg().Themes
+	if themes, err := s.ThemesForTrip(tripID); err == nil {
+		effective = themes
+	}
 	for _, id := range themeIDs {
 		ttl := geoTTLHours * time.Hour
-		if th, ok := themeByID(s.cfg().Themes, id); ok && th.Engine == engineEditorial {
+		if th, ok := themeByID(effective, id); ok && th.Engine == engineEditorial {
 			ttl = editorialTTLHours * time.Hour
 		}
 		items, ok := s.loadCache(tripID, key, id, ttl)
