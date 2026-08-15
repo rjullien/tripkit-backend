@@ -40,13 +40,29 @@ type InterestBrief struct {
 	Dislikes []string `json:"dislikes,omitempty"`
 }
 
+// ActivityBrief summarises one activity for prompt injection.
+type ActivityBrief struct {
+	ID            string `json:"id"`
+	DayNum        int    `json:"dayNum"`
+	Name          string `json:"name"`
+	Theme         string `json:"theme,omitempty"`
+	BookingStatus string `json:"bookingStatus,omitempty"`
+}
+
+// ActivitiesSummary provides Leo with an overview of existing activities.
+type ActivitiesSummary struct {
+	Count  int                `json:"count"`
+	ByDay  map[int][]ActivityBrief `json:"byDay,omitempty"`
+}
+
 // Context carries trip-level construction data for mode-specific prompts.
 type Context struct {
-	TripName  string                   `json:"tripName,omitempty"`
-	Travelers []TravelerBrief          `json:"travelers,omitempty"`
-	Style     *StyleBrief              `json:"style,omitempty"`
-	Budget    *BudgetBrief             `json:"budget,omitempty"`
-	Interests map[string]InterestBrief `json:"interests,omitempty"`
+	TripName   string                   `json:"tripName,omitempty"`
+	Travelers  []TravelerBrief          `json:"travelers,omitempty"`
+	Style      *StyleBrief              `json:"style,omitempty"`
+	Budget     *BudgetBrief             `json:"budget,omitempty"`
+	Interests  map[string]InterestBrief `json:"interests,omitempty"`
+	Activities *ActivitiesSummary       `json:"activities,omitempty"`
 }
 
 // BuildLeoContext reads trip.Data from the database and assembles construction
@@ -69,7 +85,7 @@ func BuildLeoContext(db *gorm.DB, tripID string) (*Context, error) {
 	}
 
 	// Check if there is any construction-relevant data at all.
-	if data.TravelProfile == nil && len(data.People) == 0 {
+	if data.TravelProfile == nil && len(data.People) == 0 && len(data.Activities) == 0 {
 		return nil, nil
 	}
 
@@ -119,14 +135,34 @@ func BuildLeoContext(db *gorm.DB, tripID string) (*Context, error) {
 		}
 	}
 
+	// Extract activities summary.
+	if len(data.Activities) > 0 {
+		summary := &ActivitiesSummary{
+			Count: len(data.Activities),
+			ByDay: make(map[int][]ActivityBrief),
+		}
+		for _, act := range data.Activities {
+			brief := ActivityBrief{
+				ID:            act.ID,
+				DayNum:        act.DayNum,
+				Name:          act.Name,
+				Theme:         act.Theme,
+				BookingStatus: act.BookingStatus,
+			}
+			summary.ByDay[act.DayNum] = append(summary.ByDay[act.DayNum], brief)
+		}
+		ctx.Activities = summary
+	}
+
 	return ctx, nil
 }
 
 // ── Internal JSON shapes matching trip.Data ──────────────────────────────────
 
 type tripData struct {
-	People        []personEntry  `json:"people"`
-	TravelProfile *travelProfile `json:"travelProfile"`
+	People        []personEntry          `json:"people"`
+	TravelProfile *travelProfile         `json:"travelProfile"`
+	Activities    map[string]activityEntry `json:"activities"`
 }
 
 type personEntry struct {
@@ -164,4 +200,12 @@ type budgetLimit struct {
 type interestDef struct {
 	Likes    []string `json:"likes"`
 	Dislikes []string `json:"dislikes"`
+}
+
+type activityEntry struct {
+	ID            string `json:"id"`
+	DayNum        int    `json:"dayNum"`
+	Name          string `json:"name"`
+	Theme         string `json:"theme"`
+	BookingStatus string `json:"bookingStatus"`
 }
