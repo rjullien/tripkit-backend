@@ -41,7 +41,7 @@ type OverpassConfig struct {
 // DefaultConfig is compiled-in dogfood (must match ops/discovery-themes.json).
 func DefaultConfig() Config {
 	return Config{
-		Version: 1,
+		Version: 2,
 		Overpass: OverpassConfig{
 			BaseURL:     defaultOverpassURL,
 			TimeoutSec:  defaultTimeoutSec,
@@ -49,10 +49,11 @@ func DefaultConfig() Config {
 		},
 		Themes: []Theme{
 			{ID: "magasinage", Label: "Magasinage", Emoji: "🛍️", Engine: engineGeo, Corridor: true, RadiusKm: 15,
-				Overpass:   []string{"shop=mall", "shop=department_store", "shop=clothes"},
-				QueryHints: []string{"centre commercial", "magasinage", "shopping"}},
+				Overpass:     []string{"shop=mall", "shop=clothes", "shop=gift", "shop=jewelry", "shop=shoes", "shop=bag", "shop=craft", "amenity=marketplace"},
+				ExcludeNames: []string{"canadian tire", "home depot", "rona", "réno-dépôt", "reno-depot", "walmart", "costco", "ikea", "bureau en gros", "staples", "princess auto"},
+				QueryHints:   []string{"boutique", "souvenirs", "artisanat", "mode", "cadeaux", "marché local"}},
 			{ID: "outlets", Label: "Outlets & bons plans", Emoji: "🏷️", Engine: engineGeo, Corridor: true, RadiusKm: 25,
-				Overpass:   []string{"shop=outlet", "shop=mall", "shop=department_store"},
+				Overpass:   []string{"shop=outlet", "shop=mall"},
 				QueryHints: []string{"factory outlet", "village de marques", "premium outlets"}},
 			{ID: "rando", Label: "Rando, nature & montagne", Emoji: "🥾", Engine: engineGeo, Corridor: true, RadiusKm: 30,
 				Overpass:   []string{"tourism=viewpoint", "leisure=nature_reserve", "natural=peak"},
