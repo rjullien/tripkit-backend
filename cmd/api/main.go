@@ -193,10 +193,14 @@ func main() {
 		r.Get("/trips/{tripId}/travel-profile", h.GetTravelProfile)
 		r.Post("/trips/{tripId}/travel-profile/request", h.CreateProfileRequest)
 
+		// Discovery retain (add item to seed via Leo)
+		r.Post("/trips/{tripId}/discovery/retain", h.RetainDiscoveryItem)
+
 		// Nuisance analysis
 		r.Post("/trips/{tripId}/nuisance-check", h.RunNuisanceCheck)
 		r.Get("/trips/{tripId}/nuisance-check", h.GetNuisanceCheck)
 		r.Get("/trips/{tripId}/nuisance-check/{locationId}", h.GetNuisanceCheck)
+		r.Post("/trips/{tripId}/nuisance-check/pin", h.PinNuisanceToSeed)
 
 		// Trips
 		r.Get("/trips", h.ListTrips)

@@ -285,6 +285,106 @@ func (h *Handler) CreateProfileRequest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"jobId": job.ID})
 }
 
+// ── Discovery Retain ──────────────────────────────────────────────────────────
+
+// retainItemBody is the payload for POST /trips/{tripId}/discovery/retain.
+type retainItemBody struct {
+	Item retainItem `json:"item"`
+}
+
+type retainItem struct {
+	ID      string  `json:"id"`
+	Name    string  `json:"name"`
+	ThemeID string  `json:"themeId"`
+	Lat     float64 `json:"lat"`
+	Lon     float64 `json:"lon"`
+	DistKm  float64 `json:"distKm"`
+	URL     string  `json:"url"`
+	Source  string  `json:"source"`
+}
+
+// RetainDiscoveryItem starts a Leo job to add a discovery item to trip.activities
+// with bookingStatus:"candidate". The write goes through Leo (never direct FE write).
+// POST /trips/{tripId}/discovery/retain
+func (h *Handler) RetainDiscoveryItem(w http.ResponseWriter, r *http.Request) {
+	tripID := chi.URLParam(r, "tripId")
+	user := middleware.EffectiveUser(r)
+	if strings.TrimSpace(user) == "" {
+		writeError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	var body retainItemBody
+	if err := parseBody(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if strings.TrimSpace(body.Item.Name) == "" {
+		writeError(w, http.StatusBadRequest, "item.name is required")
+		return
+	}
+
+	item := body.Item
+	message := fmt.Sprintf(
+		"Ajoute cette activite dans trip.activities avec bookingStatus:'candidate':\n"+
+			"- id: %s\n- nom: %s\n- theme: %s\n- lat: %f, lon: %f\n- distance: %.1f km\n- url: %s\n- source: %s",
+		item.ID, item.Name, item.ThemeID, item.Lat, item.Lon, item.DistKm, item.URL, item.Source,
+	)
+
+	job := h.leoJobs.Start(user, func(ctx context.Context, emit leo.EmitFunc) error {
+		_ = emit("meta", leo.StreamEvent{
+			Text:   "construction:activities",
+			Detail: "retain-discovery-item",
+			Tool: map[string]any{
+				"tripId": tripID,
+				"item":   item,
+			},
+		})
+		_ = emit("delta", leo.StreamEvent{Text: message})
+		_ = emit("done", leo.StreamEvent{})
+		return nil
+	})
+
+	writeJSON(w, http.StatusAccepted, map[string]any{"jobId": job.ID})
+}
+
+// ── Nuisance Seed Pin ────────────────────────────────────────────────────────
+
+// PinNuisanceToSeed starts a Leo job to write the nuisance summary into the
+// seed (hotels[].nuisance + trip.construction.lastQa). Triggered from the
+// "Epingler dans le seed" button in the nuisance results view.
+// POST /trips/{tripId}/nuisance-check/pin
+func (h *Handler) PinNuisanceToSeed(w http.ResponseWriter, r *http.Request) {
+	tripID := chi.URLParam(r, "tripId")
+	user := middleware.EffectiveUser(r)
+	if strings.TrimSpace(user) == "" {
+		writeError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	message := fmt.Sprintf(
+		"Ecris le resume des nuisances dans le seed pour le voyage %s:\n"+
+			"- Pour chaque hotel, ajoute ou mets a jour hotels[].nuisance avec le resume de l'analyse.\n"+
+			"- Mets a jour trip.construction.lastQa avec la date et le resume global.",
+		tripID,
+	)
+
+	job := h.leoJobs.Start(user, func(ctx context.Context, emit leo.EmitFunc) error {
+		_ = emit("meta", leo.StreamEvent{
+			Text:   "construction:activities",
+			Detail: "pin-nuisance-to-seed",
+			Tool: map[string]any{
+				"tripId": tripID,
+			},
+		})
+		_ = emit("delta", leo.StreamEvent{Text: message})
+		_ = emit("done", leo.StreamEvent{})
+		return nil
+	})
+
+	writeJSON(w, http.StatusAccepted, map[string]any{"jobId": job.ID})
+}
+
 // ── Nuisance Check ───────────────────────────────────────────────────────────
 
 // RunNuisanceCheck launches a nuisance analysis job for the given locations.
