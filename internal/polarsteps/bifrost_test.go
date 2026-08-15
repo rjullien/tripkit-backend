@@ -48,10 +48,10 @@ func TestBifrostCompleter_OK(t *testing.T) {
 	}
 }
 
-func TestNewBifrostCompleter_TimeoutAboveNginxDefault(t *testing.T) {
+func TestNewBifrostCompleter_TimeoutCoversSlowBifrost(t *testing.T) {
 	c := NewBifrostCompleter(DefaultConfig())
-	if c.HTTPClient == nil || c.HTTPClient.Timeout != 90*time.Second {
-		t.Fatalf("timeout=%v want 90s (must exceed nginx's 60s default)", c.HTTPClient.Timeout)
+	if c.HTTPClient == nil || c.HTTPClient.Timeout != 180*time.Second {
+		t.Fatalf("timeout=%v want 180s (live polarsteps Bifrost hit 113s)", c.HTTPClient.Timeout)
 	}
 }
 
