@@ -85,6 +85,36 @@ func (s *Service) themePrefs(tripID string) (ThemePrefs, error) {
 	return profile.Themes, nil
 }
 
+// interests loads the interests section from the trip's travel-profile.
+func (s *Service) interests(tripID string) (map[string]InterestPref, error) {
+	var trip models.Trip
+	if err := s.DB.First(&trip, "id = ?", tripID).Error; err != nil {
+		return nil, err
+	}
+	if trip.Data == nil || *trip.Data == "" {
+		return nil, nil
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(*trip.Data), &data); err != nil {
+		return nil, nil
+	}
+	raw, ok := data["travelProfile"]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil, nil
+	}
+	var profile struct {
+		Interests map[string]InterestPref `json:"interests"`
+	}
+	if err := json.Unmarshal(b, &profile); err != nil {
+		return nil, nil
+	}
+	return profile.Interests, nil
+}
+
 // ResolvePoint maps a Jour scope to lat/lon + a place label.
 func (s *Service) ResolvePoint(tripID string, sc Scope) (lat, lon float64, place string, dateISO string, err error) {
 	var trip models.Trip
@@ -289,6 +319,14 @@ func (s *Service) Search(ctx context.Context, tripID string, sc Scope, themeIDs 
 	}
 
 	res.Items = rankItems(res.Items)
+
+	// Apply interest-based ranking if preferences are available.
+	interests, _ := s.interests(tripID)
+	if len(interests) > 0 {
+		cfg := RankConfig{Interests: interests}
+		res.Items = RankItems(res.Items, cfg)
+	}
+
 	return res, nil
 }
 

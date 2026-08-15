@@ -90,6 +90,9 @@ func leoPromptContext(reg *publish.Registry, username string, isAdmin bool, trip
 		Username: username,
 		IsAdmin:  isAdmin,
 		TripID:   strings.TrimSpace(tripID),
+		// Gate the client-supplied mode: construction dialogue modes only.
+		// construction:profile-edit is server-side only and stays out of reach.
+		AllowedModes: leo.ClientSelectableModes(),
 	}
 	if reg == nil {
 		// Same dogfood defaults as publish when registry was not attached.

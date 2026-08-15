@@ -7,6 +7,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      frontend_ref:
+        description: 'tripkit-frontend ref to compare the contract fixtures against (empty = the branch of the same name as this one, else its default branch)'
+        required: false
+        default: ''
 
 env:
   REGISTRY: ghcr.io
@@ -33,6 +38,85 @@ jobs:
           cache-dependency-path: go.sum
       - name: Run E2E tests (in-memory SQLite)
         run: CGO_ENABLED=1 go test -v -count=1 -run TestE2E ./internal/handlers/
+
+  # The construction contract fixtures are copied BY HAND into tripkit-frontend
+  # (internal/handlers/testdata/contract/ -> tests/fixtures/construction-contract/).
+  # The committed sha256 manifest catches a partial copy, but a stale copy that
+  # travels with its own stale manifest satisfies both suites, so the only real
+  # guard is comparing the two checkouts. The `test` job above runs on this repo
+  # alone and can only SKIP that comparison; this job is where it actually runs.
+  fixtures-cross-repo:
+    runs-on: ubuntu-latest
+    steps:
+      # Which frontend ref to compare against. Pinning it to the frontend's
+      # default branch made this job RED on every coordinated change, which is
+      # the one case it exists for: the fixtures land on a frontend branch first,
+      # so the default branch does not have them yet and the strict guard fatals.
+      # A fixture change ships as a pair of branches of the SAME name (the head
+      # branch of both PRs), so that name is the ref to look for.
+      - name: Resolve the frontend ref to compare against
+        id: frontend
+        env:
+          FRONTEND_REPO: rjullien/tripkit-frontend
+          # Empty outside a workflow_dispatch; an explicit input always wins.
+          DISPATCH_REF: ${{ github.event.inputs.frontend_ref }}
+          # PR head branch on pull_request, the pushed branch otherwise.
+          HEAD_BRANCH: ${{ github.head_ref || github.ref_name }}
+          GH_PAT: ${{ secrets.CROSS_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # FRONTEND_REMOTE is an override for local runs of this script; CI
+          # builds the authenticated URL from FRONTEND_REPO.
+          remote="${FRONTEND_REMOTE:-https://x-access-token:${GH_PAT}@github.com/${FRONTEND_REPO}.git}"
+
+          if [ -n "${DISPATCH_REF}" ]; then
+            echo "ref=${DISPATCH_REF}"    >> "$GITHUB_OUTPUT"
+            echo "strict=1"               >> "$GITHUB_OUTPUT"
+            echo "Comparing against the dispatched ref ${DISPATCH_REF} (strict)."
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --heads "$remote" "refs/heads/${HEAD_BRANCH}" >/dev/null 2>&1; then
+            echo "ref=${HEAD_BRANCH}" >> "$GITHUB_OUTPUT"
+            echo "strict=1"           >> "$GITHUB_OUTPUT"
+            echo "tripkit-frontend has a branch named ${HEAD_BRANCH}: comparing against it (strict)."
+            exit 0
+          fi
+
+          # No sibling branch: compare against the default branch, and do NOT
+          # require the fixtures to be there. If they are, they are still
+          # compared byte for byte; if they are not, the Go guard skips with a
+          # message instead of failing a PR that has no frontend counterpart.
+          echo "ref="       >> "$GITHUB_OUTPUT"
+          echo "strict=0"   >> "$GITHUB_OUTPUT"
+          echo "No tripkit-frontend branch named ${HEAD_BRANCH}: comparing against its default branch, non-strict."
+      - uses: actions/checkout@v4
+        with:
+          path: tripkit-backend
+      - uses: actions/checkout@v4
+        with:
+          repository: rjullien/tripkit-frontend
+          # A cross-repo checkout of a private repo needs a PAT with `repo` scope
+          # in CROSS_REPO_TOKEN; GITHUB_TOKEN only covers this repo. Without it
+          # both this step and the resolution above fall back to the default
+          # branch, non-strict.
+          ref: ${{ steps.frontend.outputs.ref }}
+          token: ${{ secrets.CROSS_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+          path: tripkit-frontend
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: tripkit-backend/go.sum
+      - name: Compare the golden fixtures across both repos
+        working-directory: tripkit-backend
+        # TRIPKIT_REQUIRE_FRONTEND_FIXTURES=1 turns the "frontend not checked out"
+        # skip into a failure, so a broken checkout cannot make this job green.
+        # Only set when the ref was resolved to the branch the change ships with:
+        # see the resolution step for why the default-branch fallback is not
+        # strict.
+        env:
+          TRIPKIT_REQUIRE_FRONTEND_FIXTURES: ${{ steps.frontend.outputs.strict }}
+        run: go test -v -count=1 -run TestContractFixtures ./internal/handlers/
 
   build-and-push:
     needs: [test, e2e]

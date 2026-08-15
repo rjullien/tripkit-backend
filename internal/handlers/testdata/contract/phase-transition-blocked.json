@@ -1,0 +1,11 @@
+{
+  "blockers": [
+    {
+      "code": "day_gap",
+      "dayNum": 2,
+      "message": "Day 2 is missing (gap in day numbering)",
+      "severity": "red"
+    }
+  ],
+  "error": "transition_blocked"
+}

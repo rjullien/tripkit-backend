@@ -12,12 +12,16 @@ import (
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/rjullien/tripkit-backend/internal/bifrost"
+	"github.com/rjullien/tripkit-backend/internal/construction"
 	"github.com/rjullien/tripkit-backend/internal/dailybrief"
 	"github.com/rjullien/tripkit-backend/internal/database"
 	"github.com/rjullien/tripkit-backend/internal/discovery"
+	"github.com/rjullien/tripkit-backend/internal/formalities"
 	"github.com/rjullien/tripkit-backend/internal/handlers"
 	"github.com/rjullien/tripkit-backend/internal/leo"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
+	"github.com/rjullien/tripkit-backend/internal/nuisance"
 	"github.com/rjullien/tripkit-backend/internal/pluschat"
 	"github.com/rjullien/tripkit-backend/internal/polarsteps"
 	"github.com/rjullien/tripkit-backend/internal/publish"
@@ -77,6 +81,47 @@ func main() {
 	leoCfg := leoOps.Bootstrap()
 	log.Printf("leo ops: origin=%s default=%s models=%d", leoCfg.Origin, leoCfg.DefaultModel, len(leoCfg.Models))
 	h.SetLeoOps(leoOps)
+
+	// Construction ops config (SoT: ops/construction.json) — Bifrost endpoint
+	// and per-check models for admin-check, health-check and nuisance.
+	constructionOps := construction.NewLoaderFromEnv()
+	consCfg := constructionOps.Bootstrap()
+	log.Printf("construction ops: origin=%s enabled=%t bifrost=%s models=[admin=%s health=%s nuisance=%s]",
+		consCfg.Origin, consCfg.Enabled, consCfg.BifrostBaseURL,
+		consCfg.ModelFor("adminCheck"), consCfg.ModelFor("healthCheck"), consCfg.ModelFor("nuisance"))
+
+	// One Bifrost completer per check. nil when disabled/unconfigured: checks
+	// then return deterministic results only (no silent LLM failure).
+	newCompleter := func(feature string) bifrost.Completer {
+		if !consCfg.Ready() {
+			return nil
+		}
+		model := consCfg.ModelFor(feature)
+		if model == "" {
+			return nil
+		}
+		return bifrost.NewClient(consCfg.BifrostBaseURL, consCfg.BifrostAPIKey, model).AsCompleter()
+	}
+	if !consCfg.Ready() {
+		log.Printf("construction ops: LLM formatting disabled (enabled=%t bifrostBaseUrl=%q) — checks return deterministic results only",
+			consCfg.Enabled, consCfg.BifrostBaseURL)
+	}
+
+	h.SetConstruction(&construction.Service{DB: db})
+
+	discOverpass := discovery.NewClient(discCfg.Overpass)
+	h.SetNuisance(&nuisance.Service{
+		DB:       db,
+		Overpass: discOverpass,
+		Bifrost:  newCompleter("nuisance"),
+		Hub:      h.LeoHub(),
+	})
+
+	h.SetFormalities(&formalities.Service{
+		DB:              db,
+		Completer:       newCompleter("adminCheck"),
+		HealthCompleter: newCompleter("healthCheck"),
+	})
 
 	// In-process worker: auto-on when TRIPKIT_GITHUB_TOKEN is set; override via TRIPKIT_PUBLISH_WORKER.
 	if publish.WorkerEnabled() {
@@ -171,6 +216,29 @@ func main() {
 		r.Get("/trips/{tripId}/discovery/themes", h.DiscoveryThemes)
 		r.Post("/trips/{tripId}/discovery/search", h.DiscoverySearch)
 		r.Get("/trips/{tripId}/discovery/results", h.DiscoveryResults)
+
+		// Construction
+		r.Get("/trips/{tripId}/construction", h.GetConstruction)
+		r.Put("/trips/{tripId}/construction/phase", h.TransitionPhase)
+		r.Post("/trips/{tripId}/construction/qa", h.RunConstructionQA)
+		r.Get("/trips/{tripId}/construction/qa", h.GetConstructionQA)
+		r.Get("/trips/{tripId}/travel-profile", h.GetTravelProfile)
+		r.Post("/trips/{tripId}/travel-profile/request", h.CreateProfileRequest)
+
+		// Formalities (admin-check, health-check)
+		r.Post("/trips/{tripId}/admin-check", h.RunAdminCheck)
+		r.Get("/trips/{tripId}/admin-check", h.GetAdminCheck)
+		r.Post("/trips/{tripId}/health-check", h.RunHealthCheck)
+		r.Get("/trips/{tripId}/health-check", h.GetHealthCheck)
+
+		// Discovery retain (add item to seed via Leo)
+		r.Post("/trips/{tripId}/discovery/retain", h.RetainDiscoveryItem)
+
+		// Nuisance analysis
+		r.Post("/trips/{tripId}/nuisance-check", h.RunNuisanceCheck)
+		r.Get("/trips/{tripId}/nuisance-check", h.GetNuisanceCheck)
+		r.Get("/trips/{tripId}/nuisance-check/{locationId}", h.GetNuisanceCheck)
+		r.Post("/trips/{tripId}/nuisance-check/pin", h.PinNuisanceToSeed)
 
 		// Trips
 		r.Get("/trips", h.ListTrips)
