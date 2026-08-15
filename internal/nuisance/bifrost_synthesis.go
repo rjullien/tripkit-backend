@@ -30,7 +30,8 @@ type LocationResults struct {
 // recommendations keyed by location ID.
 func Synthesize(completer bifrost.Completer, allResults []LocationResults) (map[string]SynthesisResult, error) {
 	if completer == nil {
-		// No completer configured: return empty recommendations.
+		// No completer configured: skip synthesis (soft-fail).
+		// This is expected when BIFROST_* env vars are not set (e.g. local dev).
 		out := make(map[string]SynthesisResult, len(allResults))
 		for _, lr := range allResults {
 			out[lr.LocationID] = SynthesisResult{}

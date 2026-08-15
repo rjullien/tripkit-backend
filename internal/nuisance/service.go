@@ -115,6 +115,11 @@ func (s *Service) runCheck(ctx context.Context, req CheckRequest, emit leo.EmitF
 	}
 
 	// Single grouped Bifrost call for synthesis.
+	// Soft-fail: if Bifrost is not configured, Synthesize returns empty recommendations
+	// and the check still completes with scoring data (no crash).
+	if s.Bifrost == nil {
+		log.Printf("nuisance: Bifrost completer not configured, skipping synthesis (scores only)")
+	}
 	synthesis, _ := Synthesize(s.Bifrost, allResults)
 
 	// Store results and build final output.

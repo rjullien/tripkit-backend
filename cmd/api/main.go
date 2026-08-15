@@ -85,11 +85,13 @@ func main() {
 	h.SetConstruction(&construction.Service{DB: db})
 
 	// Nuisance analysis service (reuses the discovery Overpass client).
+	// Uses the shared leoJobs hub so the frontend SSE subscription
+	// (GET /leo/jobs/{jobId}/stream) can find nuisance check jobs.
 	discOverpass := discovery.NewClient(discCfg.Overpass)
 	h.SetNuisance(&nuisance.Service{
 		DB:       db,
 		Overpass: discOverpass,
-		Hub:      leo.NewHub(),
+		Hub:      h.LeoHub(),
 	})
 
 	// Formalities service (admin-check, health-check) — deterministic rules engine, no external deps.

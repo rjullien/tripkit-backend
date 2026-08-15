@@ -102,6 +102,12 @@ func (h *Handler) SetFormalities(svc *formalities.Service) {
 	h.formalities = svc
 }
 
+// LeoHub returns the shared Leo job hub for use by services that need
+// job lifecycle integration (e.g. nuisance service SSE streaming).
+func (h *Handler) LeoHub() *leo.Hub {
+	return h.leoJobs
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

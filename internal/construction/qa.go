@@ -332,6 +332,15 @@ func extractHotels(tripData map[string]any) []qaHotel {
 }
 
 // ── Rule implementations ────────────────────────────────────────────────────
+//
+// Phase-aware severity: only night_without_hotel (red at phase >= 3) and
+// transport_not_booked / car_not_booked (red at phase >= 4) use the phase
+// parameter to escalate severity. The remaining rules have fixed severity
+// regardless of phase per DESIGN.md spec: they fire at any phase because
+// their violations are structural issues (calendar mismatch, drive too long,
+// budget exceeded, etc.) that do not depend on construction progress.
+// The phase parameter is still accepted by all rule signatures for API
+// consistency and to allow future phase-aware gating without refactoring.
 
 // checkCalendarMismatch verifies that startDate + dayNum matches each day's date.
 func checkCalendarMismatch(tripData map[string]any, days []qaDay) *QAViolation {
@@ -378,7 +387,9 @@ func checkCalendarMismatch(tripData map[string]any, days []qaDay) *QAViolation {
 }
 
 // checkDriveTooLong checks if any day exceeds maxDrivingPerDay.
+// phase: accepted for API consistency; severity is always "red" (structural issue).
 func checkDriveTooLong(days []qaDay, p qaProfile, phase int) []QAViolation {
+	_ = phase // fixed severity regardless of phase (see block comment above)
 	var out []QAViolation
 	for _, day := range days {
 		if day.Drive == nil || day.Drive.DurationMin <= 0 {
@@ -398,7 +409,9 @@ func checkDriveTooLong(days []qaDay, p qaProfile, phase int) []QAViolation {
 }
 
 // checkDriveUnverified checks for drives without source or verifiedAt.
+// phase: accepted for API consistency; severity is always "yellow".
 func checkDriveUnverified(days []qaDay, phase int) []QAViolation {
+	_ = phase // fixed severity regardless of phase (see block comment above)
 	var out []QAViolation
 	for _, day := range days {
 		if day.Drive == nil || day.Drive.DurationMin <= 0 {
@@ -417,7 +430,9 @@ func checkDriveUnverified(days []qaDay, phase int) []QAViolation {
 }
 
 // checkTimezoneUndocumented checks for timezone changes between consecutive days.
+// phase: accepted for API consistency; severity is always "yellow".
 func checkTimezoneUndocumented(days []qaDay, phase int) []QAViolation {
+	_ = phase // fixed severity regardless of phase (see block comment above)
 	var out []QAViolation
 	for i := 1; i < len(days); i++ {
 		prev := days[i-1]
@@ -436,7 +451,9 @@ func checkTimezoneUndocumented(days []qaDay, phase int) []QAViolation {
 }
 
 // checkTimeConstrainedConflict checks for fixed-time activities incompatible with arrival.
+// phase: accepted for API consistency; severity is always "yellow".
 func checkTimeConstrainedConflict(days []qaDay, phase int) []QAViolation {
+	_ = phase // fixed severity regardless of phase (see block comment above)
 	var out []QAViolation
 	for _, day := range days {
 		if day.Drive == nil || day.Drive.DurationMin == 0 {
@@ -490,7 +507,9 @@ func checkNightWithoutHotel(days []qaDay, hotels []qaHotel, phase int) []QAViola
 }
 
 // checkDayGap checks for gaps in day numbering.
+// phase: accepted for API consistency; severity is always "red".
 func checkDayGap(days []qaDay, phase int) []QAViolation {
+	_ = phase // fixed severity regardless of phase (see block comment above)
 	if len(days) == 0 {
 		return nil
 	}
@@ -572,7 +591,9 @@ func checkCarNotBooked(days []qaDay, p qaProfile, phase int) []QAViolation {
 }
 
 // checkTooManyMajorSites checks if any day exceeds the majorSitesPerDay limit.
+// phase: accepted for API consistency; severity is always "red".
 func checkTooManyMajorSites(days []qaDay, p qaProfile, phase int) []QAViolation {
+	_ = phase // fixed severity regardless of phase (see block comment above)
 	var out []QAViolation
 	for _, day := range days {
 		if day.MajorSites > p.MajorSitesPerDay {
@@ -589,7 +610,9 @@ func checkTooManyMajorSites(days []qaDay, p qaProfile, phase int) []QAViolation 
 }
 
 // checkBudgetExceeded checks if hotels or restaurants exceed budget limits.
+// phase: accepted for API consistency; severity is always "yellow".
 func checkBudgetExceeded(days []qaDay, hotels []qaHotel, p qaProfile, phase int) []QAViolation {
+	_ = phase // fixed severity regardless of phase (see block comment above)
 	var out []QAViolation
 	if p.BudgetAccomMax > 0 {
 		for _, h := range hotels {

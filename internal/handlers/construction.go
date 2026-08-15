@@ -162,8 +162,9 @@ func (h *Handler) RunConstructionQA(w http.ResponseWriter, r *http.Request) {
 		violations = []construction.QAViolation{}
 	}
 
-	// Store result
+	// Store result (upsert: delete old per trip+kind, then insert new).
 	resultJSON := construction.QAResultJSON(violations)
+	h.db.Where("trip_id = ? AND kind = ?", tripID, "qa").Delete(&models.ConstructionCheck{})
 	check := models.ConstructionCheck{
 		TripID: tripID,
 		Kind:   "qa",
@@ -262,13 +263,21 @@ func (h *Handler) CreateProfileRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Start a Leo job in mode "construction:profile-edit".
-	message := fmt.Sprintf("Modifier la section '%s' du profil voyageur.\nDemande : %s", body.Target, body.Text)
+	// Wrap user text in XML-style delimiters to prevent prompt injection
+	// when the LLM call is wired (user-supplied text must not be interpreted as instructions).
+	message := fmt.Sprintf(
+		"Modifier la section '%s' du profil voyageur.\nDemande :\n<user_request>\n%s\n</user_request>",
+		body.Target, body.Text,
+	)
 	job := h.leoJobs.Start(user, func(ctx context.Context, emit leo.EmitFunc) error {
 		_ = emit("meta", leo.StreamEvent{
 			Text:   "profile-edit",
 			Detail: body.Target,
 			Tool:   map[string]any{"target": body.Target, "text": body.Text, "tripId": tripID},
 		})
+		// TODO(hermes): Replace this stub with a real LLM call via Bifrost/Hermes
+		// to actually modify the travel profile section in the seed. Currently emits
+		// a canned message so the frontend sees the intent, but nothing is written.
 		// The actual LLM call will be wired in a subsequent feature.
 		// For now, emit the request context so subscribers see the intent.
 		_ = emit("delta", leo.StreamEvent{Text: message})
@@ -340,6 +349,9 @@ func (h *Handler) RetainDiscoveryItem(w http.ResponseWriter, r *http.Request) {
 				"item":   item,
 			},
 		})
+		// TODO(hermes): Replace this stub with a real LLM call via Hermes to
+		// actually write the item into trip.activities with bookingStatus:"candidate".
+		// Currently emits a canned message so the frontend sees the intent.
 		_ = emit("delta", leo.StreamEvent{Text: message})
 		_ = emit("done", leo.StreamEvent{})
 		return nil
@@ -377,6 +389,9 @@ func (h *Handler) PinNuisanceToSeed(w http.ResponseWriter, r *http.Request) {
 				"tripId": tripID,
 			},
 		})
+		// TODO(hermes): Replace this stub with a real LLM call via Hermes to
+		// actually write nuisance summaries into the seed (hotels[].nuisance).
+		// Currently emits a canned message so the frontend sees the intent.
 		_ = emit("delta", leo.StreamEvent{Text: message})
 		_ = emit("done", leo.StreamEvent{})
 		return nil
@@ -470,7 +485,8 @@ func (h *Handler) RunAdminCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Store result in construction_checks
+	// Store result in construction_checks (upsert: delete old per trip+kind, then insert new).
+	h.db.Where("trip_id = ? AND kind = ?", tripID, "admin").Delete(&models.ConstructionCheck{})
 	dataBytes, _ := json.Marshal(result)
 	check := models.ConstructionCheck{
 		TripID: tripID,
@@ -526,7 +542,8 @@ func (h *Handler) RunHealthCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Store result in construction_checks
+	// Store result in construction_checks (upsert: delete old per trip+kind, then insert new).
+	h.db.Where("trip_id = ? AND kind = ?", tripID, "health").Delete(&models.ConstructionCheck{})
 	dataBytes, _ := json.Marshal(result)
 	check := models.ConstructionCheck{
 		TripID: tripID,

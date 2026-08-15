@@ -10,6 +10,9 @@ import (
 )
 
 // Service orchestrates admin-check and health-check operations.
+// The Completer field is optional: if nil, synthesis (LLM-powered summaries)
+// is skipped and the service returns deterministic rule-engine results only.
+// A warning is logged at startup if Completer is nil so operators notice.
 type Service struct {
 	DB        *gorm.DB
 	Completer bifrost.Completer
