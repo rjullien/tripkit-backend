@@ -164,6 +164,15 @@ type ZipTree map[string][]byte // path relative to repo root
 // ExtractAllowlisted reads only requested paths from a GitHub zipball.
 // GitHub wraps files in a top-level owner-repo-sha/ directory.
 func ExtractAllowlisted(zipBytes []byte, paths []string) (ZipTree, error) {
+	return extractZip(zipBytes, paths, true)
+}
+
+// ExtractOptional is ExtractAllowlisted without failing on missing paths.
+func ExtractOptional(zipBytes []byte, paths []string) (ZipTree, error) {
+	return extractZip(zipBytes, paths, false)
+}
+
+func extractZip(zipBytes []byte, paths []string, required bool) (ZipTree, error) {
 	want := map[string]bool{}
 	for _, p := range paths {
 		p = strings.TrimPrefix(p, "./")
@@ -200,50 +209,12 @@ func ExtractAllowlisted(zipBytes []byte, paths []string) (ZipTree, error) {
 		}
 		out[name] = data
 	}
-	for p := range want {
-		if _, ok := out[p]; !ok {
-			return nil, fmt.Errorf("missing file in archive: %s", p)
+	if required {
+		for p := range want {
+			if _, ok := out[p]; !ok {
+				return nil, fmt.Errorf("missing file in archive: %s", p)
+			}
 		}
-	}
-	return out, nil
-}
-
-// ExtractOptional is ExtractAllowlisted without failing on missing paths.
-func ExtractOptional(zipBytes []byte, paths []string) (ZipTree, error) {
-	want := map[string]bool{}
-	for _, p := range paths {
-		p = strings.TrimPrefix(p, "./")
-		if p == "" || strings.Contains(p, "..") {
-			return nil, fmt.Errorf("invalid path %q", p)
-		}
-		want[p] = true
-	}
-	r, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
-	if err != nil {
-		return nil, err
-	}
-	out := ZipTree{}
-	for _, f := range r.File {
-		if f.FileInfo().IsDir() {
-			continue
-		}
-		name := f.Name
-		if i := strings.IndexByte(name, '/'); i >= 0 {
-			name = name[i+1:]
-		}
-		if !want[name] {
-			continue
-		}
-		rc, err := f.Open()
-		if err != nil {
-			return nil, err
-		}
-		data, err := io.ReadAll(io.LimitReader(rc, 8<<20))
-		rc.Close()
-		if err != nil {
-			return nil, err
-		}
-		out[name] = data
 	}
 	return out, nil
 }

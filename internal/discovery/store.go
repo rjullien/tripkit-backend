@@ -10,7 +10,11 @@ import (
 
 func scopeKey(sc Scope) string {
 	if sc.LocationID != "" {
-		return "loc:" + sc.LocationID
+		key := "loc:" + sc.LocationID
+		if sc.DateISO != "" {
+			return key + ":" + sc.DateISO
+		}
+		return key
 	}
 	if sc.DayNum != 0 || sc.DateISO != "" {
 		return "day:" + itoa(sc.DayNum)
@@ -84,9 +88,13 @@ func (s *Service) saveCache(tripID, key, themeID string, items []Item) {
 func (s *Service) cachedResults(tripID string, sc Scope, themeIDs []string) *Result {
 	key := scopeKey(sc)
 	res := &Result{Scope: sc, Themes: themeIDs, ByTheme: map[string][]Item{}}
+	effective := s.cfg().Themes
+	if themes, err := s.ThemesForTrip(tripID); err == nil {
+		effective = themes
+	}
 	for _, id := range themeIDs {
 		ttl := geoTTLHours * time.Hour
-		if th, ok := themeByID(s.cfg().Themes, id); ok && th.Engine == engineEditorial {
+		if th, ok := themeByID(effective, id); ok && th.Engine == engineEditorial {
 			ttl = editorialTTLHours * time.Hour
 		}
 		items, ok := s.loadCache(tripID, key, id, ttl)

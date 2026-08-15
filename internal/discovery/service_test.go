@@ -446,3 +446,18 @@ func TestNoCoords(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestScopeKey_LocationIncludesDate(t *testing.T) {
+	if got := scopeKey(Scope{LocationID: "tadoussac"}); got != "loc:tadoussac" {
+		t.Fatalf("no date: %s", got)
+	}
+	if got := scopeKey(Scope{LocationID: "tadoussac", DateISO: "2026-08-21"}); got != "loc:tadoussac:2026-08-21" {
+		t.Fatalf("with date: %s", got)
+	}
+	if scopeKey(Scope{LocationID: "tadoussac", DateISO: "2026-08-21"}) == scopeKey(Scope{LocationID: "tadoussac", DateISO: "2026-09-04"}) {
+		t.Fatal("same location on two dates must not share a cache key")
+	}
+	if got := scopeKey(Scope{DayNum: 8, DateISO: "2026-08-21"}); got != "day:8" {
+		t.Fatalf("day path stays dayNum-only: %s", got)
+	}
+}
