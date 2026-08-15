@@ -41,8 +41,6 @@ func (s *Service) loadCache(tripID, key, themeID string, ttl time.Duration) ([]I
 	if s == nil || s.DB == nil {
 		return nil, false
 	}
-	s.cacheMu.Lock()
-	defer s.cacheMu.Unlock()
 	var row models.DiscoveryCache
 	err := s.DB.Where("trip_id = ? AND scope_key = ? AND theme_id = ?", tripID, key, themeID).First(&row).Error
 	if err != nil {
@@ -70,8 +68,6 @@ func (s *Service) saveCache(tripID, key, themeID string, items []Item) {
 	if err != nil {
 		return
 	}
-	s.cacheMu.Lock()
-	defer s.cacheMu.Unlock()
 	row := models.DiscoveryCache{
 		TripID:    tripID,
 		ScopeKey:  key,

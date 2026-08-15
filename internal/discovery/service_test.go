@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -14,15 +15,23 @@ import (
 )
 
 type fakeQ struct {
-	mu    sync.Mutex
-	items map[string][]Item
-	err   map[string]error
-	calls []string
+	mu       sync.Mutex
+	items    map[string][]Item
+	err      map[string]error
+	failOnce map[string]error
+	calls    []string
 }
 
 func (f *fakeQ) Search(_ context.Context, lat, lon float64, theme Theme) ([]Item, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, theme.ID)
+	if f.failOnce != nil {
+		if e, ok := f.failOnce[theme.ID]; ok {
+			delete(f.failOnce, theme.ID)
+			f.mu.Unlock()
+			return nil, e
+		}
+	}
 	f.mu.Unlock()
 	if f.err != nil {
 		if e, ok := f.err[theme.ID]; ok {
@@ -128,6 +137,57 @@ func TestSearch_PointSoftFailAndCache(t *testing.T) {
 	if len(res2.Items) != 1 || !res2.Items[0].Cached {
 		t.Fatalf("cached items: %+v", res2.Items)
 	}
+
+	// rando failed — must not poison the cache
+	fq.reset()
+	res3, err := svc.Search(context.Background(), "quebec-2026", Scope{DayNum: 8}, []string{"rando"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fq.snapshot()) != 1 {
+		t.Fatalf("rando error must not be cached, calls=%v", fq.snapshot())
+	}
+	if len(res3.ByTheme["rando"]) != 0 {
+		t.Fatalf("rando still soft-fails, got %v", res3.ByTheme["rando"])
+	}
+}
+
+func TestSearch_DoesNotCacheOverpassError(t *testing.T) {
+	db, err := database.InitMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedTripNamed(t, db, "quebec-neg")
+	fq := &fakeQ{
+		items: map[string][]Item{
+			"outlets": {{ID: "osm:node:1", Name: "Outlet Village", Lat: 48.15, Lon: -69.72}},
+		},
+		failOnce: map[string]error{"outlets": errors.New("429 Too Many Requests")},
+	}
+	svc := &Service{DB: db, Overpass: fq, Now: func() time.Time {
+		return time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	}}
+	res, err := svc.Search(context.Background(), "quebec-neg", Scope{DayNum: 8}, []string{"outlets"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.ByTheme["outlets"]) != 0 {
+		t.Fatalf("first search should be empty after 429, got %v", res.ByTheme["outlets"])
+	}
+	if n := len(fq.snapshot()); n != 1 {
+		t.Fatalf("calls=%d", n)
+	}
+
+	res2, err := svc.Search(context.Background(), "quebec-neg", Scope{DayNum: 8}, []string{"outlets"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(fq.snapshot()); n != 2 {
+		t.Fatalf("transient 429 must not lock empty cache, calls=%d", n)
+	}
+	if len(res2.ByTheme["outlets"]) != 1 {
+		t.Fatalf("retry should return the outlet, got %v", res2.ByTheme["outlets"])
+	}
 }
 
 func TestThemesForTrip_Disabled(t *testing.T) {
@@ -179,16 +239,22 @@ func TestRankItems(t *testing.T) {
 }
 
 type fakeEd struct {
-	mu    sync.Mutex
-	calls []EditorialQuery
-	items []Item
-	err   error
+	mu       sync.Mutex
+	calls    []EditorialQuery
+	items    []Item
+	err      error
+	failOnce error
 }
 
 func (f *fakeEd) Search(_ context.Context, q EditorialQuery) ([]Item, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, q)
+	once := f.failOnce
+	f.failOnce = nil
 	f.mu.Unlock()
+	if once != nil {
+		return nil, once
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -266,6 +332,84 @@ func TestSearch_EditorialDateISOSoftFailAndCache(t *testing.T) {
 	}
 	if len(res3.ByTheme["festivals"]) != 0 {
 		t.Fatalf("soft-fail got %+v", res3.ByTheme["festivals"])
+	}
+	edFail.reset()
+	_, err = svc.Search(context.Background(), "quebec-ed", Scope{DayNum: 8}, []string{"festivals"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edFail.snapshot()) != 1 {
+		t.Fatal("editorial error must not be cached")
+	}
+}
+
+func TestSearch_CachesEmptySuccess(t *testing.T) {
+	db, err := database.InitMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedTripNamed(t, db, "quebec-empty")
+	fq := &fakeQ{items: map[string][]Item{"outlets": {}}}
+	svc := &Service{DB: db, Overpass: fq, Now: func() time.Time {
+		return time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	}}
+	res, err := svc.Search(context.Background(), "quebec-empty", Scope{DayNum: 8}, []string{"outlets"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.ByTheme["outlets"]) != 0 {
+		t.Fatalf("empty success should stay empty, got %v", res.ByTheme["outlets"])
+	}
+	fq.reset()
+	res2, err := svc.Search(context.Background(), "quebec-empty", Scope{DayNum: 8}, []string{"outlets"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fq.snapshot()) != 0 {
+		t.Fatalf("legitimate empty result may be cached, calls=%v", fq.snapshot())
+	}
+	if items, ok := res2.ByTheme["outlets"]; !ok || len(items) != 0 {
+		t.Fatalf("cached empty: ok=%v items=%v", ok, items)
+	}
+}
+
+func TestSearch_DoesNotCacheEditorialError(t *testing.T) {
+	db, err := database.InitMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedTripNamed(t, db, "quebec-ed-neg")
+	ed := &fakeEd{
+		failOnce: errors.New("429"),
+		items: []Item{{
+			ID: "editorial:festivals:ok", ThemeID: "festivals",
+			Name: "OK", Source: "editorial",
+		}},
+	}
+	svc := &Service{
+		DB: db, Overpass: &fakeQ{}, Editorial: ed,
+		Now: func() time.Time { return time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC) },
+	}
+	res, err := svc.Search(context.Background(), "quebec-ed-neg", Scope{DayNum: 8}, []string{"festivals"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.ByTheme["festivals"]) != 0 {
+		t.Fatalf("first search should be empty, got %+v", res.ByTheme["festivals"])
+	}
+	if n := len(ed.snapshot()); n != 1 {
+		t.Fatalf("calls=%d", n)
+	}
+
+	res2, err := svc.Search(context.Background(), "quebec-ed-neg", Scope{DayNum: 8}, []string{"festivals"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(ed.snapshot()); n != 2 {
+		t.Fatalf("Leo error must not lock empty cache, calls=%d", n)
+	}
+	if len(res2.ByTheme["festivals"]) != 1 || res2.ByTheme["festivals"][0].Name != "OK" {
+		t.Fatalf("retry should return the festival, got %+v", res2.ByTheme["festivals"])
 	}
 }
 
