@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/rjullien/tripkit-backend/internal/construction"
 	"github.com/rjullien/tripkit-backend/internal/dailybrief"
 	"github.com/rjullien/tripkit-backend/internal/database"
 	"github.com/rjullien/tripkit-backend/internal/discovery"
@@ -77,6 +78,9 @@ func main() {
 	leoCfg := leoOps.Bootstrap()
 	log.Printf("leo ops: origin=%s default=%s models=%d", leoCfg.Origin, leoCfg.DefaultModel, len(leoCfg.Models))
 	h.SetLeoOps(leoOps)
+
+	// Construction state service.
+	h.SetConstruction(&construction.Service{DB: db})
 
 	// In-process worker: auto-on when TRIPKIT_GITHUB_TOKEN is set; override via TRIPKIT_PUBLISH_WORKER.
 	if publish.WorkerEnabled() {
@@ -171,6 +175,11 @@ func main() {
 		r.Get("/trips/{tripId}/discovery/themes", h.DiscoveryThemes)
 		r.Post("/trips/{tripId}/discovery/search", h.DiscoverySearch)
 		r.Get("/trips/{tripId}/discovery/results", h.DiscoveryResults)
+
+		// Construction
+		r.Get("/trips/{tripId}/construction", h.GetConstruction)
+		r.Put("/trips/{tripId}/construction/phase", h.TransitionPhase)
+		r.Get("/trips/{tripId}/travel-profile", h.GetTravelProfile)
 
 		// Trips
 		r.Get("/trips", h.ListTrips)

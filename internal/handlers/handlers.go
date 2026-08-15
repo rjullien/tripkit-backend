@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/rjullien/tripkit-backend/internal/config"
+	"github.com/rjullien/tripkit-backend/internal/construction"
 	"github.com/rjullien/tripkit-backend/internal/dailybrief"
 	"github.com/rjullien/tripkit-backend/internal/discovery"
 	"github.com/rjullien/tripkit-backend/internal/leo"
@@ -36,6 +37,7 @@ type Handler struct {
 	plusChat        *pluschat.Loader
 	polarsteps      *polarsteps.Service
 	discovery       *discovery.Service
+	construction    *construction.Service
 	leoOps          *leo.OpsLoader
 	leoJobs         *leo.Hub
 	leoRun          func(ctx context.Context, pctx leo.PromptContext, req leo.ChatRequest, emit leo.EmitFunc) error
@@ -79,6 +81,11 @@ func (h *Handler) SetLeoOps(loader *leo.OpsLoader) {
 // SetPublishManifestResolver attaches the family allowlist loader (publish-manifest.json).
 func (h *Handler) SetPublishManifestResolver(r *publish.ManifestResolver) {
 	h.publishManifest = r
+}
+
+// SetConstruction attaches the construction state service.
+func (h *Handler) SetConstruction(svc *construction.Service) {
+	h.construction = svc
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
