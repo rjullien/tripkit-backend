@@ -204,6 +204,69 @@ func TestBuildCanonical_PersistsDailyBriefFlags(t *testing.T) {
 	}
 }
 
+func TestApplyCanonical_PreservesConstructionWhenSeedOmits(t *testing.T) {
+	db, err := database.InitMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := `{"construction":{"phase":5},"homeTz":"Europe/Paris"}`
+	start, end := "2026-08-14", "2026-09-01"
+	if err := db.Create(&models.Trip{
+		ID: "quebec-2026", Name: "Boucle",
+		StartDate: &start, EndDate: &end, Data: &data,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	payload := publish.CanonicalPayload{
+		TripID: "quebec-2026",
+		Name:   "Boucle",
+		TripData: map[string]any{
+			"homeTz": "Europe/Paris",
+		},
+		Days: []map[string]any{{"day": 1, "title": "A"}},
+	}
+	if _, err := publish.ApplyCanonical(db, payload, []string{"rene"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var trip models.Trip
+	if err := db.First(&trip, "id = ?", "quebec-2026").Error; err != nil {
+		t.Fatal(err)
+	}
+	if trip.Data == nil || !strings.Contains(*trip.Data, `"phase":5`) {
+		t.Fatalf("construction wiped: %v", trip.Data)
+	}
+}
+
+func TestBuildCanonical_PersistsConstruction(t *testing.T) {
+	code := `var SEED_TEST = {
+  "trip": {
+    "id": "quebec-2026",
+    "name": "Boucle",
+    "construction": {"phase": 5, "dates": {"startDate": "2026-08-14", "days": 19}},
+    "travelers": [{"personId":"rene"}]
+  },
+  "days": [ { "day": 1, "title": "A" } ],
+  "hotels": {},
+  "lists": {}
+};`
+	seed, err := publish.ParseSeedFile(code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	people, err := publish.ParsePeopleFile(`var PEOPLE = { rene: { id: "rene", name: "René", login: "rene" } };`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := publish.BuildCanonical(seed, people, "jullien", "jullien", "abc", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(p.TripData["construction"])
+	if !strings.Contains(string(raw), `"phase":5`) {
+		t.Fatalf("construction=%s", raw)
+	}
+}
+
 func TestBuildCanonical_PersistsPolarsteps(t *testing.T) {
 	code := `var SEED_TEST = {
   "trip": {

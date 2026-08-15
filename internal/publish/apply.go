@@ -50,6 +50,18 @@ func ApplyCanonical(db *gorm.DB, p CanonicalPayload, ownerLogins []string) (Appl
 		}
 		result.Created = created
 
+		// Seed without trip.construction must not wipe a phase written via
+		// PUT /construction/phase. Quebec (and any inited trip) keeps its state
+		// across a publish that only updates days/hotels.
+		if !created && p.TripData["construction"] == nil && existing.Data != nil && *existing.Data != "" {
+			var prev map[string]any
+			if json.Unmarshal([]byte(*existing.Data), &prev) == nil {
+				if c, ok := prev["construction"]; ok && c != nil {
+					p.TripData["construction"] = c
+				}
+			}
+		}
+
 		dataBytes, err := json.Marshal(p.TripData)
 		if err != nil {
 			return err
