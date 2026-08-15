@@ -1,0 +1,19 @@
+{
+  "count": 2,
+  "phase": 2,
+  "violations": [
+    {
+      "code": "day_gap",
+      "dayNum": 2,
+      "message": "Day 2 is missing (gap in day numbering)",
+      "severity": "red"
+    },
+    {
+      "code": "transport_not_booked",
+      "dayNum": 1,
+      "detail": "status=candidate",
+      "message": "Day 1 main transport not booked (status=candidate)",
+      "severity": "yellow"
+    }
+  ]
+}

@@ -1,16 +1,14 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
+	"github.com/rjullien/tripkit-backend/internal/config"
 	"github.com/rjullien/tripkit-backend/internal/construction"
-	"github.com/rjullien/tripkit-backend/internal/leo"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/models"
 	"github.com/rjullien/tripkit-backend/internal/nuisance"
@@ -35,7 +33,8 @@ func (h *Handler) GetConstruction(w http.ResponseWriter, r *http.Request) {
 // TransitionPhase transitions the construction phase for a trip.
 // PUT /trips/{tripId}/construction/phase
 // Body: {"phase": <int>}
-// Query: ?force=1 to force (admin override)
+// Query: ?force=1 skips the QA gate; reserved for admins (403 otherwise).
+// A refused transition answers 409 with a structured `blockers` array.
 func (h *Handler) TransitionPhase(w http.ResponseWriter, r *http.Request) {
 	if h.construction == nil {
 		writeError(w, http.StatusServiceUnavailable, "Construction service not configured")
@@ -54,8 +53,28 @@ func (h *Handler) TransitionPhase(w http.ResponseWriter, r *http.Request) {
 	force := r.URL.Query().Get("force") == "1"
 	user := middleware.EffectiveUser(r)
 
+	// A QA gate that any authenticated user can skip is not a gate: forcing is
+	// an admin override, and the audit record only means something if the
+	// override was authorized in the first place.
+	if force && !(config.IsAdmin(user) || isRequestAdmin(r)) {
+		writeError(w, http.StatusForbidden, "admin_required")
+		return
+	}
+
 	state, code, err := h.construction.TransitionPhase(tripID, body.Phase, force, user)
 	if err != nil {
+		var blocked *construction.TransitionBlockedError
+		if errors.As(err, &blocked) {
+			blockers := blocked.Blockers
+			if blockers == nil {
+				blockers = []construction.QAViolation{}
+			}
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":    "transition_blocked",
+				"blockers": blockers,
+			})
+			return
+		}
 		writeError(w, code, err.Error())
 		return
 	}
@@ -217,11 +236,12 @@ var validProfileTargets = map[string]bool{
 	"lessons":      true,
 }
 
-// CreateProfileRequest starts a Leo job to edit a section of the travel profile.
+// CreateProfileRequest validates a travel-profile edit request. The write path
+// (a Leo job editing the profile section in the seed) is not wired yet, so the
+// endpoint answers 501 not_implemented instead of faking a completed job.
 // POST /trips/{tripId}/travel-profile/request
 // Body: {"target": "travelStyle|budgetRules|interests|mealPattern|lessons", "text": "..."}
 func (h *Handler) CreateProfileRequest(w http.ResponseWriter, r *http.Request) {
-	tripID := chi.URLParam(r, "tripId")
 	user := middleware.EffectiveUser(r)
 	if strings.TrimSpace(user) == "" {
 		writeError(w, http.StatusUnauthorized, "Authentication required")
@@ -248,50 +268,17 @@ func (h *Handler) CreateProfileRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create the profile request record.
-	reqID := uuid.NewString()
-	rec := models.ConstructionProfileRequest{
-		ID:     reqID,
-		TripID: tripID,
-		Target: body.Target,
-		Text:   body.Text,
-		Status: "pending",
-	}
-	if err := h.db.Create(&rec).Error; err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to create profile request")
-		return
-	}
-
-	// Start a Leo job in mode "construction:profile-edit".
-	// Wrap user text in XML-style delimiters to prevent prompt injection
-	// when the LLM call is wired (user-supplied text must not be interpreted as instructions).
-	message := fmt.Sprintf(
-		"Modifier la section '%s' du profil voyageur.\nDemande :\n<user_request>\n%s\n</user_request>",
-		body.Target, body.Text,
-	)
-	job := h.leoJobs.Start(user, func(ctx context.Context, emit leo.EmitFunc) error {
-		_ = emit("meta", leo.StreamEvent{
-			Text:   "profile-edit",
-			Detail: body.Target,
-			Tool:   map[string]any{"target": body.Target, "text": body.Text, "tripId": tripID},
-		})
-		// TODO(hermes): Replace this stub with a real LLM call via Bifrost/Hermes
-		// to actually modify the travel profile section in the seed. Currently emits
-		// a canned message so the frontend sees the intent, but nothing is written.
-		// The actual LLM call will be wired in a subsequent feature.
-		// For now, emit the request context so subscribers see the intent.
-		_ = emit("delta", leo.StreamEvent{Text: message})
-		_ = emit("done", leo.StreamEvent{})
-		return nil
+	// TODO(hermes): wire a real Leo/Hermes job that edits the travel profile
+	// section in the seed, then persist a models.ConstructionProfileRequest row
+	// and answer 202 with its jobId. Until then the endpoint must not claim
+	// success: it used to start a canned job and store a row stuck at
+	// status "running" forever. When the LLM call is wired, body.Text must be
+	// wrapped in <user_request>...</user_request> delimiters so user-supplied
+	// text is never interpreted as instructions.
+	writeJSON(w, http.StatusNotImplemented, map[string]any{
+		"error":  "not_implemented",
+		"detail": "La modification du profil voyageur n'est pas encore branchée : aucune écriture n'a été effectuée.",
 	})
-
-	// Update record with jobId and running status.
-	h.db.Model(&rec).Updates(map[string]any{
-		"job_id": job.ID,
-		"status": "running",
-	})
-
-	writeJSON(w, http.StatusAccepted, map[string]any{"jobId": job.ID})
 }
 
 // ── Discovery Retain ──────────────────────────────────────────────────────────
@@ -312,11 +299,12 @@ type retainItem struct {
 	Source  string  `json:"source"`
 }
 
-// RetainDiscoveryItem starts a Leo job to add a discovery item to trip.activities
-// with bookingStatus:"candidate". The write goes through Leo (never direct FE write).
+// RetainDiscoveryItem validates a "retain this discovery item" request. The
+// write path (a Leo job adding the item to trip.activities with
+// bookingStatus:"candidate") is not wired yet, so the endpoint answers 501
+// not_implemented rather than a 202 no client can tell apart from real work.
 // POST /trips/{tripId}/discovery/retain
 func (h *Handler) RetainDiscoveryItem(w http.ResponseWriter, r *http.Request) {
-	tripID := chi.URLParam(r, "tripId")
 	user := middleware.EffectiveUser(r)
 	if strings.TrimSpace(user) == "" {
 		writeError(w, http.StatusUnauthorized, "Authentication required")
@@ -333,71 +321,39 @@ func (h *Handler) RetainDiscoveryItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item := body.Item
-	message := fmt.Sprintf(
-		"Ajoute cette activite dans trip.activities avec bookingStatus:'candidate':\n"+
-			"- id: %s\n- nom: %s\n- theme: %s\n- lat: %f, lon: %f\n- distance: %.1f km\n- url: %s\n- source: %s",
-		item.ID, item.Name, item.ThemeID, item.Lat, item.Lon, item.DistKm, item.URL, item.Source,
-	)
-
-	job := h.leoJobs.Start(user, func(ctx context.Context, emit leo.EmitFunc) error {
-		_ = emit("meta", leo.StreamEvent{
-			Text:   "construction:activities",
-			Detail: "retain-discovery-item",
-			Tool: map[string]any{
-				"tripId": tripID,
-				"item":   item,
-			},
-		})
-		// TODO(hermes): Replace this stub with a real LLM call via Hermes to
-		// actually write the item into trip.activities with bookingStatus:"candidate".
-		// Currently emits a canned message so the frontend sees the intent.
-		_ = emit("delta", leo.StreamEvent{Text: message})
-		_ = emit("done", leo.StreamEvent{})
-		return nil
+	// TODO(hermes): wire a real Leo/Hermes job that writes body.Item into
+	// trip.activities with bookingStatus:"candidate", then answer 202 with its
+	// jobId. Until then the endpoint must not claim success: a 202 followed by
+	// delta/done frames is indistinguishable from real work, so the UI painted
+	// "Retenu ✓" for a write that never happened.
+	writeJSON(w, http.StatusNotImplemented, map[string]any{
+		"error":  "not_implemented",
+		"detail": "L'ajout d'une activité dans le seed n'est pas encore branché : aucune écriture n'a été effectuée.",
 	})
-
-	writeJSON(w, http.StatusAccepted, map[string]any{"jobId": job.ID})
 }
 
 // ── Nuisance Seed Pin ────────────────────────────────────────────────────────
 
-// PinNuisanceToSeed starts a Leo job to write the nuisance summary into the
-// seed (hotels[].nuisance + trip.construction.lastQa). Triggered from the
-// "Epingler dans le seed" button in the nuisance results view.
+// PinNuisanceToSeed handles the "Épingler dans le seed" button of the nuisance
+// results view. The write path (a Leo job writing hotels[].nuisance and
+// trip.construction.lastQa into the seed) is not wired yet, so the endpoint
+// answers 501 not_implemented instead of a fake 202.
 // POST /trips/{tripId}/nuisance-check/pin
 func (h *Handler) PinNuisanceToSeed(w http.ResponseWriter, r *http.Request) {
-	tripID := chi.URLParam(r, "tripId")
 	user := middleware.EffectiveUser(r)
 	if strings.TrimSpace(user) == "" {
 		writeError(w, http.StatusUnauthorized, "Authentication required")
 		return
 	}
 
-	message := fmt.Sprintf(
-		"Ecris le resume des nuisances dans le seed pour le voyage %s:\n"+
-			"- Pour chaque hotel, ajoute ou mets a jour hotels[].nuisance avec le resume de l'analyse.\n"+
-			"- Mets a jour trip.construction.lastQa avec la date et le resume global.",
-		tripID,
-	)
-
-	job := h.leoJobs.Start(user, func(ctx context.Context, emit leo.EmitFunc) error {
-		_ = emit("meta", leo.StreamEvent{
-			Text:   "construction:activities",
-			Detail: "pin-nuisance-to-seed",
-			Tool: map[string]any{
-				"tripId": tripID,
-			},
-		})
-		// TODO(hermes): Replace this stub with a real LLM call via Hermes to
-		// actually write nuisance summaries into the seed (hotels[].nuisance).
-		// Currently emits a canned message so the frontend sees the intent.
-		_ = emit("delta", leo.StreamEvent{Text: message})
-		_ = emit("done", leo.StreamEvent{})
-		return nil
+	// TODO(hermes): wire a real Leo/Hermes job that writes hotels[].nuisance and
+	// trip.construction.lastQa into the seed, then answer 202 with its jobId.
+	// Until then the endpoint must not claim success: it only emitted a canned
+	// stream, which no client could tell apart from a completed write.
+	writeJSON(w, http.StatusNotImplemented, map[string]any{
+		"error":  "not_implemented",
+		"detail": "L'épinglage des nuisances dans le seed n'est pas encore branché : aucune écriture n'a été effectuée.",
 	})
-
-	writeJSON(w, http.StatusAccepted, map[string]any{"jobId": job.ID})
 }
 
 // ── Nuisance Check ───────────────────────────────────────────────────────────

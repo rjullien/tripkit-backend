@@ -542,25 +542,28 @@ func checkDayGap(days []qaDay, phase int) []QAViolation {
 }
 
 // checkTransportNotBooked checks if main transport is absent or candidate.
+// A day with no transport block at all counts as unbooked too (reported as
+// status=absent): that is the most common shape of an unbooked day during
+// early construction, and this rule gates phase 4.
 func checkTransportNotBooked(days []qaDay, phase int) []QAViolation {
 	var out []QAViolation
 	for _, day := range days {
-		if day.Transport == nil || day.Transport.Status == "" || day.Transport.Status == "absent" || day.Transport.Status == "candidate" {
+		status := "absent"
+		if day.Transport != nil && day.Transport.Status != "" {
+			status = day.Transport.Status
+		}
+		if status == "absent" || status == "candidate" {
 			sev := "yellow"
 			if phase >= 4 {
 				sev = "red"
 			}
-			// Only flag if transport section exists but is not booked,
-			// or if absent entirely
-			if day.Transport != nil {
-				out = append(out, QAViolation{
-					Code:     "transport_not_booked",
-					Severity: sev,
-					Message:  fmt.Sprintf("Day %d main transport not booked (status=%s)", day.Num, day.Transport.Status),
-					DayNum:   day.Num,
-					Detail:   fmt.Sprintf("status=%s", day.Transport.Status),
-				})
-			}
+			out = append(out, QAViolation{
+				Code:     "transport_not_booked",
+				Severity: sev,
+				Message:  fmt.Sprintf("Day %d main transport not booked (status=%s)", day.Num, status),
+				DayNum:   day.Num,
+				Detail:   fmt.Sprintf("status=%s", status),
+			})
 		}
 	}
 	return out

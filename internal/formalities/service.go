@@ -3,6 +3,7 @@ package formalities
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"github.com/rjullien/tripkit-backend/internal/bifrost"
 	"github.com/rjullien/tripkit-backend/internal/models"
@@ -105,6 +106,8 @@ func (s *Service) loadTripData(tripID string) (map[string]any, error) {
 
 // extractNationalities pulls all unique nationality codes from the trip data.
 // Looks in: people[].nationalities, travelers[].nationalities, travelers[].nationality.
+// The result is sorted: it lands in AdminCheckItem.AppliesTo, so it must be
+// stable across runs (Go map iteration is not).
 func extractNationalities(tripData map[string]any) []string {
 	seen := map[string]bool{}
 
@@ -154,6 +157,7 @@ func extractNationalities(tripData map[string]any) []string {
 	for n := range seen {
 		result = append(result, n)
 	}
+	sort.Strings(result)
 	return result
 }
 

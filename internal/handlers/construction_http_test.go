@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rjullien/tripkit-backend/internal/construction"
@@ -27,6 +27,7 @@ func constructionRouter(t *testing.T) (*Handler, http.Handler) {
 	r := chi.NewRouter()
 	r.Use(middleware.UserIdentity)
 	r.Post("/trips/{tripId}/travel-profile/request", h.CreateProfileRequest)
+	r.Put("/trips/{tripId}/construction/phase", h.TransitionPhase)
 	r.Get("/leo/jobs/{jobId}/stream", h.LeoJobStream)
 	return h, r
 }
@@ -42,7 +43,10 @@ func seedConstructionTrip(t *testing.T, h *Handler) {
 	}
 }
 
-func TestCreateProfileRequest_ValidBody(t *testing.T) {
+// A valid body passes validation but the profile-edit write path is not wired:
+// the endpoint must answer 501, start no job and persist no row (it used to
+// leave rows stuck at status "running" forever -- review finding 5).
+func TestCreateProfileRequest_NotImplemented(t *testing.T) {
 	h, r := constructionRouter(t)
 	seedConstructionTrip(t, h)
 
@@ -53,49 +57,29 @@ func TestCreateProfileRequest_ValidBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("expected 202, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	var resp struct {
-		JobID string `json:"jobId"`
-	}
+	var resp map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("json decode: %v", err)
 	}
-	if resp.JobID == "" {
-		t.Fatalf("expected non-empty jobId, got: %s", rec.Body.String())
+	if resp["error"] != "not_implemented" {
+		t.Fatalf("expected error=not_implemented, got: %s", rec.Body.String())
+	}
+	if detail, ok := resp["detail"].(string); !ok || detail == "" {
+		t.Fatalf("expected a non-empty detail, got: %s", rec.Body.String())
+	}
+	if _, ok := resp["jobId"]; ok {
+		t.Fatalf("expected no jobId (no job must be started), got: %s", rec.Body.String())
 	}
 
-	// Verify DB record was created.
-	var rec2 models.ConstructionProfileRequest
-	if err := h.db.First(&rec2, "trip_id = ?", "trip-constr").Error; err != nil {
-		t.Fatalf("db lookup: %v", err)
-	}
-	if rec2.Target != "travelStyle" {
-		t.Fatalf("target=%q", rec2.Target)
-	}
-	if rec2.JobID != resp.JobID {
-		t.Fatalf("jobId mismatch: db=%q resp=%q", rec2.JobID, resp.JobID)
-	}
-	if rec2.Status != "running" {
-		t.Fatalf("status=%q", rec2.Status)
-	}
-
-	// Verify job finishes (emits done).
-	deadline := time.Now().Add(2 * time.Second)
-	job := h.leoJobs.Get(resp.JobID)
-	if job == nil {
-		t.Fatal("job not found in hub")
-	}
-	for time.Now().Before(deadline) {
-		if job.Status() != "running" {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if job.Status() != "done" {
-		t.Fatalf("job status=%q", job.Status())
+	// No row must be created.
+	var count int64
+	h.db.Model(&models.ConstructionProfileRequest{}).Where("trip_id = ?", "trip-constr").Count(&count)
+	if count != 0 {
+		t.Fatalf("expected 0 profile request rows, got %d", count)
 	}
 }
 
@@ -146,10 +130,10 @@ func TestCreateProfileRequest_NoAuth(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	// With UserIdentity, anonymous is a valid user string (not empty).
-	// Real auth enforcement happens in the Auth middleware.
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("expected 202 (anonymous passes handler check), got %d: %s", rec.Code, rec.Body.String())
+	// With UserIdentity, anonymous is a valid user string (not empty), so the
+	// request reaches the (unwired) write path and gets the same 501.
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501 (anonymous passes handler check), got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -166,8 +150,138 @@ func TestCreateProfileRequest_AllTargets(t *testing.T) {
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusAccepted {
-			t.Fatalf("target %q: expected 202, got %d: %s", target, rec.Code, rec.Body.String())
+		if rec.Code != http.StatusNotImplemented {
+			t.Fatalf("target %q: expected 501, got %d: %s", target, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// ── Phase transition: force gating and structured blockers ──────────────────
+
+// seedBlockedTrip seeds a trip whose QA produces a red blocker (day_gap: day 2
+// is missing between day 1 and day 3).
+func seedBlockedTrip(t *testing.T, h *Handler, tripID string) {
+	t.Helper()
+	data := `{"startDate":"2026-08-14","days":[` +
+		`{"dayNum":1,"date":"2026-08-14","transport":{"mode":"train","status":"booked"}},` +
+		`{"dayNum":3,"date":"2026-08-16","transport":{"mode":"train","status":"booked"}}` +
+		`],"hotels":[{"dayNum":1,"status":"booked"},{"dayNum":3,"status":"booked"}]}`
+	if err := h.db.Create(&models.Trip{ID: tripID, Name: "Blocked", Data: &data}).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func putPhase(r http.Handler, tripID, query, user string, phase int) *httptest.ResponseRecorder {
+	body := `{"phase":` + strconv.Itoa(phase) + `}`
+	req := httptest.NewRequest(http.MethodPut, "/trips/"+tripID+"/construction/phase"+query, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if user != "" {
+		req.Header.Set("Remote-User", user)
+	}
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestTransitionPhase_Force_NonAdminForbidden(t *testing.T) {
+	t.Setenv("TRIPKIT_ADMIN_USERS", "admin,rene")
+	h, r := constructionRouter(t)
+	seedBlockedTrip(t, h, "trip-force")
+
+	rec := putPhase(r, "trip-force", "?force=1", "nadia", 3)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp["error"] != "admin_required" {
+		t.Fatalf("expected error=admin_required, got: %s", rec.Body.String())
+	}
+
+	// The phase must not have moved and nothing must be logged.
+	state, _, err := h.construction.GetConstruction("trip-force")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Phase != 0 {
+		t.Fatalf("phase=%d want 0", state.Phase)
+	}
+	var logs int64
+	h.db.Model(&models.ConstructionPhaseLog{}).Where("trip_id = ?", "trip-force").Count(&logs)
+	if logs != 0 {
+		t.Fatalf("expected no phase log, got %d", logs)
+	}
+}
+
+func TestTransitionPhase_Force_AdminSucceeds(t *testing.T) {
+	t.Setenv("TRIPKIT_ADMIN_USERS", "admin,rene")
+	h, r := constructionRouter(t)
+	seedBlockedTrip(t, h, "trip-force-ok")
+
+	rec := putPhase(r, "trip-force-ok", "?force=1", "rene", 3)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	state, _, err := h.construction.GetConstruction("trip-force-ok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Phase != 3 {
+		t.Fatalf("phase=%d want 3", state.Phase)
+	}
+
+	var logs []models.ConstructionPhaseLog
+	h.db.Where("trip_id = ?", "trip-force-ok").Find(&logs)
+	if len(logs) != 1 {
+		t.Fatalf("log count=%d want 1", len(logs))
+	}
+	if logs[0].ForcedBy != "rene" {
+		t.Fatalf("ForcedBy=%q want rene", logs[0].ForcedBy)
+	}
+}
+
+func TestTransitionPhase_Blocked_StructuredBlockers(t *testing.T) {
+	h, r := constructionRouter(t)
+	seedBlockedTrip(t, h, "trip-blocked")
+
+	rec := putPhase(r, "trip-blocked", "", "nadia", 3)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Error    string                     `json:"error"`
+		Blockers []construction.QAViolation `json:"blockers"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json decode: %v", err)
+	}
+	if resp.Error != "transition_blocked" {
+		t.Fatalf("expected error=transition_blocked, got %q", resp.Error)
+	}
+	// The error field must stay a plain code: no marshalled JSON inside it.
+	if strings.ContainsAny(resp.Error, "[{") {
+		t.Fatalf("blockers must not be stringified into error: %q", resp.Error)
+	}
+	if len(resp.Blockers) == 0 {
+		t.Fatalf("expected a non-empty blockers array, got: %s", rec.Body.String())
+	}
+	for _, b := range resp.Blockers {
+		if b.Severity != "red" {
+			t.Errorf("blocker %q severity=%q want red", b.Code, b.Severity)
+		}
+		if b.Code == "" || b.Message == "" {
+			t.Errorf("blocker missing code/message: %+v", b)
+		}
+	}
+
+	// The phase must not have moved.
+	state, _, err := h.construction.GetConstruction("trip-blocked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Phase != 0 {
+		t.Fatalf("phase=%d want 0", state.Phase)
 	}
 }

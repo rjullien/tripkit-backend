@@ -1,9 +1,14 @@
 package formalities
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // DetectCountries extracts deduplicated ISO country codes from trip seed data.
 // It reads locations[].country, flights[].from/to/stopovers fields.
+// The result is sorted: it is serialized into the admin-check / health-check
+// responses, which must be stable across runs (Go map iteration is not).
 func DetectCountries(tripData map[string]any) []string {
 	seen := map[string]bool{}
 
@@ -30,6 +35,7 @@ func DetectCountries(tripData map[string]any) []string {
 	for c := range seen {
 		result = append(result, c)
 	}
+	sort.Strings(result)
 	return result
 }
 

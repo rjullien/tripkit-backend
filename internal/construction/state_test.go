@@ -2,6 +2,8 @@ package construction
 
 import (
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/rjullien/tripkit-backend/internal/models"
@@ -209,6 +211,90 @@ func TestTransitionPhase_LogsToPhaseLog(t *testing.T) {
 	}
 	if logs[0].At.IsZero() {
 		t.Error("log.At is zero")
+	}
+}
+
+// A refused transition returns the blockers as structured data, not as JSON
+// stringified into an error message (review finding 12).
+func TestTransitionPhase_Blocked_ReturnsTypedError(t *testing.T) {
+	db := setupStateTestDB(t)
+
+	// day 2 is missing between day 1 and day 3 -> red day_gap blocker.
+	data := `{"startDate":"2026-08-14","days":[` +
+		`{"dayNum":1,"date":"2026-08-14","transport":{"mode":"train","status":"booked"}},` +
+		`{"dayNum":3,"date":"2026-08-16","transport":{"mode":"train","status":"booked"}}` +
+		`],"hotels":[{"dayNum":1,"status":"booked"},{"dayNum":3,"status":"booked"}]}`
+	trip := models.Trip{ID: "trip-blocked", Name: "Blocked", Data: &data}
+	if err := db.Create(&trip).Error; err != nil {
+		t.Fatalf("create trip: %v", err)
+	}
+
+	svc := &Service{DB: db}
+	state, code, err := svc.TransitionPhase("trip-blocked", 3, false, "nadia")
+	if code != 409 {
+		t.Errorf("code=%d want 409", code)
+	}
+	if state != nil {
+		t.Errorf("expected nil state, got %+v", state)
+	}
+	var blocked *TransitionBlockedError
+	if !errors.As(err, &blocked) {
+		t.Fatalf("expected *TransitionBlockedError, got %T (%v)", err, err)
+	}
+	if len(blocked.Blockers) != 1 {
+		t.Fatalf("blockers=%d want 1: %+v", len(blocked.Blockers), blocked.Blockers)
+	}
+	if blocked.Blockers[0].Code != "day_gap" {
+		t.Errorf("blocker code=%q want day_gap", blocked.Blockers[0].Code)
+	}
+	if strings.ContainsAny(blocked.Error(), "[{") {
+		t.Errorf("Error() must not embed marshalled JSON: %q", blocked.Error())
+	}
+
+	// The phase must not have moved.
+	persisted, err := ReadState(db, "trip-blocked")
+	if err != nil {
+		t.Fatalf("ReadState: %v", err)
+	}
+	if persisted != nil && persisted.Phase != 0 {
+		t.Errorf("persisted phase=%d want 0", persisted.Phase)
+	}
+}
+
+// The phase and its audit record are written in one transaction: if the log
+// insert fails, the phase must not have moved (review finding 13).
+func TestTransitionPhase_LogInsertFails_PhaseUnchanged(t *testing.T) {
+	db := setupStateTestDB(t)
+
+	trip := models.Trip{ID: "trip-tx", Name: "Tx Test"}
+	if err := db.Create(&trip).Error; err != nil {
+		t.Fatalf("create trip: %v", err)
+	}
+
+	// Drop the log table so the insert inside the transaction fails.
+	if err := db.Migrator().DropTable(&models.ConstructionPhaseLog{}); err != nil {
+		t.Fatalf("drop phase log table: %v", err)
+	}
+
+	svc := &Service{DB: db}
+	state, code, err := svc.TransitionPhase("trip-tx", 2, true, "admin-user")
+	if err == nil {
+		t.Fatal("expected an error when the phase log insert fails")
+	}
+	if code != 500 {
+		t.Errorf("code=%d want 500", code)
+	}
+	if state != nil {
+		t.Errorf("expected nil state, got %+v", state)
+	}
+
+	// The persisted phase must be untouched (no construction data at all here).
+	persisted, err := ReadState(db, "trip-tx")
+	if err != nil {
+		t.Fatalf("ReadState: %v", err)
+	}
+	if persisted != nil && persisted.Phase != 0 {
+		t.Errorf("persisted phase=%d want 0 (rolled back)", persisted.Phase)
 	}
 }
 

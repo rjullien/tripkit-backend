@@ -1,0 +1,36 @@
+{
+  "countries": [
+    "TH"
+  ],
+  "items": [
+    {
+      "country": "TH",
+      "detail": "Hepatite A et Typhoide recommandees pour tout sejour",
+      "label": "Vaccinations recommandees (Hepatite A, Typhoide)",
+      "status": "action_required",
+      "type": "vaccins"
+    },
+    {
+      "country": "TH",
+      "detail": "Traitement preventif recommande pour les zones rurales et frontalieres",
+      "label": "Risque de paludisme (zones rurales)",
+      "status": "action_required",
+      "type": "paludisme"
+    },
+    {
+      "country": "TH",
+      "detail": "Ne pas boire l'eau du robinet, privilegier l'eau en bouteille",
+      "label": "Eau non potable",
+      "status": "warning",
+      "type": "eau"
+    },
+    {
+      "country": "*",
+      "detail": "Emporter une trousse de premiers secours adaptee a la destination",
+      "label": "Trousse de secours recommandee",
+      "status": "warning",
+      "type": "trousse"
+    }
+  ],
+  "verdict": "action_required"
+}

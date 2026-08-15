@@ -28,7 +28,10 @@ func setupConstructionRouter(t *testing.T) *chi.Mux {
 	return r
 }
 
-func TestRetainDiscoveryItem_ValidItem(t *testing.T) {
+// The write path is not wired: a valid request must be refused with 501 rather
+// than answered with a 202 + jobId that no client can tell apart from a real
+// write (review finding 5).
+func TestRetainDiscoveryItem_NotImplemented(t *testing.T) {
 	r := setupConstructionRouter(t)
 	// Create a trip first
 	doReqAs(r, "POST", "/api/trips", map[string]any{"id": "trip-retain", "name": "Retain Test"}, "rene")
@@ -47,14 +50,19 @@ func TestRetainDiscoveryItem_ValidItem(t *testing.T) {
 		},
 	}, "rene")
 
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501, got %d: %s", w.Code, w.Body.String())
 	}
 
 	body := parseResp(w)
-	jobId, ok := body["jobId"].(string)
-	if !ok || jobId == "" {
-		t.Errorf("expected non-empty jobId, got %v", body["jobId"])
+	if body["error"] != "not_implemented" {
+		t.Errorf("expected error=not_implemented, got %v", body["error"])
+	}
+	if detail, ok := body["detail"].(string); !ok || detail == "" {
+		t.Errorf("expected a non-empty detail, got %v", body["detail"])
+	}
+	if _, ok := body["jobId"]; ok {
+		t.Errorf("expected no jobId (no job must be started), got %v", body["jobId"])
 	}
 }
 
@@ -87,26 +95,29 @@ func TestRetainDiscoveryItem_NoAuth(t *testing.T) {
 		},
 	})
 
-	// Anonymous user is allowed (auth is at ingress via Authelia, not in handler)
-	if w.Code != http.StatusAccepted {
-		t.Errorf("expected 202 for anonymous user, got %d: %s", w.Code, w.Body.String())
+	// Anonymous user passes the handler check, so it reaches the (unwired) write
+	// path and gets the same 501 as any other caller.
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("expected 501 for anonymous user, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
-func TestPinNuisanceToSeed_Valid(t *testing.T) {
+func TestPinNuisanceToSeed_NotImplemented(t *testing.T) {
 	r := setupConstructionRouter(t)
 	doReqAs(r, "POST", "/api/trips", map[string]any{"id": "trip-pin", "name": "Pin Test"}, "rene")
 
 	w := doReqAs(r, "POST", "/api/trips/trip-pin/nuisance-check/pin", map[string]any{}, "rene")
 
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501, got %d: %s", w.Code, w.Body.String())
 	}
 
 	body := parseResp(w)
-	jobId, ok := body["jobId"].(string)
-	if !ok || jobId == "" {
-		t.Errorf("expected non-empty jobId, got %v", body["jobId"])
+	if body["error"] != "not_implemented" {
+		t.Errorf("expected error=not_implemented, got %v", body["error"])
+	}
+	if _, ok := body["jobId"]; ok {
+		t.Errorf("expected no jobId (no job must be started), got %v", body["jobId"])
 	}
 }
 
@@ -117,7 +128,7 @@ func TestPinNuisanceToSeed_NoAuth(t *testing.T) {
 	// Anonymous user is allowed (auth is at ingress via Authelia, not in handler)
 	w := doReq(r, "POST", "/api/trips/trip-pin2/nuisance-check/pin", map[string]any{})
 
-	if w.Code != http.StatusAccepted {
-		t.Errorf("expected 202 for anonymous user, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("expected 501 for anonymous user, got %d: %s", w.Code, w.Body.String())
 	}
 }

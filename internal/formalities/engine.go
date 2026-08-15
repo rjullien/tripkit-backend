@@ -9,7 +9,7 @@ type AdminCheckItem struct {
 	Type      string   `json:"type"`
 	Label     string   `json:"label"`
 	Status    string   `json:"status"` // "ok", "warning", "action_required"
-	AppliesTo []string `json:"applies_to"`
+	AppliesTo []string `json:"appliesTo"`
 	Detail    string   `json:"detail"`
 	URL       string   `json:"url,omitempty"`
 	Cost      string   `json:"cost,omitempty"`

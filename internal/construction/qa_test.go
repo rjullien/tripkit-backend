@@ -456,9 +456,11 @@ func TestParseDuration(t *testing.T) {
 // ── Test: no violations for clean trip ──────────────────────────────────────
 
 func TestRunQA_CleanTrip_NoViolations(t *testing.T) {
+	// A clean trip needs a booked transport block on every day: a missing block
+	// counts as unbooked (see TestRunQA_TransportNotBooked_MissingBlock).
 	days := []map[string]any{
-		{"dayNum": float64(1), "date": "2026-06-15", "drive": map[string]any{"durationMin": float64(120), "source": "google", "verifiedAt": "2026-01-01"}},
-		{"dayNum": float64(2), "date": "2026-06-16"},
+		{"dayNum": float64(1), "date": "2026-06-15", "drive": map[string]any{"durationMin": float64(120), "source": "google", "verifiedAt": "2026-01-01"}, "transport": map[string]any{"mode": "train", "status": "booked"}},
+		{"dayNum": float64(2), "date": "2026-06-16", "transport": map[string]any{"mode": "train", "status": "booked"}},
 	}
 	hotels := []map[string]any{
 		{"dayNum": float64(1), "status": "booked"},
@@ -583,5 +585,45 @@ func TestRunQA_TransportNotBooked_FiresInPh4(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("Phase 4: expected transport_not_booked for candidate flight, got %+v", violations)
+	}
+}
+
+// ── Test: transport_not_booked also fires when the block is absent ──────────
+
+func TestRunQA_TransportNotBooked_MissingBlock(t *testing.T) {
+	// A day with no transport block at all is the most common shape of an
+	// unbooked day during early construction: it must be flagged too.
+	days := []map[string]any{
+		{"dayNum": float64(1), "date": "2026-06-15"},
+	}
+	hotels := []map[string]any{
+		{"dayNum": float64(1), "bookingStatus": "booked"},
+	}
+	tripData := makeTripData(days, hotels, "2026-06-15", nil)
+	profile := makeProfile("6h", 2, 0)
+
+	violations := RunQA(tripData, profile, 2)
+	var got *QAViolation
+	for i := range violations {
+		if violations[i].Code == "transport_not_booked" && violations[i].DayNum == 1 {
+			got = &violations[i]
+			break
+		}
+	}
+	if got == nil {
+		t.Fatalf("expected transport_not_booked for a day without transport block, got %+v", violations)
+	}
+	if got.Severity != "yellow" {
+		t.Errorf("phase 2: expected severity=yellow, got %q", got.Severity)
+	}
+	if got.Detail != "status=absent" {
+		t.Errorf("expected detail=status=absent, got %q", got.Detail)
+	}
+
+	// Phase 4 escalates the same violation to red.
+	for _, v := range RunQA(tripData, profile, 4) {
+		if v.Code == "transport_not_booked" && v.Severity != "red" {
+			t.Errorf("phase 4: expected severity=red, got %q", v.Severity)
+		}
 	}
 }

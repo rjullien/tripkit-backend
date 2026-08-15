@@ -2,7 +2,6 @@ package construction
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -60,17 +59,11 @@ func (s *Service) TransitionPhase(tripID string, target int, force bool, user st
 
 	allowed, blockers := CanTransition(violations, target, force)
 	if !allowed {
-		blockersJSON, _ := json.Marshal(blockers)
-		return nil, http.StatusConflict, fmt.Errorf("transition blocked: %s", string(blockersJSON))
+		return nil, http.StatusConflict, &TransitionBlockedError{Blockers: blockers}
 	}
 
 	// Update phase.
 	state.Phase = target
-
-	// Write state (also touches trip.updated_at).
-	if err := WriteState(s.DB, tripID, state); err != nil {
-		return nil, http.StatusInternalServerError, err
-	}
 
 	// Log the transition.
 	forcedBy := ""
@@ -89,7 +82,18 @@ func (s *Service) TransitionPhase(tripID string, target int, force bool, user st
 		Blockers: blockersStr,
 		At:       time.Now(),
 	}
-	if err := s.DB.Create(&logEntry).Error; err != nil {
+
+	// The new phase and its audit record must land together: a failing log
+	// insert has to roll the phase back, otherwise the phase moves while the
+	// caller is told the transition failed (and a forced override goes
+	// unrecorded).
+	if err := s.DB.Transaction(func(tx *gorm.DB) error {
+		// WriteState also touches trip.updated_at.
+		if err := WriteState(tx, tripID, state); err != nil {
+			return err
+		}
+		return tx.Create(&logEntry).Error
+	}); err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
 
