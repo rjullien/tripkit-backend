@@ -448,3 +448,117 @@ func (h *Handler) GetNuisanceCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
+
+// ── Admin-check & Health-check ───────────────────────────────────────────────
+
+// RunAdminCheck runs the formalities admin-check pipeline, stores results, and returns them.
+// POST /trips/{tripId}/admin-check
+func (h *Handler) RunAdminCheck(w http.ResponseWriter, r *http.Request) {
+	if h.formalities == nil {
+		writeError(w, http.StatusServiceUnavailable, "Formalities service not configured")
+		return
+	}
+	tripID := chi.URLParam(r, "tripId")
+	if !h.tripExists(tripID) {
+		writeError(w, http.StatusNotFound, "Trip not found")
+		return
+	}
+
+	result, err := h.formalities.AdminCheck(tripID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Store result in construction_checks
+	dataBytes, _ := json.Marshal(result)
+	check := models.ConstructionCheck{
+		TripID: tripID,
+		Kind:   "admin",
+		Data:   string(dataBytes),
+	}
+	h.db.Create(&check)
+	h.touchTrip(tripID)
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// GetAdminCheck returns the last cached admin-check result for a trip.
+// GET /trips/{tripId}/admin-check
+func (h *Handler) GetAdminCheck(w http.ResponseWriter, r *http.Request) {
+	tripID := chi.URLParam(r, "tripId")
+
+	var check models.ConstructionCheck
+	if err := h.db.Where("trip_id = ? AND kind = ?", tripID, "admin").Order("created_at DESC").First(&check).Error; err != nil {
+		writeError(w, http.StatusNotFound, "No admin-check result found")
+		return
+	}
+
+	var result any
+	if err := json.Unmarshal([]byte(check.Data), &result); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to parse stored result")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"result":   result,
+		"cached":   true,
+		"cachedAt": check.CreatedAt,
+	})
+}
+
+// RunHealthCheck runs the formalities health-check pipeline, stores results, and returns them.
+// POST /trips/{tripId}/health-check
+func (h *Handler) RunHealthCheck(w http.ResponseWriter, r *http.Request) {
+	if h.formalities == nil {
+		writeError(w, http.StatusServiceUnavailable, "Formalities service not configured")
+		return
+	}
+	tripID := chi.URLParam(r, "tripId")
+	if !h.tripExists(tripID) {
+		writeError(w, http.StatusNotFound, "Trip not found")
+		return
+	}
+
+	result, err := h.formalities.HealthCheck(tripID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Store result in construction_checks
+	dataBytes, _ := json.Marshal(result)
+	check := models.ConstructionCheck{
+		TripID: tripID,
+		Kind:   "health",
+		Data:   string(dataBytes),
+	}
+	h.db.Create(&check)
+	h.touchTrip(tripID)
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// GetHealthCheck returns the last cached health-check result for a trip.
+// GET /trips/{tripId}/health-check
+func (h *Handler) GetHealthCheck(w http.ResponseWriter, r *http.Request) {
+	tripID := chi.URLParam(r, "tripId")
+
+	var check models.ConstructionCheck
+	if err := h.db.Where("trip_id = ? AND kind = ?", tripID, "health").Order("created_at DESC").First(&check).Error; err != nil {
+		writeError(w, http.StatusNotFound, "No health-check result found")
+		return
+	}
+
+	var result any
+	if err := json.Unmarshal([]byte(check.Data), &result); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to parse stored result")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"result":   result,
+		"cached":   true,
+		"cachedAt": check.CreatedAt,
+	})
+}

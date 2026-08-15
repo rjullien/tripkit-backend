@@ -16,6 +16,7 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/dailybrief"
 	"github.com/rjullien/tripkit-backend/internal/database"
 	"github.com/rjullien/tripkit-backend/internal/discovery"
+	"github.com/rjullien/tripkit-backend/internal/formalities"
 	"github.com/rjullien/tripkit-backend/internal/handlers"
 	"github.com/rjullien/tripkit-backend/internal/leo"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
@@ -90,6 +91,9 @@ func main() {
 		Overpass: discOverpass,
 		Hub:      leo.NewHub(),
 	})
+
+	// Formalities service (admin-check, health-check) — deterministic rules engine, no external deps.
+	h.SetFormalities(&formalities.Service{DB: db})
 
 	// In-process worker: auto-on when TRIPKIT_GITHUB_TOKEN is set; override via TRIPKIT_PUBLISH_WORKER.
 	if publish.WorkerEnabled() {
@@ -192,6 +196,12 @@ func main() {
 		r.Get("/trips/{tripId}/construction/qa", h.GetConstructionQA)
 		r.Get("/trips/{tripId}/travel-profile", h.GetTravelProfile)
 		r.Post("/trips/{tripId}/travel-profile/request", h.CreateProfileRequest)
+
+		// Formalities (admin-check, health-check)
+		r.Post("/trips/{tripId}/admin-check", h.RunAdminCheck)
+		r.Get("/trips/{tripId}/admin-check", h.GetAdminCheck)
+		r.Post("/trips/{tripId}/health-check", h.RunHealthCheck)
+		r.Get("/trips/{tripId}/health-check", h.GetHealthCheck)
 
 		// Discovery retain (add item to seed via Leo)
 		r.Post("/trips/{tripId}/discovery/retain", h.RetainDiscoveryItem)

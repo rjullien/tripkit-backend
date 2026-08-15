@@ -17,6 +17,7 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/construction"
 	"github.com/rjullien/tripkit-backend/internal/dailybrief"
 	"github.com/rjullien/tripkit-backend/internal/discovery"
+	"github.com/rjullien/tripkit-backend/internal/formalities"
 	"github.com/rjullien/tripkit-backend/internal/leo"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/models"
@@ -40,6 +41,7 @@ type Handler struct {
 	discovery       *discovery.Service
 	construction    *construction.Service
 	nuisance        *nuisance.Service
+	formalities     *formalities.Service
 	leoOps          *leo.OpsLoader
 	leoJobs         *leo.Hub
 	leoRun          func(ctx context.Context, pctx leo.PromptContext, req leo.ChatRequest, emit leo.EmitFunc) error
@@ -93,6 +95,11 @@ func (h *Handler) SetConstruction(svc *construction.Service) {
 // SetNuisance attaches the nuisance analysis service.
 func (h *Handler) SetNuisance(svc *nuisance.Service) {
 	h.nuisance = svc
+}
+
+// SetFormalities attaches the formalities (admin-check, health-check) service.
+func (h *Handler) SetFormalities(svc *formalities.Service) {
+	h.formalities = svc
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
