@@ -1,6 +1,9 @@
 package leo
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // Mode represents a Leo operating mode (default or construction phase).
 type Mode string
@@ -30,6 +33,11 @@ func allModesList() []string {
 	return out
 }
 
+// AllModesList is the exported version for use by handlers.
+func AllModesList() []string {
+	return allModesList()
+}
+
 // ResolveMode maps a client-requested mode to a known Mode constant.
 // Rules: empty or unknown input always returns ModeDefault (never an error).
 // If allowed is nil or empty, only ModeDefault is permitted.
@@ -51,12 +59,42 @@ func ResolveMode(requested string, allowed []string) Mode {
 }
 
 // ConstructionContext carries trip-level state for construction mode prompts.
-// Placeholder struct -- fields will be populated as construction phases land.
 type ConstructionContext struct {
-	Phase      int    // current construction phase (1-based)
-	TripStatus string // e.g. "draft", "planning", "booked"
-	Travelers  int    // number of travelers
-	TripName   string // human-friendly trip name
+	TripName  string
+	Travelers []ConstructionTraveler
+	Style     *ConstructionStyle
+	Budget    *ConstructionBudget
+	Interests map[string]ConstructionInterest
+}
+
+// ConstructionTraveler is one traveler summary for prompt injection.
+type ConstructionTraveler struct {
+	Name        string
+	Nationality string
+	IsChild     bool
+	AgeLabel    string
+	HealthNote  string
+}
+
+// ConstructionStyle captures travel style for prompts.
+type ConstructionStyle struct {
+	Pace             string
+	MaxDrivingPerDay string
+	MajorSitesPerDay int
+}
+
+// ConstructionBudget captures budget limits for prompts.
+type ConstructionBudget struct {
+	AccommodationMax int
+	RestaurantMax    int
+	ActivitiesMax    int
+	Currency         string
+}
+
+// ConstructionInterest captures one person's likes/dislikes.
+type ConstructionInterest struct {
+	Likes    []string
+	Dislikes []string
 }
 
 // SystemPromptFor builds a mode-specific system prompt.
@@ -90,38 +128,137 @@ func modeOverlay(mode Mode, cc *ConstructionContext) string {
 	}
 }
 
-func ideationOverlay(_ *ConstructionContext) string {
+func ideationOverlay(cc *ConstructionContext) string {
 	var b strings.Builder
 	b.WriteString("MODE CONSTRUCTION : IDÉATION\n")
 	b.WriteString("- Phase : brainstorming destination / dates / budget.\n")
 	b.WriteString("- Propose des idées, pose des questions ouvertes pour affiner.\n")
 	b.WriteString("- Ne crée pas encore de fichiers seed.\n")
+	writeContextBlock(&b, cc)
 	return b.String()
 }
 
-func routeOverlay(_ *ConstructionContext) string {
+func routeOverlay(cc *ConstructionContext) string {
 	var b strings.Builder
 	b.WriteString("MODE CONSTRUCTION : ITINÉRAIRE\n")
 	b.WriteString("- Phase : construction de l'itinéraire jour par jour.\n")
 	b.WriteString("- Propose un routing logique, optimise les trajets.\n")
 	b.WriteString("- Écris les fichiers seed d'itinéraire quand validé.\n")
+	writeContextBlock(&b, cc)
 	return b.String()
 }
 
-func activitiesOverlay(_ *ConstructionContext) string {
+func activitiesOverlay(cc *ConstructionContext) string {
 	var b strings.Builder
 	b.WriteString("MODE CONSTRUCTION : ACTIVITÉS\n")
 	b.WriteString("- Phase : enrichissement avec activités, restos, visites.\n")
 	b.WriteString("- Cherche et propose des activités adaptées au profil voyageur.\n")
 	b.WriteString("- Écris dans les fichiers seed appropriés.\n")
+	writeContextBlock(&b, cc)
 	return b.String()
 }
 
-func profileEditOverlay(_ *ConstructionContext) string {
+func profileEditOverlay(cc *ConstructionContext) string {
 	var b strings.Builder
 	b.WriteString("MODE CONSTRUCTION : PROFIL VOYAGEUR\n")
 	b.WriteString("- Phase : édition du profil voyageur (travel-profile.js).\n")
 	b.WriteString("- Aide l'utilisateur à renseigner préférences, allergies, centres d'intérêt.\n")
 	b.WriteString("- Écris dans travel-profile.js uniquement.\n")
+	writeContextBlock(&b, cc)
 	return b.String()
+}
+
+// writeContextBlock appends the trip construction context to the prompt builder
+// when available. This gives Leo awareness of travelers, style, and budget.
+func writeContextBlock(b *strings.Builder, cc *ConstructionContext) {
+	if cc == nil {
+		return
+	}
+	b.WriteString("\nCONTEXTE VOYAGE\n")
+	if cc.TripName != "" {
+		b.WriteString("- Voyage : ")
+		b.WriteString(cc.TripName)
+		b.WriteByte('\n')
+	}
+	if len(cc.Travelers) > 0 {
+		b.WriteString("- Voyageurs :\n")
+		for _, t := range cc.Travelers {
+			b.WriteString("  - ")
+			b.WriteString(t.Name)
+			if t.Nationality != "" {
+				b.WriteString(" (")
+				b.WriteString(t.Nationality)
+				b.WriteByte(')')
+			}
+			if t.IsChild {
+				b.WriteString(" [enfant")
+				if t.AgeLabel != "" {
+					b.WriteString(", ")
+					b.WriteString(t.AgeLabel)
+				}
+				b.WriteByte(']')
+			}
+			if t.HealthNote != "" {
+				b.WriteString(" /!\\ ")
+				b.WriteString(t.HealthNote)
+			}
+			b.WriteByte('\n')
+		}
+	}
+	if cc.Style != nil {
+		b.WriteString("- Style : ")
+		parts := []string{}
+		if cc.Style.Pace != "" {
+			parts = append(parts, "rythme "+cc.Style.Pace)
+		}
+		if cc.Style.MaxDrivingPerDay != "" {
+			parts = append(parts, "max conduite "+cc.Style.MaxDrivingPerDay)
+		}
+		if cc.Style.MajorSitesPerDay > 0 {
+			parts = append(parts, fmt.Sprintf("%d site(s) majeur(s)/jour", cc.Style.MajorSitesPerDay))
+		}
+		b.WriteString(strings.Join(parts, ", "))
+		b.WriteByte('\n')
+	}
+	if cc.Budget != nil {
+		cur := cc.Budget.Currency
+		if cur == "" {
+			cur = "EUR"
+		}
+		b.WriteString("- Budget : ")
+		parts := []string{}
+		if cc.Budget.AccommodationMax > 0 {
+			parts = append(parts, fmt.Sprintf("hebergement max %d %s/nuit", cc.Budget.AccommodationMax, cur))
+		}
+		if cc.Budget.RestaurantMax > 0 {
+			parts = append(parts, fmt.Sprintf("resto max %d %s/pers", cc.Budget.RestaurantMax, cur))
+		}
+		if cc.Budget.ActivitiesMax > 0 {
+			parts = append(parts, fmt.Sprintf("activites max %d %s/pers", cc.Budget.ActivitiesMax, cur))
+		}
+		b.WriteString(strings.Join(parts, ", "))
+		b.WriteByte('\n')
+	}
+	if len(cc.Interests) > 0 {
+		b.WriteString("- Centres d'interet :\n")
+		for name, ip := range cc.Interests {
+			b.WriteString("  - ")
+			b.WriteString(name)
+			b.WriteString(" : ")
+			if len(ip.Likes) > 0 {
+				b.WriteString("aime [")
+				b.WriteString(strings.Join(ip.Likes, ", "))
+				b.WriteByte(']')
+			}
+			if len(ip.Dislikes) > 0 {
+				if len(ip.Likes) > 0 {
+					b.WriteString(" ; ")
+				}
+				b.WriteString("evite [")
+				b.WriteString(strings.Join(ip.Dislikes, ", "))
+				b.WriteByte(']')
+			}
+			b.WriteByte('\n')
+		}
+	}
 }

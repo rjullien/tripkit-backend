@@ -66,7 +66,7 @@ func prepareMessages(ctx PromptContext, req ChatRequest) ([]ChatMessage, error) 
 	mode := ResolveMode(req.Mode, allModesList())
 	var sysContent string
 	if mode != ModeDefault {
-		sysContent = SystemPromptFor(mode, promptCtx, nil)
+		sysContent = SystemPromptFor(mode, promptCtx, promptCtx.Construction)
 	} else {
 		sysContent = SystemPrompt(promptCtx)
 	}

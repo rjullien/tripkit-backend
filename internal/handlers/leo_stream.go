@@ -12,8 +12,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rjullien/tripkit-backend/internal/config"
+	"github.com/rjullien/tripkit-backend/internal/construction"
 	"github.com/rjullien/tripkit-backend/internal/leo"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
+	"gorm.io/gorm"
 )
 
 // LeoChatStream starts a detached Léo job and SSE-subscribes to it.
@@ -47,6 +49,13 @@ func (h *Handler) LeoChatStream(w http.ResponseWriter, r *http.Request) {
 
 	admin := isRequestAdmin(r) || config.IsAdmin(user)
 	pctx := leoPromptContext(h.publishReg, user, admin, req.TripID)
+
+	// If a construction mode is requested, load trip context from DB.
+	mode := leo.ResolveMode(req.Mode, leo.AllModesList())
+	if mode != leo.ModeDefault && strings.TrimSpace(req.TripID) != "" {
+		cc := buildConstructionContext(h.db, req.TripID)
+		pctx.Construction = cc
+	}
 
 	job := h.leoJobs.Start(user, func(ctx context.Context, emit leo.EmitFunc) error {
 		err := h.runLeo(ctx, pctx, req, emit)
@@ -116,6 +125,53 @@ func (h *Handler) runLeo(ctx context.Context, pctx leo.PromptContext, req leo.Ch
 		return h.leoRun(ctx, pctx, req, emit)
 	}
 	return h.leoConfig().StreamChat(ctx, pctx, req, emit)
+}
+
+// buildConstructionContext loads trip construction data from DB and converts
+// it to leo.ConstructionContext. Returns nil if no data is available.
+func buildConstructionContext(db *gorm.DB, tripID string) *leo.ConstructionContext {
+	cc, err := construction.BuildLeoContext(db, tripID)
+	if err != nil || cc == nil {
+		return nil
+	}
+	// Convert construction.Context to leo.ConstructionContext.
+	lcc := &leo.ConstructionContext{
+		TripName: cc.TripName,
+	}
+	for _, t := range cc.Travelers {
+		lcc.Travelers = append(lcc.Travelers, leo.ConstructionTraveler{
+			Name:        t.Name,
+			Nationality: t.Nationality,
+			IsChild:     t.IsChild,
+			AgeLabel:    t.AgeLabel,
+			HealthNote:  t.HealthNote,
+		})
+	}
+	if cc.Style != nil {
+		lcc.Style = &leo.ConstructionStyle{
+			Pace:             cc.Style.Pace,
+			MaxDrivingPerDay: cc.Style.MaxDrivingPerDay,
+			MajorSitesPerDay: cc.Style.MajorSitesPerDay,
+		}
+	}
+	if cc.Budget != nil {
+		lcc.Budget = &leo.ConstructionBudget{
+			AccommodationMax: cc.Budget.AccommodationMax,
+			RestaurantMax:    cc.Budget.RestaurantMax,
+			ActivitiesMax:    cc.Budget.ActivitiesMax,
+			Currency:         cc.Budget.Currency,
+		}
+	}
+	if len(cc.Interests) > 0 {
+		lcc.Interests = make(map[string]leo.ConstructionInterest, len(cc.Interests))
+		for name, ip := range cc.Interests {
+			lcc.Interests[name] = leo.ConstructionInterest{
+				Likes:    ip.Likes,
+				Dislikes: ip.Dislikes,
+			}
+		}
+	}
+	return lcc
 }
 
 func (h *Handler) leoConfig() leo.Config {

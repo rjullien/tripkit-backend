@@ -145,6 +145,7 @@ type PromptContext struct {
 	AllowedRepos []string // full "owner/name", e.g. rjullien/tripkit-seeds-nadia
 	IsAdmin      bool
 	TripID       string
+	Construction *ConstructionContext // set by handler when mode is non-default
 }
 
 // SystemPrompt builds the fixed ops prompt injected by the BE (not the FE).
