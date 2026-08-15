@@ -350,11 +350,29 @@ func TestContractFixtures_SummaryOmittedWithoutCompleter(t *testing.T) {
 //  2. When both repos are checked out side by side — the layout in which the cp
 //     happens — TestContractFixtures_FrontendCopyInSync compares the two
 //     directories byte for byte, so a forgotten cp fails here.
+//
+// Guard 1 alone does NOT close the drift: the manifest is committed inside each
+// repo and hashes only its own directory, so a stale frontend copy shipped with
+// its own stale manifest satisfies both suites. Guard 2 is the one that bites,
+// and it needs both checkouts — hence the `fixtures-cross-repo` job in
+// .github/workflows/ci.yaml, which checks the frontend out beside this repo and
+// sets requireFrontendEnv so the skip below cannot hide the check.
 
 const checksumFile = "CHECKSUMS.txt"
 
-// frontendContractDir is the frontend copy, relative to this package.
+// frontendContractDir is the frontend copy, relative to this package. It is also
+// the layout the CI job creates, so the default needs no override there.
 const frontendContractDir = "../../../tripkit-frontend/tests/fixtures/construction-contract"
+
+const (
+	// frontendDirEnv overrides frontendContractDir for a checkout laid out
+	// differently.
+	frontendDirEnv = "TRIPKIT_FRONTEND_CONTRACT_DIR"
+	// requireFrontendEnv turns the "frontend not checked out" skip into a
+	// failure. A skipped guard is indistinguishable from a passing one in a log,
+	// so the job that exists to run it says so explicitly.
+	requireFrontendEnv = "TRIPKIT_REQUIRE_FRONTEND_FIXTURES"
+)
 
 // contractChecksums renders the sha256 manifest of the golden fixtures, in the
 // `sha256sum` format (hash, two spaces, file name), sorted by file name.
@@ -415,15 +433,27 @@ func TestContractFixtures_Checksums(t *testing.T) {
 // TestContractFixtures_FrontendCopyInSync fails when the frontend copy has
 // drifted, which is what makes the cross-repo contract real rather than
 // documented. It is skipped when the frontend repo is not checked out beside this
-// one (CI on this repo alone), where the checksum manifest carries the check
-// instead.
+// one, which is why CI runs it in a job that does check both out and sets
+// requireFrontendEnv: the committed manifest cannot catch a self-consistent stale
+// copy on its own.
 func TestContractFixtures_FrontendCopyInSync(t *testing.T) {
 	if *updateContract {
 		t.Skipf("fixtures just regenerated: copy them to %s, then re-run", frontendContractDir)
 	}
-	if _, err := os.Stat(frontendContractDir); err != nil {
-		t.Skipf("frontend repo not checked out beside this one (%s): the committed %s carries the cross-repo check",
-			frontendContractDir, checksumFile)
+	frontendDir := frontendContractDir
+	if override := os.Getenv(frontendDirEnv); override != "" {
+		frontendDir = override
+	}
+	if _, err := os.Stat(frontendDir); err != nil {
+		if os.Getenv(requireFrontendEnv) == "1" {
+			t.Fatalf("%s=1 but the frontend fixtures are not at %s: %v\n"+
+				"This job exists to run the cross-repo comparison: check tripkit-frontend out beside this repo "+
+				"or point %s at its tests/fixtures/construction-contract/.",
+				requireFrontendEnv, frontendDir, err, frontendDirEnv)
+		}
+		t.Skipf("frontend repo not checked out beside this one (%s): only the committed %s applies here, "+
+			"and it cannot catch a stale copy carrying its own manifest — the %s=1 CI job can",
+			frontendDir, checksumFile, requireFrontendEnv)
 	}
 
 	entries, err := os.ReadDir(contractDir)
@@ -439,21 +469,21 @@ func TestContractFixtures_FrontendCopyInSync(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		theirs, err := os.ReadFile(filepath.Join(frontendContractDir, name))
+		theirs, err := os.ReadFile(filepath.Join(frontendDir, name))
 		if err != nil {
 			t.Errorf("%s is missing from the frontend copy: %v\n"+
-				"cp %s/%s %s/", name, err, contractDir, name, frontendContractDir)
+				"cp %s/%s %s/", name, err, contractDir, name, frontendDir)
 			continue
 		}
 		if !bytes.Equal(mine, theirs) {
 			t.Errorf("%s differs between the two repos.\ncp %s/%s %s/",
-				name, contractDir, name, frontendContractDir)
+				name, contractDir, name, frontendDir)
 		}
 	}
 
 	// A fixture only present on the frontend side is drift too: it means a file
 	// was renamed or removed here without the copy following.
-	feEntries, err := os.ReadDir(frontendContractDir)
+	feEntries, err := os.ReadDir(frontendDir)
 	if err != nil {
 		t.Fatal(err)
 	}

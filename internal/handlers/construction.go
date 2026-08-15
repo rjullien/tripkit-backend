@@ -32,7 +32,7 @@ func (h *Handler) GetConstruction(w http.ResponseWriter, r *http.Request) {
 
 // TransitionPhase transitions the construction phase for a trip.
 // PUT /trips/{tripId}/construction/phase
-// Body: {"phase": <int>}
+// Body: {"phase": <int>} — required; a body without a `phase` key answers 400.
 // Query: ?force=1 skips the QA gate; reserved for admins (403 otherwise).
 // A refused transition answers 409 with a structured `blockers` array.
 func (h *Handler) TransitionPhase(w http.ResponseWriter, r *http.Request) {
@@ -42,11 +42,20 @@ func (h *Handler) TransitionPhase(w http.ResponseWriter, r *http.Request) {
 	}
 	tripID := chi.URLParam(r, "tripId")
 
+	// The target is decoded as a pointer on purpose: `phase` is optional as far
+	// as encoding/json is concerned, and phase 0 ("not started") is a valid
+	// target, so an `int` cannot tell an absent key from a deliberate 0. A body
+	// with a typo'd field name would then rewind the trip to "not started" and
+	// write an audit row for it. Presence is checked here, range in the service.
 	var body struct {
-		Phase int `json:"phase"`
+		Phase *int `json:"phase"`
 	}
 	if err := parseBody(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if body.Phase == nil {
+		writeError(w, http.StatusBadRequest, "phase is required")
 		return
 	}
 
@@ -61,7 +70,7 @@ func (h *Handler) TransitionPhase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state, code, err := h.construction.TransitionPhase(tripID, body.Phase, force, user)
+	state, code, err := h.construction.TransitionPhase(tripID, *body.Phase, force, user)
 	if err != nil {
 		var blocked *construction.TransitionBlockedError
 		if errors.As(err, &blocked) {

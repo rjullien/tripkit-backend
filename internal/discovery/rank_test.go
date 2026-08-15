@@ -204,6 +204,45 @@ func TestMatchKeyword_PluralsAndWordBoundaries(t *testing.T) {
 	}
 }
 
+// TestMatchKeyword_CompoundWordsAreKnownMisses records the price of whole-word
+// comparison, so the trade-off is a decision under test rather than an accident
+// nobody notices moving.
+//
+// Substring matching used to catch a keyword inside a compound name: "vélo" hit
+// "Vélodrome", "art" hit "Artothèque". Whole-word comparison loses both. The
+// obvious repair — accepting a word-PREFIX match above a length threshold — does
+// not work here: "vélo" (4 letters) and the "long" of "shopping long" (4 letters)
+// are the same length, so no threshold keeps the wanted prefix hit while still
+// keeping "long" out of "Longueuil". Since a false positive lands on dislikes too
+// (+10, demoting a legitimate item) while a false negative only forgoes a ranking
+// bonus, the false negatives below are the deliberate choice.
+//
+// If prefix matching is ever revisited, these cases flip to `true` and this test
+// is where that shows up.
+func TestMatchKeyword_CompoundWordsAreKnownMisses(t *testing.T) {
+	tests := []struct {
+		name    string
+		item    string
+		themeID string
+		keyword string
+		want    bool
+	}{
+		{"velo does not match Velodrome (accepted miss)", "Vélodrome de Montréal", "sport", "vélo", false},
+		{"art does not match Artotheque (accepted miss)", "Artothèque de Québec", "musees", "art", false},
+		{"the same rule keeps long out of Longueuil (the reason)", "Centre commercial Longueuil", "shopping", "long", false},
+		{"the whole word still matches", "Piste cyclable vélo du canal", "sport", "vélo", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := matchKeyword(strings.ToLower(tc.item), strings.ToLower(tc.themeID), tc.keyword)
+			if got != tc.want {
+				t.Errorf("matchKeyword(%q, %q, %q) = %v, want %v", tc.item, tc.themeID, tc.keyword, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestRankItems_RealSeedInterests proves the ranking actually moves with the
 // production vocabulary: rene's likes promote the national park, his dislikes
 // demote the modern-art museum without dropping it.

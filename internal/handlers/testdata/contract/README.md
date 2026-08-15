@@ -49,8 +49,22 @@ it, both dependency-free:
 - **`TestContractFixtures_FrontendCopyInSync`** — when both repos are checked out
   side by side (`../tripkit-frontend`, the layout in which the `cp` happens), it
   compares the two directories byte for byte, in both directions. It `SKIP`s when
-  the frontend repo is absent (CI on this repo alone) and when `-update` is set,
-  since the copy has not happened yet at that point.
+  the frontend repo is absent and when `-update` is set, since the copy has not
+  happened yet at that point.
+- **the `fixtures-cross-repo` CI job** (`.github/workflows/ci.yaml`) — checks
+  `tripkit-frontend` out beside this repo and runs the guard above with
+  `TRIPKIT_REQUIRE_FRONTEND_FIXTURES=1`, which turns the "frontend not checked
+  out" `SKIP` into a failure. Set `TRIPKIT_FRONTEND_CONTRACT_DIR` instead if the
+  copy lives somewhere else.
+
+What the manifest does **not** catch, and why the CI job exists: it is committed
+inside each repo and hashes only its own directory, so a stale frontend copy that
+travels with its own stale `CHECKSUMS.txt` is self-consistent and keeps both
+suites green. Only the two-checkout comparison sees that. Note that the job needs
+a `CROSS_REPO_TOKEN` secret if `tripkit-frontend` is private (`GITHUB_TOKEN` only
+covers this repo), and that it is deliberately **not** in the release job's
+`needs:` — until the token is configured, treat it as advisory rather than as a
+merge gate.
 
 ## Regenerating
 

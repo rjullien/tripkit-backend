@@ -63,6 +63,15 @@ La review notait que « rien dans les deux dépôts ne traverse la frontière »
   `TestContractFixtures_Checksums` **et** par le test unitaire frontend, et
   `TestContractFixtures_FrontendCopyInSync` compare les deux répertoires octet à octet quand les deux
   dépôts sont clonés côte à côte (il `SKIP` sinon).
+- Ce que le manifeste ne rattrape **pas** (constat 3 de la review v2) : il est committé dans chaque
+  dépôt et ne hache que son propre répertoire, donc une copie frontend périmée accompagnée de son
+  propre `CHECKSUMS.txt` périmé est cohérente avec elle-même et laisse les deux suites vertes. Seule
+  la comparaison des deux checkouts le voit, et elle `SKIP` en CI mono-dépôt. D'où le job
+  `fixtures-cross-repo` (`.github/workflows/ci.yaml`) : il clone `tripkit-frontend` à côté de ce dépôt
+  et lance le garde avec `TRIPKIT_REQUIRE_FRONTEND_FIXTURES=1`, ce qui transforme le `SKIP` en échec.
+  Le job a besoin du secret `CROSS_REPO_TOKEN` si le dépôt frontend est privé et n'est
+  **volontairement pas** dans le `needs:` de la release : tant que le token n'est pas configuré, il est
+  indicatif et non bloquant.
 
 Déterminisme rendu nécessaire par les fixtures (et bénéfique pour l'API réelle, même si aucune spec
 ne l'exigeait) : `DetectCountries` et `extractNationalities` trient désormais leurs résultats
@@ -158,3 +167,25 @@ américain dans le groupe supprime l'ESTA pour *tous* (`TestMatchAdminRules_BiNa
 comportement, et la fixture `admin-check.json` avec lui). C'est une sous-alerte, l'inverse du constat 1,
 antérieure à ces correctifs et hors de son périmètre ; la corriger demande de produire les items **par
 voyageur** côté backend, ce qui change l'enveloppe.
+
+---
+
+## 6. Troisième passe — review v2 (verdict NEEDS_CHANGES, 8 constats dont 1 bloquant)
+
+Le constat bloquant (1) est un rendu frontend : voir `tripkit-frontend/docs/REVIEW-construction-fixes.md`
+§7. Côté backend :
+
+| # | Constat v2 | Statut | Détail |
+|---|---|---|---|
+| 3 | Le garde inter-dépôts `SKIP` en CI mono-dépôt | ✅ | Le manifeste ne peut pas fermer ce trou : committé dans chaque dépôt et ne hachant que son propre répertoire, il laisse passer une copie périmée accompagnée de son propre `CHECKSUMS.txt` périmé. Nouveau job `fixtures-cross-repo` (`.github/workflows/ci.yaml`) : il clone `tripkit-frontend` **à côté** de ce dépôt et lance `go test -run TestContractFixtures ./internal/handlers/` avec `TRIPKIT_REQUIRE_FRONTEND_FIXTURES=1`, ce qui transforme le `SKIP` « frontend absent » en **échec** (nouveau chemin dans `contract_fixtures_test.go`, plus `TRIPKIT_FRONTEND_CONTRACT_DIR` pour un autre agencement). Le job a besoin du secret `CROSS_REPO_TOKEN` si le dépôt frontend est privé et n'est volontairement pas dans le `needs:` de la release : tant que le token n'est pas configuré il est **indicatif**, ce que disent aussi le README des fixtures et §2 |
+| 5 | Un corps sans clé `phase` valait phase 0 | ✅ | `internal/handlers/construction.go` : le corps se décode dans `Phase *int` et une valeur absente (ou `null`) répond `400 {"error":"phase is required"}`. `{}` ou `{"target":3}` ne rembobinent plus le voyage à « pas démarrée » avec une ligne d'audit à l'appui. Un `0` explicite reste accepté (remise à zéro légitime). Tests : `TestTransitionPhase_MissingPhaseKey` (4 corps, état et journal inchangés), `TestTransitionPhase_ExplicitZeroAccepted` |
+| 6 | La neutralisation de `WrapUserRequest` était en correspondance exacte | ✅ | `internal/leo/prompts.go` : `userRequestDelimiterRe` = `(?i)<[ \t]*(/?)[ \t]*user_request[ \t]*>`, donc `</USER_REQUEST>`, `</ user_request>` et `< / USER_request >` sont neutralisés comme le littéral, en distinguant ouverture et fermeture. Un texte qui mentionne simplement `user_request` n'est pas touché. Tests : 5 variantes de casse/espaces, la variante ouvrante, et le cas non-délimiteur |
+| 7 | Le match par mot entier perd les mots composés | ✅ documenté et sous test | Choix assumé, désormais figé par `TestMatchKeyword_CompoundWordsAreKnownMisses` : `vélo` ne matche plus `Vélodrome`, `art` ne matche plus `Artothèque`. La réparation évidente (match par **préfixe** de mot au-delà d'un seuil de longueur) ne marche pas ici : `vélo` et le `long` de « shopping long » font tous deux 4 lettres, donc aucun seuil ne garde l'un en excluant l'autre de `Longueuil`. Un faux positif coûte +10 sur un *dislike* (il déclasse un item légitime), un faux négatif ne coûte qu'un bonus de tri : les faux négatifs sont le bon côté du compromis. Le commentaire de `matchKeyword` dit la même chose |
+
+Constats 1, 2, 4 et 8 : frontend.
+
+**Vérifications** (locales, aucune instance joignable) : `go build ./...`, `go vet ./...`,
+`go test ./internal/... -count=1` (14 paquets `ok`, `internal/database` sans test), plus
+`TRIPKIT_REQUIRE_FRONTEND_FIXTURES=1 go test -run TestContractFixtures ./internal/handlers/`
+(le garde inter-dépôts passe avec les deux dépôts côte à côte, et échoue bien si le répertoire
+frontend manque — vérifié avec `TRIPKIT_FRONTEND_CONTRACT_DIR=/tmp/nope`).

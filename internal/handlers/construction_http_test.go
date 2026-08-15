@@ -285,3 +285,80 @@ func TestTransitionPhase_Blocked_StructuredBlockers(t *testing.T) {
 		t.Fatalf("phase=%d want 0", state.Phase)
 	}
 }
+
+// putPhaseRaw sends an arbitrary body, which putPhase cannot express.
+func putPhaseRaw(r http.Handler, tripID, user, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPut, "/trips/"+tripID+"/construction/phase", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if user != "" {
+		req.Header.Set("Remote-User", user)
+	}
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	return rec
+}
+
+// A body carrying no usable `phase` must be refused, not read as phase 0. Phase 0
+// is "not started" and a valid target since the range check landed, so an `int`
+// field would turn `{}` or a typo'd field name into a silent rewind of the whole
+// construction state, complete with an audit row claiming it was asked for.
+func TestTransitionPhase_MissingPhaseKey(t *testing.T) {
+	h, r := constructionRouter(t)
+	seedConstructionTrip(t, h)
+
+	// Start from a real phase, so a rewind would be visible.
+	if rec := putPhase(r, "trip-constr", "", "nadia", 2); rec.Code != http.StatusOK {
+		t.Fatalf("setup: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	for _, body := range []string{`{}`, `{"target":3}`, `{"phase":null}`, `{"Phase ":1}`} {
+		rec := putPhaseRaw(r, "trip-constr", "nadia", body)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("body %s: expected 400, got %d: %s", body, rec.Code, rec.Body.String())
+		}
+		var resp map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("body %s: json decode: %v", body, err)
+		}
+		if resp["error"] != "phase is required" {
+			t.Errorf("body %s: error=%v want \"phase is required\"", body, resp["error"])
+		}
+
+		state, _, err := h.construction.GetConstruction("trip-constr")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.Phase != 2 {
+			t.Fatalf("body %s: phase=%d want 2 (the state must not move)", body, state.Phase)
+		}
+	}
+
+	// Only the legitimate transition may be recorded.
+	var logs int64
+	h.db.Model(&models.ConstructionPhaseLog{}).Where("trip_id = ?", "trip-constr").Count(&logs)
+	if logs != 1 {
+		t.Fatalf("phase logs=%d want 1 (a refused body must not be audited)", logs)
+	}
+}
+
+// An explicit 0 stays legitimate: resetting a trip to "not started" is a real
+// operation and must not be collateral damage of the presence check above.
+func TestTransitionPhase_ExplicitZeroAccepted(t *testing.T) {
+	h, r := constructionRouter(t)
+	seedConstructionTrip(t, h)
+
+	if rec := putPhase(r, "trip-constr", "", "nadia", 2); rec.Code != http.StatusOK {
+		t.Fatalf("setup: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	rec := putPhaseRaw(r, "trip-constr", "nadia", `{"phase":0}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	state, _, err := h.construction.GetConstruction("trip-constr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Phase != 0 {
+		t.Fatalf("phase=%d want 0", state.Phase)
+	}
+}

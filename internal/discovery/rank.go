@@ -98,6 +98,12 @@ func interestScore(it Item, interests map[string]InterestPref) float64 {
 // tokens — the "d" of "musées d'art moderne" once the apostrophe is split on —
 // are dropped entirely instead of matching nearly every name. A false positive
 // on a dislike costs +10 and demotes a legitimate item.
+//
+// The accepted cost is the compound-word hit substring matching used to catch:
+// "vélo" no longer matches "Vélodrome", "art" no longer matches "Artothèque". A
+// word-PREFIX match cannot buy those back without giving "Longueuil" away too —
+// "vélo" and "long" are both four letters, so no length threshold separates them.
+// The misses are pinned by TestMatchKeyword_CompoundWordsAreKnownMisses.
 func matchKeyword(nameLower, themeIDLower, keyword string) bool {
 	tokens := keywordTokens(keyword)
 	if len(tokens) == 0 {

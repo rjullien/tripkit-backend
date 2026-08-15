@@ -2,6 +2,7 @@ package leo
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -215,11 +216,23 @@ const (
 // that sends user text to an LLM must go through this helper — the profile-edit
 // endpoint answers 501 for now (handlers.CreateProfileRequest), and this is the
 // piece that must not have to be reinvented when the write-back is wired.
+//
+// Matching is case-insensitive and tolerates whitespace inside the tag: a model
+// reads `</USER_REQUEST>` and `</ user_request >` as the end of the block just as
+// readily as the exact literal, so an exact-string replace would let both through.
 func WrapUserRequest(text string) string {
-	safe := strings.ReplaceAll(text, UserRequestClose, neutralizedClose)
-	safe = strings.ReplaceAll(safe, UserRequestOpen, neutralizedOpen)
+	safe := userRequestDelimiterRe.ReplaceAllStringFunc(text, func(m string) string {
+		if strings.Contains(m, "/") {
+			return neutralizedClose
+		}
+		return neutralizedOpen
+	})
 	return UserRequestOpen + "\n" + safe + "\n" + UserRequestClose
 }
+
+// userRequestDelimiterRe matches any variant of the delimiters that a model would
+// still read as a tag: either case, and whitespace around the slash and the name.
+var userRequestDelimiterRe = regexp.MustCompile(`(?i)<[ \t]*(/?)[ \t]*user_request[ \t]*>`)
 
 // writeContextBlock appends the trip construction context to the prompt builder
 // when available. This gives Leo awareness of travelers, style, and budget.
