@@ -30,8 +30,11 @@ func NewBifrostCompleter(cfg Config) *BifrostCompleter {
 		APIKey:  strings.TrimSpace(cfg.BifrostAPIKey),
 		Model:   strings.TrimSpace(cfg.CaptionModel),
 		HTTPClient: &http.Client{
-			// 90s: nginx /api/ is 180s, FE Polarsteps is 120s. The old 60s
-			// raced nginx's default proxy_read_timeout (HTML 502 to Safari).
+			// 90s: Traefik logs on the public /api hop (backend:3001, not
+			// nginx) showed POST polarsteps/caption → 502 after ~60.7s with a
+			// ~204-byte JSON body — this client's old 60s Timeout while
+			// Bifrost was still generating. Keep below FE (120s) and nginx
+			// /api/ (180s).
 			Timeout: 90 * time.Second,
 		},
 	}
