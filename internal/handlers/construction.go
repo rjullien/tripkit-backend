@@ -13,6 +13,7 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/leo"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/models"
+	"github.com/rjullien/tripkit-backend/internal/nuisance"
 )
 
 // GetConstruction returns the current construction state for a trip.
@@ -282,4 +283,68 @@ func (h *Handler) CreateProfileRequest(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, http.StatusAccepted, map[string]any{"jobId": job.ID})
+}
+
+// ── Nuisance Check ───────────────────────────────────────────────────────────
+
+// RunNuisanceCheck launches a nuisance analysis job for the given locations.
+// POST /trips/{tripId}/nuisance-check
+// Body: {"locationIds": ["loc1", "loc2"]} or {"all": true}
+func (h *Handler) RunNuisanceCheck(w http.ResponseWriter, r *http.Request) {
+	if h.nuisance == nil {
+		writeError(w, http.StatusServiceUnavailable, "Nuisance service not configured")
+		return
+	}
+	tripID := chi.URLParam(r, "tripId")
+	user := middleware.EffectiveUser(r)
+
+	var body struct {
+		LocationIDs []string `json:"locationIds"`
+		All         bool     `json:"all"`
+	}
+	if err := parseBody(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if !body.All && len(body.LocationIDs) == 0 {
+		writeError(w, http.StatusBadRequest, "locationIds or all:true required")
+		return
+	}
+
+	job := h.nuisance.StartCheck(user, nuisance.CheckRequest{
+		TripID:      tripID,
+		LocationIDs: body.LocationIDs,
+		All:         body.All,
+	})
+
+	writeJSON(w, http.StatusAccepted, map[string]any{"jobId": job.ID})
+}
+
+// GetNuisanceCheck returns stored nuisance check results.
+// GET /trips/{tripId}/nuisance-check - all locations
+// GET /trips/{tripId}/nuisance-check/{locationId} - single location
+func (h *Handler) GetNuisanceCheck(w http.ResponseWriter, r *http.Request) {
+	if h.nuisance == nil {
+		writeError(w, http.StatusServiceUnavailable, "Nuisance service not configured")
+		return
+	}
+	tripID := chi.URLParam(r, "tripId")
+	locationID := chi.URLParam(r, "locationId")
+
+	if locationID != "" {
+		result, err := h.nuisance.GetResult(tripID, locationID)
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"result": nil})
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+
+	results, err := h.nuisance.GetResults(tripID)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"results": []any{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/handlers"
 	"github.com/rjullien/tripkit-backend/internal/leo"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
+	"github.com/rjullien/tripkit-backend/internal/nuisance"
 	"github.com/rjullien/tripkit-backend/internal/pluschat"
 	"github.com/rjullien/tripkit-backend/internal/polarsteps"
 	"github.com/rjullien/tripkit-backend/internal/publish"
@@ -81,6 +82,14 @@ func main() {
 
 	// Construction state service.
 	h.SetConstruction(&construction.Service{DB: db})
+
+	// Nuisance analysis service (reuses the discovery Overpass client).
+	discOverpass := discovery.NewClient(discCfg.Overpass)
+	h.SetNuisance(&nuisance.Service{
+		DB:       db,
+		Overpass: discOverpass,
+		Hub:      leo.NewHub(),
+	})
 
 	// In-process worker: auto-on when TRIPKIT_GITHUB_TOKEN is set; override via TRIPKIT_PUBLISH_WORKER.
 	if publish.WorkerEnabled() {
@@ -183,6 +192,11 @@ func main() {
 		r.Get("/trips/{tripId}/construction/qa", h.GetConstructionQA)
 		r.Get("/trips/{tripId}/travel-profile", h.GetTravelProfile)
 		r.Post("/trips/{tripId}/travel-profile/request", h.CreateProfileRequest)
+
+		// Nuisance analysis
+		r.Post("/trips/{tripId}/nuisance-check", h.RunNuisanceCheck)
+		r.Get("/trips/{tripId}/nuisance-check", h.GetNuisanceCheck)
+		r.Get("/trips/{tripId}/nuisance-check/{locationId}", h.GetNuisanceCheck)
 
 		// Trips
 		r.Get("/trips", h.ListTrips)

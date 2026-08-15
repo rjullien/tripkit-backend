@@ -20,6 +20,7 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/leo"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/models"
+	"github.com/rjullien/tripkit-backend/internal/nuisance"
 	"github.com/rjullien/tripkit-backend/internal/pluschat"
 	"github.com/rjullien/tripkit-backend/internal/polarsteps"
 	"github.com/rjullien/tripkit-backend/internal/publish"
@@ -38,6 +39,7 @@ type Handler struct {
 	polarsteps      *polarsteps.Service
 	discovery       *discovery.Service
 	construction    *construction.Service
+	nuisance        *nuisance.Service
 	leoOps          *leo.OpsLoader
 	leoJobs         *leo.Hub
 	leoRun          func(ctx context.Context, pctx leo.PromptContext, req leo.ChatRequest, emit leo.EmitFunc) error
@@ -86,6 +88,11 @@ func (h *Handler) SetPublishManifestResolver(r *publish.ManifestResolver) {
 // SetConstruction attaches the construction state service.
 func (h *Handler) SetConstruction(svc *construction.Service) {
 	h.construction = svc
+}
+
+// SetNuisance attaches the nuisance analysis service.
+func (h *Handler) SetNuisance(svc *nuisance.Service) {
+	h.nuisance = svc
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
