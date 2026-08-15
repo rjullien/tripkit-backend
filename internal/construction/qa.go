@@ -313,6 +313,16 @@ func extractHotels(tripData map[string]any) []qaHotel {
 		if v, ok := hm["status"].(string); ok {
 			hotel.Status = v
 		}
+		// Retrocompat: bookingStatus field takes priority over status
+		if v, ok := hm["bookingStatus"].(string); ok && v != "" {
+			hotel.Status = v
+		}
+		// Retrocompat default: if hotel has bookingRef but no bookingStatus, treat as "booked"
+		if hotel.Status == "" {
+			if ref, ok := hm["bookingRef"].(string); ok && ref != "" {
+				hotel.Status = "booked"
+			}
+		}
 		if v, ok := hm["price"].(float64); ok {
 			hotel.Price = int(v)
 		}

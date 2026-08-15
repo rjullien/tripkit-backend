@@ -498,3 +498,90 @@ func TestRunQA_NilProfile_UsesDefaults(t *testing.T) {
 		t.Errorf("expected drive_too_long with nil profile (default 6h), got %+v", violations)
 	}
 }
+
+// ── Test: hotel with bookingRef but no bookingStatus defaults to booked ─────
+
+func TestRunQA_HotelBookingRefRetrocompat(t *testing.T) {
+	days := []map[string]any{
+		{"dayNum": float64(1), "date": "2026-06-15"},
+		{"dayNum": float64(2), "date": "2026-06-16"},
+	}
+	hotels := []map[string]any{
+		// Has bookingRef but no status/bookingStatus -> should default to "booked"
+		{"dayNum": float64(1), "bookingRef": "ABC123"},
+		// Has explicit bookingStatus
+		{"dayNum": float64(2), "bookingStatus": "to_book"},
+	}
+	tripData := makeTripData(days, hotels, "2026-06-15", nil)
+	profile := makeProfile("6h", 2, 0)
+
+	violations := RunQA(tripData, profile, 3)
+
+	// Neither day should trigger night_without_hotel
+	for _, v := range violations {
+		if v.Code == "night_without_hotel" {
+			t.Errorf("unexpected night_without_hotel for day %d (retrocompat should apply): %+v", v.DayNum, v)
+		}
+	}
+}
+
+// ── Test: hotel with bookingStatus "candidate" triggers night_without_hotel ─
+
+func TestRunQA_HotelCandidate_TriggersViolation(t *testing.T) {
+	days := []map[string]any{
+		{"dayNum": float64(1), "date": "2026-06-15"},
+	}
+	hotels := []map[string]any{
+		{"dayNum": float64(1), "bookingStatus": "candidate"},
+	}
+	tripData := makeTripData(days, hotels, "2026-06-15", nil)
+	profile := makeProfile("6h", 2, 0)
+
+	// Phase 3: candidate hotel should trigger night_without_hotel as red
+	violations := RunQA(tripData, profile, 3)
+
+	found := false
+	for _, v := range violations {
+		if v.Code == "night_without_hotel" && v.DayNum == 1 {
+			found = true
+			if v.Severity != "red" {
+				t.Errorf("expected severity=red at phase 3, got %q", v.Severity)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected night_without_hotel for candidate hotel, got %+v", violations)
+	}
+}
+
+// ── Test: transport_not_booked fires only when transport section present ────
+
+func TestRunQA_TransportNotBooked_FiresInPh4(t *testing.T) {
+	days := []map[string]any{
+		{
+			"dayNum":    float64(1),
+			"date":      "2026-06-15",
+			"transport": map[string]any{"mode": "flight", "status": "candidate"},
+		},
+	}
+	hotels := []map[string]any{
+		{"dayNum": float64(1), "bookingStatus": "booked"},
+	}
+	tripData := makeTripData(days, hotels, "2026-06-15", nil)
+	profile := makeProfile("6h", 2, 0)
+
+	// Phase 4: should be red
+	violations := RunQA(tripData, profile, 4)
+	found := false
+	for _, v := range violations {
+		if v.Code == "transport_not_booked" && v.DayNum == 1 {
+			found = true
+			if v.Severity != "red" {
+				t.Errorf("Phase 4: expected severity=red, got %q", v.Severity)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("Phase 4: expected transport_not_booked for candidate flight, got %+v", violations)
+	}
+}
