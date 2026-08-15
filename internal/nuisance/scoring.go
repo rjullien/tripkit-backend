@@ -11,6 +11,11 @@ const (
 	LevelEleve  = "ELEVE"  // Red - high nuisance
 	LevelModere = "MODERE" // Yellow - moderate nuisance
 	LevelFaible = "FAIBLE" // Green - low/no nuisance
+	// LevelIndetermine means the data source failed, so we do not know.
+	// It exists because "the Overpass query errored" and "there is nothing
+	// nearby" both produce zero items, and collapsing them into FAIBLE turns a
+	// rate-limited request into a green light on a hotel nobody checked.
+	LevelIndetermine = "INDETERMINE"
 )
 
 // CategoryResult is the deterministic output of scoring one nuisance category.
@@ -77,22 +82,56 @@ func ScoreCategory(cat NuisanceCategory, items []discovery.Item, refLat, refLon 
 	return result
 }
 
+// ScoreCategoryUnavailable builds the result for a category whose data source
+// failed. It is never green: an unanswered question is reported as unanswered.
+func ScoreCategoryUnavailable(cat NuisanceCategory, reason string) CategoryResult {
+	detail := "Source de donnees indisponible : verification impossible."
+	if reason != "" {
+		detail = "Source de donnees indisponible (" + reason + ") : verification impossible."
+	}
+	return CategoryResult{
+		Category: cat.ID,
+		Emoji:    "❓",
+		Level:    LevelIndetermine,
+		Detail:   detail,
+	}
+}
+
 // GlobalVerdict returns the highest severity across all category results.
-// Any red = ELEVE, any yellow = MODERE, all green = FAIBLE.
+// Any red = ELEVE, any yellow = MODERE, all green = FAIBLE. When nothing is
+// red or yellow but some category could not be evaluated, the verdict is
+// INDETERMINE rather than FAIBLE — we refuse to certify a place as quiet on
+// the strength of queries that never came back.
 func GlobalVerdict(results []CategoryResult) string {
 	hasYellow := false
+	hasUnknown := false
 	for _, r := range results {
 		switch r.Level {
 		case LevelEleve:
 			return LevelEleve
 		case LevelModere:
 			hasYellow = true
+		case LevelIndetermine:
+			hasUnknown = true
 		}
 	}
 	if hasYellow {
 		return LevelModere
 	}
+	if hasUnknown {
+		return LevelIndetermine
+	}
 	return LevelFaible
+}
+
+// HasUnknown reports whether any category could not be evaluated.
+func HasUnknown(results []CategoryResult) bool {
+	for _, r := range results {
+		if r.Level == LevelIndetermine {
+			return true
+		}
+	}
+	return false
 }
 
 // VerdictEmoji returns the emoji for a verdict level.
@@ -102,6 +141,8 @@ func VerdictEmoji(level string) string {
 		return "🔴"
 	case LevelModere:
 		return "🟡"
+	case LevelIndetermine:
+		return "❓"
 	default:
 		return "🟢"
 	}

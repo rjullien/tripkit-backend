@@ -19,10 +19,10 @@ const concurrency = 4
 
 // Service runs nuisance analysis for trip locations.
 type Service struct {
-	DB        *gorm.DB
-	Overpass  discovery.Querier
-	Bifrost   bifrost.Completer
-	Hub       *leo.Hub
+	DB       *gorm.DB
+	Overpass discovery.Querier
+	Bifrost  bifrost.Completer
+	Hub      *leo.Hub
 }
 
 // ProgressFunc reports progress for SSE streaming.
@@ -37,14 +37,17 @@ type CheckRequest struct {
 
 // CheckResult is the stored output for one location.
 type CheckResult struct {
-	LocationID   string           `json:"locationId"`
-	LocationName string           `json:"locationName"`
-	Verdict      string           `json:"verdict"`
-	VerdictEmoji string           `json:"verdictEmoji"`
-	Categories   []CategoryResult `json:"categories"`
-	Recommendation string         `json:"recommendation"`
-	Alternatives   []string       `json:"alternatives"`
-	AnalyzedAt   time.Time        `json:"analyzedAt"`
+	LocationID     string           `json:"locationId"`
+	LocationName   string           `json:"locationName"`
+	Verdict        string           `json:"verdict"`
+	VerdictEmoji   string           `json:"verdictEmoji"`
+	Categories     []CategoryResult `json:"categories"`
+	Recommendation string           `json:"recommendation"`
+	Alternatives   []string         `json:"alternatives"`
+	AnalyzedAt     time.Time        `json:"analyzedAt"`
+	// Partial is true when at least one category could not be evaluated, so the
+	// frontend can say "incomplet" instead of implying a full clean bill.
+	Partial bool `json:"partial,omitempty"`
 }
 
 // StartCheck launches a nuisance analysis as a leo.Hub job.
@@ -136,6 +139,7 @@ func (s *Service) runCheck(ctx context.Context, req CheckRequest, emit leo.EmitF
 			Recommendation: syn.Recommendation,
 			Alternatives:   syn.Alternatives,
 			AnalyzedAt:     time.Now(),
+			Partial:        lr.Partial,
 		}
 
 		data, _ := json.Marshal(checkResult)
@@ -211,22 +215,25 @@ func (s *Service) analyzeLocation(ctx context.Context, loc location) LocationRes
 		if ctx.Err() != nil {
 			break
 		}
-		var items []discovery.Item
 		if len(cat.Tags) > 0 && s.Overpass != nil {
 			theme := ThemeForCategory(cat)
 			got, err := s.Overpass.Search(ctx, loc.lat, loc.lon, theme)
 			if err != nil {
-				// Soft-fail: log and continue with zero items for this category.
-				log.Printf("nuisance: overpass category=%s location=%s: %v (soft-fail)", cat.ID, loc.id, err)
-				got = nil
+				// Soft-fail on the request, but NOT on the verdict: the category
+				// is reported as indeterminate so the location cannot come out
+				// green on the strength of a failed query.
+				log.Printf("nuisance: overpass category=%s location=%s: %v (indeterminate)", cat.ID, loc.id, err)
+				lr.Categories = append(lr.Categories, ScoreCategoryUnavailable(cat, "Overpass"))
+				continue
 			}
-			items = got
+			lr.Categories = append(lr.Categories, ScoreCategory(cat, got, loc.lat, loc.lon))
+			continue
 		}
-		result := ScoreCategory(cat, items, loc.lat, loc.lon)
-		lr.Categories = append(lr.Categories, result)
+		lr.Categories = append(lr.Categories, ScoreCategory(cat, nil, loc.lat, loc.lon))
 	}
 
 	lr.Verdict = GlobalVerdict(lr.Categories)
+	lr.Partial = HasUnknown(lr.Categories)
 	return lr
 }
 

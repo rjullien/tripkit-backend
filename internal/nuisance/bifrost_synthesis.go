@@ -9,11 +9,17 @@ import (
 )
 
 const synthesisSystem = `Tu es un assistant de voyage expert en analyse de nuisances.
-On te fournit les resultats d'une analyse de nuisances pour un ou plusieurs lieux.
+On te fournit les resultats DEJA calcules d'une analyse de nuisances pour un ou plusieurs lieux.
 Tu dois rediger un rapport synthetique en francais avec :
 1. Un resume du verdict global
 2. Pour chaque lieu avec un score ELEVE ou MODERE, une recommandation concrete
 3. Si possible, des alternatives (lieux plus calmes a proximite)
+
+Regles strictes :
+- Ne recalcule ni ne conteste les niveaux fournis, et n'invente aucune distance.
+- Une categorie INDETERMINE signifie que la donnee manque : dis-le explicitement,
+  ne la presente jamais comme calme ni comme bruyante.
+- Si un lieu est marque incomplet, precise que la verification est partielle.
 
 Reponds en JSON avec la structure :
 {"recommendations": [{"locationId": "...", "text": "...", "alternatives": ["..."]}]}`
@@ -24,6 +30,8 @@ type LocationResults struct {
 	LocationName string           `json:"locationName"`
 	Verdict      string           `json:"verdict"`
 	Categories   []CategoryResult `json:"categories"`
+	// Partial is true when at least one category could not be evaluated.
+	Partial bool `json:"partial,omitempty"`
 }
 
 // Synthesize calls Bifrost once with ALL locations' results and returns
@@ -64,6 +72,9 @@ func buildSynthesisPrompt(allResults []LocationResults) string {
 	b.WriteString("Voici les resultats d'analyse de nuisances :\n\n")
 	for _, lr := range allResults {
 		fmt.Fprintf(&b, "## %s (%s)\nVerdict: %s %s\n", lr.LocationName, lr.LocationID, VerdictEmoji(lr.Verdict), lr.Verdict)
+		if lr.Partial {
+			b.WriteString("Analyse INCOMPLETE : au moins une categorie n'a pas pu etre evaluee.\n")
+		}
 		for _, cat := range lr.Categories {
 			fmt.Fprintf(&b, "- %s %s: %s - %s\n", cat.Emoji, cat.Category, cat.Level, cat.Detail)
 		}

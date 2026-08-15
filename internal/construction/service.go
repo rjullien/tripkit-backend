@@ -58,6 +58,9 @@ func (s *Service) TransitionPhase(tripID string, target int, force bool, user st
 	}
 	violations := RunQA(tripData, profile, target)
 
+	// SPEC §8: an untreated red nuisance verdict blocks Ph3 → Ph4.
+	violations = append(violations, NuisanceBlockers(LoadNuisanceVerdicts(s.DB, tripID), target)...)
+
 	allowed, blockers := CanTransition(violations, target, force)
 	if !allowed {
 		blockersJSON, _ := json.Marshal(blockers)

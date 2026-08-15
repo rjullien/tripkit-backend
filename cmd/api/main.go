@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/rjullien/tripkit-backend/internal/bifrost"
 	"github.com/rjullien/tripkit-backend/internal/construction"
 	"github.com/rjullien/tripkit-backend/internal/dailybrief"
 	"github.com/rjullien/tripkit-backend/internal/database"
@@ -81,6 +82,32 @@ func main() {
 	log.Printf("leo ops: origin=%s default=%s models=%d", leoCfg.Origin, leoCfg.DefaultModel, len(leoCfg.Models))
 	h.SetLeoOps(leoOps)
 
+	// Construction ops config (SoT: ops/construction.json) — supplies the Bifrost
+	// endpoint and the per-check model for admin-check, health-check and nuisance.
+	constructionOps := construction.NewLoaderFromEnv()
+	consCfg := constructionOps.Bootstrap()
+	log.Printf("construction ops: origin=%s enabled=%t bifrost=%s models=[admin=%s health=%s nuisance=%s]",
+		consCfg.Origin, consCfg.Enabled, consCfg.BifrostBaseURL,
+		consCfg.ModelFor("adminCheck"), consCfg.ModelFor("healthCheck"), consCfg.ModelFor("nuisance"))
+
+	// One Bifrost completer per check, each pinned to its own model.
+	// nil when construction is disabled or unconfigured: every consumer then
+	// falls back to the deterministic output instead of failing.
+	newCompleter := func(feature string) bifrost.Completer {
+		if !consCfg.Ready() {
+			return nil
+		}
+		model := consCfg.ModelFor(feature)
+		if model == "" {
+			return nil
+		}
+		return bifrost.NewClient(consCfg.BifrostBaseURL, consCfg.BifrostAPIKey, model).AsCompleter()
+	}
+	if !consCfg.Ready() {
+		log.Printf("construction ops: LLM formatting disabled (enabled=%t bifrostBaseUrl=%q) — checks return deterministic results only",
+			consCfg.Enabled, consCfg.BifrostBaseURL)
+	}
+
 	// Construction state service.
 	h.SetConstruction(&construction.Service{DB: db})
 
@@ -91,11 +118,17 @@ func main() {
 	h.SetNuisance(&nuisance.Service{
 		DB:       db,
 		Overpass: discOverpass,
+		Bifrost:  newCompleter("nuisance"),
 		Hub:      h.LeoHub(),
 	})
 
-	// Formalities service (admin-check, health-check) — deterministic rules engine, no external deps.
-	h.SetFormalities(&formalities.Service{DB: db})
+	// Formalities service (admin-check, health-check): deterministic rules in Go,
+	// LLM only for the wording (SPEC §7 / §9).
+	h.SetFormalities(&formalities.Service{
+		DB:              db,
+		Completer:       newCompleter("adminCheck"),
+		HealthCompleter: newCompleter("healthCheck"),
+	})
 
 	// In-process worker: auto-on when TRIPKIT_GITHUB_TOKEN is set; override via TRIPKIT_PUBLISH_WORKER.
 	if publish.WorkerEnabled() {

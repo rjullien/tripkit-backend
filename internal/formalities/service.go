@@ -3,6 +3,8 @@ package formalities
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/rjullien/tripkit-backend/internal/bifrost"
 	"github.com/rjullien/tripkit-backend/internal/models"
@@ -10,12 +12,23 @@ import (
 )
 
 // Service orchestrates admin-check and health-check operations.
-// The Completer field is optional: if nil, synthesis (LLM-powered summaries)
-// is skipped and the service returns deterministic rule-engine results only.
-// A warning is logged at startup if Completer is nil so operators notice.
+//
+// The Completer fields are optional: if nil, the LLM wording step is skipped and
+// the service returns the deterministic rule-engine results only (Summary empty).
+// They are split per check so ops can point admin and health at different models.
 type Service struct {
 	DB        *gorm.DB
 	Completer bifrost.Completer
+	// HealthCompleter is used by HealthCheck. Falls back to Completer when nil.
+	HealthCompleter bifrost.Completer
+}
+
+// healthCompleter returns the completer to use for health formatting.
+func (s *Service) healthCompleter() bifrost.Completer {
+	if s.HealthCompleter != nil {
+		return s.HealthCompleter
+	}
+	return s.Completer
 }
 
 // AdminCheck runs the full admin-check pipeline for a trip:
@@ -32,27 +45,98 @@ func (s *Service) AdminCheck(tripID string) (*AdminCheckResult, error) {
 
 	countries := DetectCountries(tripData)
 	if len(countries) == 0 {
-		return &AdminCheckResult{Verdict: "ok", Countries: nil, Items: nil}, nil
+		return &AdminCheckResult{Verdict: "ok", Countries: nil, Travelers: nil, Items: nil}, nil
 	}
 
-	nationalities := extractNationalities(tripData)
-	if len(nationalities) == 0 {
-		return &AdminCheckResult{Verdict: "ok", Countries: countries, Items: nil}, nil
+	travelers := extractTravelers(tripData)
+	if len(travelers) == 0 {
+		// No people recorded at all: we cannot answer, and saying "ok" would be a
+		// silent false negative on visas. Surface it as a warning instead.
+		return &AdminCheckResult{
+			Verdict:   "warning",
+			Countries: countries,
+			Items:     []AdminCheckItem{unknownTravelersItem()},
+		}, nil
 	}
-
-	items := MatchAdminRules(countries, nationalities)
 
 	var statuses []string
-	for _, item := range items {
-		statuses = append(statuses, item.Status)
-	}
-	verdict := worstVerdict(statuses)
+	checklists := make([]TravelerChecklist, 0, len(travelers))
 
-	return &AdminCheckResult{
-		Verdict:   verdict,
+	for _, t := range travelers {
+		var items []AdminCheckItem
+		if len(t.Nationalities) == 0 {
+			// Same reasoning as above, scoped to one person.
+			items = []AdminCheckItem{unknownNationalityItem(t)}
+		} else {
+			items = MatchAdminRules(countries, t.Nationalities)
+		}
+
+		var travelerStatuses []string
+		for _, item := range items {
+			travelerStatuses = append(travelerStatuses, item.Status)
+			statuses = append(statuses, item.Status)
+		}
+
+		checklists = append(checklists, TravelerChecklist{
+			ID:            t.ID,
+			Name:          t.Name,
+			Nationalities: t.Nationalities,
+			Verdict:       worstVerdict(travelerStatuses),
+			Items:         items,
+		})
+	}
+
+	result := &AdminCheckResult{
+		Verdict:   worstVerdict(statuses),
 		Countries: countries,
-		Items:     items,
-	}, nil
+		Travelers: checklists,
+		Items:     unionItems(checklists),
+	}
+
+	result.Summary, _ = FormatAdminResults(s.Completer, result)
+	return result, nil
+}
+
+// unknownTravelersItem flags a trip with no recorded people.
+func unknownTravelersItem() AdminCheckItem {
+	return AdminCheckItem{
+		Type:   "nationality_unknown",
+		Label:  "Voyageurs inconnus",
+		Status: "warning",
+		Detail: "Aucun voyageur enregistré : impossible de vérifier les formalités. Renseigne people.js.",
+	}
+}
+
+// unknownNationalityItem flags a traveler whose passports are not recorded.
+func unknownNationalityItem(t Traveler) AdminCheckItem {
+	return AdminCheckItem{
+		Type:   "nationality_unknown",
+		Label:  "Nationalité non renseignée",
+		Status: "warning",
+		Detail: "Aucune nationalité pour " + t.Name + " : formalités non vérifiables. Ajoute nationalities dans people.js.",
+	}
+}
+
+// unionItems de-duplicates the per-traveler items by country+type, keeping the
+// most severe status seen for each. The flat list answers "is there anything to
+// do on this trip"; the per-traveler lists answer "who has to do it".
+func unionItems(checklists []TravelerChecklist) []AdminCheckItem {
+	var out []AdminCheckItem
+	idx := map[string]int{}
+	for _, cl := range checklists {
+		for _, item := range cl.Items {
+			key := item.Country + "|" + item.Type
+			if i, ok := idx[key]; ok {
+				if worstVerdict([]string{out[i].Status, item.Status}) != out[i].Status {
+					out[i].Status = item.Status
+				}
+				continue
+			}
+			idx[key] = len(out)
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // HealthCheck runs the full health-check pipeline for a trip.
@@ -70,7 +154,10 @@ func (s *Service) HealthCheck(tripID string) (*HealthCheckResult, error) {
 	nationalities := extractNationalities(tripData)
 	items := MatchHealthRules(countries, nationalities)
 
-	if items == nil {
+	if len(items) == 0 {
+		// SPEC §7.2 silence rule: nothing to say, and no section to display.
+		// No Summary either — a paragraph saying "rien à signaler" is the exact
+		// noise the rule exists to avoid.
 		return &HealthCheckResult{Verdict: "none", Countries: countries, Items: nil}, nil
 	}
 
@@ -80,11 +167,14 @@ func (s *Service) HealthCheck(tripID string) (*HealthCheckResult, error) {
 	}
 	verdict := worstVerdict(statuses)
 
-	return &HealthCheckResult{
+	result := &HealthCheckResult{
 		Verdict:   verdict,
 		Countries: countries,
 		Items:     items,
-	}, nil
+	}
+
+	result.Summary, _ = FormatHealthResults(s.healthCompleter(), result)
+	return result, nil
 }
 
 // loadTripData fetches and parses a trip's JSON data field.
@@ -101,6 +191,83 @@ func (s *Service) loadTripData(tripID string) (map[string]any, error) {
 		return nil, fmt.Errorf("invalid trip data JSON: %w", err)
 	}
 	return data, nil
+}
+
+// extractTravelers pulls one Traveler per person from the trip data, keeping
+// each person's passports separate. Looks in `people` then `travelers`, each of
+// which may be a map keyed by person id or a plain array.
+//
+// This is deliberately NOT a union: see Traveler for why crossing the group's
+// combined nationalities against a destination produces false negatives.
+func extractTravelers(tripData map[string]any) []Traveler {
+	var out []Traveler
+	seenID := map[string]bool{}
+
+	add := func(id string, raw any) {
+		p, _ := raw.(map[string]any)
+		if p == nil {
+			return
+		}
+		nats := map[string]bool{}
+		extractNatsFromPerson(p, nats)
+
+		name, _ := p["name"].(string)
+		if strings.TrimSpace(name) == "" {
+			name, _ = p["firstName"].(string)
+		}
+		if strings.TrimSpace(name) == "" {
+			name = id
+		}
+		if pid, ok := p["id"].(string); ok && strings.TrimSpace(pid) != "" {
+			id = pid
+		}
+		if id == "" {
+			id = name
+		}
+		if seenID[id] {
+			return
+		}
+		seenID[id] = true
+
+		out = append(out, Traveler{
+			ID:            id,
+			Name:          name,
+			Nationalities: sortedKeys(nats),
+		})
+	}
+
+	for _, section := range []string{"people", "travelers"} {
+		switch v := tripData[section].(type) {
+		case map[string]any:
+			// Deterministic order: map iteration is random in Go.
+			for _, key := range sortedMapKeys(v) {
+				add(key, v[key])
+			}
+		case []any:
+			for i, item := range v {
+				add(fmt.Sprintf("%s-%d", section, i), item)
+			}
+		}
+	}
+	return out
+}
+
+func sortedKeys(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedMapKeys(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // extractNationalities pulls all unique nationality codes from the trip data.

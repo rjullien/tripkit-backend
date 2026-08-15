@@ -10,12 +10,16 @@ import (
 // FormatAdminResults uses the Completer to generate a human-readable summary
 // of admin check results. Falls back to a structured plain-text if the LLM is unavailable.
 func FormatAdminResults(completer bifrost.Completer, result *AdminCheckResult) (string, error) {
-	if completer == nil || len(result.Items) == 0 {
+	if completer == nil || (len(result.Items) == 0 && len(result.Travelers) == 0) {
 		return formatAdminPlain(result), nil
 	}
 
-	system := `Tu es un assistant de voyage. Resume les formalites administratives detectees 
-pour ce voyage de maniere claire et concise. Utilise des emojis pour les statuts.
+	system := `Tu es un assistant de voyage. Tu mets en forme une liste de formalites
+administratives DEJA calculee. Regles strictes :
+- N'ajoute aucune formalite, aucun pays, aucun cout et aucun delai qui ne soit pas dans les donnees.
+- N'enleve aucun voyageur : chaque personne doit apparaitre, meme si elle n'a rien a faire.
+- Garde le statut fourni pour chaque ligne (emoji), ne le reinterprete pas.
+- Organise par voyageur, en une ou deux phrases par personne.
 Reponds en francais.`
 
 	user := formatAdminPlain(result)
@@ -35,9 +39,12 @@ func FormatHealthResults(completer bifrost.Completer, result *HealthCheckResult)
 		return formatHealthPlain(result), nil
 	}
 
-	system := `Tu es un assistant de voyage. Resume les conseils sante detectes 
-pour ce voyage de maniere claire et concise. Utilise des emojis.
-Reponds en francais.`
+	system := `Tu es un assistant de voyage. Tu mets en forme des conseils sante DEJA calcules.
+Regles strictes :
+- N'ajoute aucun vaccin, aucun traitement et aucune destination absents des donnees.
+- Ne donne pas d'avis medical personnalise : renvoie vers un professionnel de sante.
+- Garde le statut fourni pour chaque ligne (emoji).
+Reponds en francais, en quelques phrases.`
 
 	user := formatHealthPlain(result)
 
@@ -50,23 +57,52 @@ Reponds en francais.`
 }
 
 // formatAdminPlain builds a structured plain-text fallback for admin results.
+// Grouped by traveler, because that is the unit the user acts on: "who has to
+// file an ESTA" is the question, not "does this trip involve an ESTA".
 func formatAdminPlain(result *AdminCheckResult) string {
-	if len(result.Items) == 0 {
+	if len(result.Travelers) == 0 && len(result.Items) == 0 {
 		return "Aucune formalite administrative detectee."
 	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Formalites administratives (pays: %s)\n\n", strings.Join(result.Countries, ", "))
 
-	for _, item := range result.Items {
-		emoji := statusEmoji(item.Status)
-		fmt.Fprintf(&b, "%s %s (%s) - %s\n", emoji, item.Label, item.Country, item.Detail)
-		if item.URL != "" {
-			fmt.Fprintf(&b, "   -> %s\n", item.URL)
+	if len(result.Travelers) == 0 {
+		for _, item := range result.Items {
+			writeAdminItem(&b, item)
 		}
+		return b.String()
+	}
+
+	for _, t := range result.Travelers {
+		nats := strings.Join(t.Nationalities, "+")
+		if nats == "" {
+			nats = "nationalite inconnue"
+		}
+		fmt.Fprintf(&b, "%s %s (%s)\n", statusEmoji(t.Verdict), t.Name, nats)
+		if len(t.Items) == 0 {
+			b.WriteString("   Aucune formalite requise.\n")
+		}
+		for _, item := range t.Items {
+			b.WriteString("   ")
+			writeAdminItem(&b, item)
+		}
+		b.WriteString("\n")
 	}
 
 	return b.String()
+}
+
+func writeAdminItem(b *strings.Builder, item AdminCheckItem) {
+	emoji := statusEmoji(item.Status)
+	if item.Country != "" {
+		fmt.Fprintf(b, "%s %s (%s) - %s\n", emoji, item.Label, item.Country, item.Detail)
+	} else {
+		fmt.Fprintf(b, "%s %s - %s\n", emoji, item.Label, item.Detail)
+	}
+	if item.URL != "" {
+		fmt.Fprintf(b, "      -> %s\n", item.URL)
+	}
 }
 
 // formatHealthPlain builds a structured plain-text fallback for health results.
