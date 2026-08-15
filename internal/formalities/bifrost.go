@@ -20,9 +20,9 @@ func FormatAdminResults(completer bifrost.Completer, result *AdminCheckResult) (
 		return formatAdminPlain(result), nil
 	}
 
-	system := `Tu es un assistant de voyage. Resume les formalites administratives detectees 
-pour ce voyage de maniere claire et concise. Utilise des emojis pour les statuts.
-Reponds en francais.`
+	system := `Tu es un assistant de voyage. Résume les formalités administratives détectées 
+pour ce voyage de manière claire et concise. Utilise des emojis pour les statuts.
+Réponds en français.`
 
 	user := formatAdminPlain(result)
 
@@ -41,9 +41,9 @@ func FormatHealthResults(completer bifrost.Completer, result *HealthCheckResult)
 		return formatHealthPlain(result), nil
 	}
 
-	system := `Tu es un assistant de voyage. Resume les conseils sante detectes 
-pour ce voyage de maniere claire et concise. Utilise des emojis.
-Reponds en francais.`
+	system := `Tu es un assistant de voyage. Résume les conseils santé détectés 
+pour ce voyage de manière claire et concise. Utilise des emojis.
+Réponds en français.`
 
 	user := formatHealthPlain(result)
 
@@ -80,11 +80,11 @@ func completeBounded(completer bifrost.Completer, system, user string) (string, 
 // formatAdminPlain builds a structured plain-text fallback for admin results.
 func formatAdminPlain(result *AdminCheckResult) string {
 	if len(result.Items) == 0 {
-		return "Aucune formalite administrative detectee."
+		return "Aucune formalité administrative détectée."
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Formalites administratives (pays: %s)\n\n", strings.Join(result.Countries, ", "))
+	fmt.Fprintf(&b, "Formalités administratives (pays: %s)\n\n", strings.Join(result.Countries, ", "))
 
 	for _, item := range result.Items {
 		emoji := statusEmoji(item.Status)
@@ -100,11 +100,11 @@ func formatAdminPlain(result *AdminCheckResult) string {
 // formatHealthPlain builds a structured plain-text fallback for health results.
 func formatHealthPlain(result *HealthCheckResult) string {
 	if result.Verdict == "none" || len(result.Items) == 0 {
-		return "Aucun conseil sante particulier pour cette destination."
+		return "Aucun conseil santé particulier pour cette destination."
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Conseils sante (pays: %s)\n\n", strings.Join(result.Countries, ", "))
+	fmt.Fprintf(&b, "Conseils santé (pays: %s)\n\n", strings.Join(result.Countries, ", "))
 
 	for _, item := range result.Items {
 		emoji := statusEmoji(item.Status)

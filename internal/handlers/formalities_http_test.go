@@ -351,7 +351,7 @@ func TestRunHealthCheck_CompleterFailureSoftFails(t *testing.T) {
 		t.Fatal("deterministic items must survive an LLM failure")
 	}
 	summary, _ := resp["summary"].(string)
-	if !strings.Contains(summary, "Conseils sante") {
+	if !strings.Contains(summary, "Conseils santé") {
 		t.Fatalf("expected the plain-text fallback summary, got %q", summary)
 	}
 }

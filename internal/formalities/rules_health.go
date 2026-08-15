@@ -21,73 +21,73 @@ type HealthRule struct {
 // baseHealthRules contains the embedded health rules database.
 var baseHealthRules = []HealthRule{
 	// Thailand
-	{Country: "TH", Type: "vaccins", Label: "Vaccinations recommandees (Hepatite A, Typhoide)",
-		AppliesTo: []string{"*"}, Detail: "Hepatite A et Typhoide recommandees pour tout sejour"},
+	{Country: "TH", Type: "vaccins", Label: "Vaccinations recommandées (Hépatite A, Typhoïde)",
+		AppliesTo: []string{"*"}, Detail: "Hépatite A et Typhoïde recommandées pour tout séjour"},
 	{Country: "TH", Type: "paludisme", Label: "Risque de paludisme (zones rurales)",
-		AppliesTo: []string{"*"}, Detail: "Traitement preventif recommande pour les zones rurales et frontalieres"},
+		AppliesTo: []string{"*"}, Detail: "Traitement préventif recommandé pour les zones rurales et frontalières"},
 	{Country: "TH", Type: "eau", Label: "Eau non potable",
-		AppliesTo: []string{"*"}, Detail: "Ne pas boire l'eau du robinet, privilegier l'eau en bouteille"},
+		AppliesTo: []string{"*"}, Detail: "Ne pas boire l'eau du robinet, privilégier l'eau en bouteille"},
 
 	// India
-	{Country: "IN", Type: "vaccins", Label: "Vaccinations recommandees (Hepatite A/B, Typhoide, Fievre jaune si transit)",
-		AppliesTo: []string{"*"}, Detail: "Hepatite A, Hepatite B, Typhoide fortement recommandees"},
+	{Country: "IN", Type: "vaccins", Label: "Vaccinations recommandées (Hépatite A/B, Typhoïde, Fièvre jaune si transit)",
+		AppliesTo: []string{"*"}, Detail: "Hépatite A, Hépatite B, Typhoïde fortement recommandées"},
 	{Country: "IN", Type: "paludisme", Label: "Risque de paludisme",
-		AppliesTo: []string{"*"}, Detail: "Traitement preventif recommande selon la region et la saison"},
+		AppliesTo: []string{"*"}, Detail: "Traitement préventif recommandé selon la région et la saison"},
 	{Country: "IN", Type: "eau", Label: "Eau non potable",
 		AppliesTo: []string{"*"}, Detail: "Ne pas boire l'eau du robinet"},
 
 	// China
-	{Country: "CN", Type: "vaccins", Label: "Vaccinations recommandees (Hepatite A/B)",
-		AppliesTo: []string{"*"}, Detail: "Hepatite A et B recommandees"},
+	{Country: "CN", Type: "vaccins", Label: "Vaccinations recommandées (Hépatite A/B)",
+		AppliesTo: []string{"*"}, Detail: "Hépatite A et B recommandées"},
 	{Country: "CN", Type: "eau", Label: "Eau non potable",
-		AppliesTo: []string{"*"}, Detail: "Ne pas boire l'eau du robinet dans la plupart des regions"},
+		AppliesTo: []string{"*"}, Detail: "Ne pas boire l'eau du robinet dans la plupart des régions"},
 
 	// Morocco
-	{Country: "MA", Type: "vaccins", Label: "Vaccinations recommandees (Hepatite A)",
-		AppliesTo: []string{"*"}, Detail: "Hepatite A recommandee"},
+	{Country: "MA", Type: "vaccins", Label: "Vaccinations recommandées (Hépatite A)",
+		AppliesTo: []string{"*"}, Detail: "Hépatite A recommandée"},
 	{Country: "MA", Type: "eau", Label: "Eau - prudence",
-		AppliesTo: []string{"*"}, Detail: "Privilegier l'eau en bouteille hors grandes villes"},
+		AppliesTo: []string{"*"}, Detail: "Privilégier l'eau en bouteille hors grandes villes"},
 
 	// African countries with yellow fever zones (example: Kenya, Tanzania)
-	{Country: "KE", Type: "vaccins", Label: "Fievre jaune (obligatoire)",
-		AppliesTo: []string{"*"}, Detail: "Certificat de vaccination fievre jaune obligatoire"},
-	{Country: "KE", Type: "paludisme", Label: "Risque eleve de paludisme",
-		AppliesTo: []string{"*"}, Detail: "Traitement preventif obligatoire"},
+	{Country: "KE", Type: "vaccins", Label: "Fièvre jaune (obligatoire)",
+		AppliesTo: []string{"*"}, Detail: "Certificat de vaccination fièvre jaune obligatoire"},
+	{Country: "KE", Type: "paludisme", Label: "Risque élevé de paludisme",
+		AppliesTo: []string{"*"}, Detail: "Traitement préventif obligatoire"},
 	{Country: "KE", Type: "eau", Label: "Eau non potable",
 		AppliesTo: []string{"*"}, Detail: "Ne pas boire l'eau du robinet"},
 
-	{Country: "TZ", Type: "vaccins", Label: "Fievre jaune (obligatoire)",
-		AppliesTo: []string{"*"}, Detail: "Certificat de vaccination fievre jaune obligatoire"},
-	{Country: "TZ", Type: "paludisme", Label: "Risque eleve de paludisme",
-		AppliesTo: []string{"*"}, Detail: "Traitement preventif obligatoire"},
+	{Country: "TZ", Type: "vaccins", Label: "Fièvre jaune (obligatoire)",
+		AppliesTo: []string{"*"}, Detail: "Certificat de vaccination fièvre jaune obligatoire"},
+	{Country: "TZ", Type: "paludisme", Label: "Risque élevé de paludisme",
+		AppliesTo: []string{"*"}, Detail: "Traitement préventif obligatoire"},
 	{Country: "TZ", Type: "eau", Label: "Eau non potable",
 		AppliesTo: []string{"*"}, Detail: "Ne pas boire l'eau du robinet"},
 
 	// Brazil
-	{Country: "BR", Type: "vaccins", Label: "Fievre jaune (recommandee, certaines regions)",
-		AppliesTo: []string{"*"}, Detail: "Vaccination fievre jaune recommandee pour certaines regions"},
+	{Country: "BR", Type: "vaccins", Label: "Fièvre jaune (recommandée, certaines régions)",
+		AppliesTo: []string{"*"}, Detail: "Vaccination fièvre jaune recommandée pour certaines régions"},
 	{Country: "BR", Type: "paludisme", Label: "Risque de paludisme (Amazonie)",
-		AppliesTo: []string{"*"}, Detail: "Traitement preventif pour la region amazonienne"},
+		AppliesTo: []string{"*"}, Detail: "Traitement préventif pour la région amazonienne"},
 	{Country: "BR", Type: "eau", Label: "Eau - prudence",
-		AppliesTo: []string{"*"}, Detail: "Privilegier l'eau en bouteille hors grandes villes"},
+		AppliesTo: []string{"*"}, Detail: "Privilégier l'eau en bouteille hors grandes villes"},
 
 	// Peru (altitude)
 	{Country: "PE", Type: "altitude", Label: "Risque de mal d'altitude (> 2500m)",
-		AppliesTo: []string{"*"}, Detail: "Acclimatation progressive recommandee (Cusco, Lac Titicaca)"},
-	{Country: "PE", Type: "vaccins", Label: "Vaccinations recommandees (Hepatite A, Fievre jaune zones amazoniennes)",
-		AppliesTo: []string{"*"}, Detail: "Hepatite A recommandee, Fievre jaune pour l'Amazonie"},
+		AppliesTo: []string{"*"}, Detail: "Acclimatation progressive recommandée (Cusco, Lac Titicaca)"},
+	{Country: "PE", Type: "vaccins", Label: "Vaccinations recommandées (Hépatite A, Fièvre jaune zones amazoniennes)",
+		AppliesTo: []string{"*"}, Detail: "Hépatite A recommandée, Fièvre jaune pour l'Amazonie"},
 
 	// Nepal (altitude)
 	{Country: "NP", Type: "altitude", Label: "Risque de mal d'altitude (treks en haute montagne)",
-		AppliesTo: []string{"*"}, Detail: "Acclimatation obligatoire, Diamox recommande pour les treks > 3000m"},
-	{Country: "NP", Type: "vaccins", Label: "Vaccinations recommandees (Hepatite A/B, Typhoide)",
-		AppliesTo: []string{"*"}, Detail: "Hepatite A, Hepatite B, Typhoide recommandees"},
+		AppliesTo: []string{"*"}, Detail: "Acclimatation obligatoire, Diamox recommandé pour les treks > 3000m"},
+	{Country: "NP", Type: "vaccins", Label: "Vaccinations recommandées (Hépatite A/B, Typhoïde)",
+		AppliesTo: []string{"*"}, Detail: "Hépatite A, Hépatite B, Typhoïde recommandées"},
 	{Country: "NP", Type: "eau", Label: "Eau non potable",
 		AppliesTo: []string{"*"}, Detail: "Ne pas boire l'eau du robinet"},
 
 	// Generic trousse (first-aid kit) for non-safe countries
-	{Country: "*", Type: "trousse", Label: "Trousse de secours recommandee",
-		AppliesTo: []string{"*"}, Detail: "Emporter une trousse de premiers secours adaptee a la destination"},
+	{Country: "*", Type: "trousse", Label: "Trousse de secours recommandée",
+		AppliesTo: []string{"*"}, Detail: "Emporter une trousse de premiers secours adaptée à la destination"},
 }
 
 // MatchHealthRules crosses detected countries with traveler nationalities.

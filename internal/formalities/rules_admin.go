@@ -61,14 +61,14 @@ var baseAdminRules = []AdminRule{
 		AppliesTo: []string{"*"}, Cost: "185 USD", Delay: "Variable"},
 
 	// Canada - eTA
-	{Country: "CA", Type: "eta", Label: "eTA / AVE (Autorisation de Voyage Electronique)",
+	{Country: "CA", Type: "eta", Label: "eTA / AVE (Autorisation de Voyage Électronique)",
 		AppliesTo: etaCanadaCountries, URL: "https://www.canada.ca/eta", Cost: "7 CAD", Delay: "minutes"},
 
 	// United Kingdom - ETA
 	{Country: "GB", Type: "eta", Label: "UK ETA (Electronic Travel Authorisation)",
 		AppliesTo: ukETACountries, URL: "https://www.gov.uk/get-eta", Cost: "10 GBP", Delay: "3 jours"},
 	// UK - EU nationals do not need visa for <6 months
-	{Country: "GB", Type: "visa_waiver", Label: "Pas de visa requis (sejour < 6 mois)",
+	{Country: "GB", Type: "visa_waiver", Label: "Pas de visa requis (séjour < 6 mois)",
 		AppliesTo: euCountries},
 
 	// Australia - eVisitor
@@ -92,7 +92,7 @@ var baseAdminRules = []AdminRule{
 		AppliesTo: []string{"*"}, Cost: "Variable", Delay: "5-10 jours ouvrables"},
 
 	// Morocco - visa exempt for EU
-	{Country: "MA", Type: "visa_waiver", Label: "Pas de visa requis (sejour < 90 jours)",
+	{Country: "MA", Type: "visa_waiver", Label: "Pas de visa requis (séjour < 90 jours)",
 		AppliesTo: append(euCountries, "US", "CA", "GB", "AU", "NZ", "JP")},
 
 	// Schengen - EU free movement
@@ -146,7 +146,7 @@ func MatchAdminRules(countries []string, nationalities []string) []AdminCheckIte
 				Label:     rule.Label,
 				Status:    "ok",
 				AppliesTo: nationalities,
-				Detail:    "Libre circulation UE - aucune formalite requise",
+				Detail:    "Libre circulation UE - aucune formalité requise",
 			})
 			continue
 		}

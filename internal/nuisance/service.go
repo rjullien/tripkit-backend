@@ -77,7 +77,7 @@ func (s *Service) runCheck(ctx context.Context, req CheckRequest, emit leo.EmitF
 		return err
 	}
 	if len(locations) == 0 {
-		_ = emit("done", leo.StreamEvent{Text: "Aucun lieu a analyser."})
+		_ = emit("done", leo.StreamEvent{Text: "Aucun lieu à analyser."})
 		return nil
 	}
 
@@ -157,7 +157,7 @@ func (s *Service) runCheck(ctx context.Context, req CheckRequest, emit leo.EmitF
 	s.touchTrip(req.TripID)
 
 	_ = emit("done", leo.StreamEvent{
-		Text: fmt.Sprintf("Analyse terminee : %d lieux analyses.", total),
+		Text: fmt.Sprintf("Analyse terminée : %d lieux analysés.", total),
 	})
 	return nil
 }

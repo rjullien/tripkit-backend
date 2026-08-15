@@ -66,7 +66,7 @@ func ScoreCategory(cat NuisanceCategory, items []discovery.Item, refLat, refLon 
 
 	if len(items) == 0 {
 		result.Level = LevelFaible
-		result.Detail = "Aucun element detecte."
+		result.Detail = "Aucun élément détecté."
 		return result
 	}
 
@@ -168,19 +168,19 @@ func haversineKm(lat1, lon1, lat2, lon2 float64) float64 {
 
 func distanceDetail(cat NuisanceCategory, distM float64) string {
 	if distM >= 1000 {
-		return cat.Label + " a " + formatKm(distM/1000) + "km."
+		return cat.Label + " à " + formatKm(distM/1000) + "km."
 	}
-	return cat.Label + " a " + formatM(distM) + "m."
+	return cat.Label + " à " + formatM(distM) + "m."
 }
 
 func countDetail(cat NuisanceCategory, count int) string {
 	if count == 0 {
-		return "Aucun " + cat.Label + " detecte."
+		return "Aucun " + cat.Label + " détecté."
 	}
 	if count == 1 {
-		return "1 etablissement detecte dans un rayon de 200m."
+		return "1 établissement détecté dans un rayon de 200m."
 	}
-	return formatInt(count) + " etablissements detectes dans un rayon de 200m."
+	return formatInt(count) + " établissements détectés dans un rayon de 200m."
 }
 
 func formatKm(v float64) string {

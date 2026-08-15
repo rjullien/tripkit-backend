@@ -16,7 +16,7 @@
         {
           "category": "airports",
           "count": 0,
-          "detail": "Aucun element detecte.",
+          "detail": "Aucun élément détecté.",
           "distance": 0,
           "emoji": "✈️",
           "level": "FAIBLE"
@@ -24,7 +24,7 @@
         {
           "category": "highways",
           "count": 0,
-          "detail": "Aucun element detecte.",
+          "detail": "Aucun élément détecté.",
           "distance": 0,
           "emoji": "🛣️",
           "level": "FAIBLE"
@@ -32,7 +32,7 @@
         {
           "category": "nightlife",
           "count": 3,
-          "detail": "3 etablissements detectes dans un rayon de 200m.",
+          "detail": "3 établissements détectés dans un rayon de 200m.",
           "distance": 39,
           "emoji": "🎵",
           "level": "MODERE"
@@ -40,7 +40,7 @@
         {
           "category": "industrial",
           "count": 0,
-          "detail": "Aucun element detecte.",
+          "detail": "Aucun élément détecté.",
           "distance": 0,
           "emoji": "🏭",
           "level": "FAIBLE"

@@ -9,13 +9,13 @@ import (
 )
 
 const synthesisSystem = `Tu es un assistant de voyage expert en analyse de nuisances.
-On te fournit les resultats d'une analyse de nuisances pour un ou plusieurs lieux.
-Tu dois rediger un rapport synthetique en francais avec :
-1. Un resume du verdict global
-2. Pour chaque lieu avec un score ELEVE ou MODERE, une recommandation concrete
-3. Si possible, des alternatives (lieux plus calmes a proximite)
+On te fournit les résultats d'une analyse de nuisances pour un ou plusieurs lieux.
+Tu dois rédiger un rapport synthétique en français avec :
+1. Un résumé du verdict global
+2. Pour chaque lieu avec un score ELEVE ou MODERE, une recommandation concrète
+3. Si possible, des alternatives (lieux plus calmes à proximité)
 
-Reponds en JSON avec la structure :
+Réponds en JSON avec la structure :
 {"recommendations": [{"locationId": "...", "text": "...", "alternatives": ["..."]}]}`
 
 // LocationResults groups the scoring output for one location.
@@ -64,7 +64,7 @@ type SynthesisResult struct {
 
 func buildSynthesisPrompt(allResults []LocationResults) string {
 	var b strings.Builder
-	b.WriteString("Voici les resultats d'analyse de nuisances :\n\n")
+	b.WriteString("Voici les résultats d'analyse de nuisances :\n\n")
 	for _, lr := range allResults {
 		fmt.Fprintf(&b, "## %s (%s)\nVerdict: %s %s\n", lr.LocationName, lr.LocationID, VerdictEmoji(lr.Verdict), lr.Verdict)
 		for _, cat := range lr.Categories {
