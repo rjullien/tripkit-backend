@@ -158,8 +158,25 @@ go test -v -count=1 ./...
 
 | Événement | Jobs | Résultat |
 |-----------|------|----------|
-| `push main` | test + e2e | Tests seulement, pas de build Docker |
+| `push main` | test + e2e + fixtures-cross-repo | Tests seulement, pas de build Docker |
+| `pull_request` | test + e2e + fixtures-cross-repo | Tests seulement |
 | `release published` | test + e2e + **build-and-push** | Image Docker → ghcr.io |
+
+Le job **`fixtures-cross-repo`** compare les fixtures de contrat de
+`internal/handlers/testdata/contract/` à leur copie dans `tripkit-frontend`, qu'il clone à côté de ce
+dépôt. La ref frontend comparée est résolue ainsi :
+
+1. la ref donnée en `workflow_dispatch` (`frontend_ref`) si elle est fournie — comparaison **stricte** ;
+2. sinon la branche de `tripkit-frontend` **portant le même nom** que la branche de tête ici (une
+   modification de fixtures voyage en paire de branches homonymes, une par dépôt) — **stricte** ;
+3. sinon la branche par défaut du frontend, en mode **non strict** : les fixtures présentes sont
+   quand même comparées octet à octet, absentes le garde fait `SKIP` au lieu de faire échouer une PR
+   qui n'a pas de pendant frontend.
+
+Le cas 2 est celui pour lequel le job existe ; le cas 3 évite un job rouge en permanence. Le job a
+besoin du secret `CROSS_REPO_TOKEN` si `tripkit-frontend` est privé (`GITHUB_TOKEN` ne couvre que ce
+dépôt) : sans lui, la résolution retombe sur le cas 3. Il n'est **volontairement pas** dans le
+`needs:` de la release.
 
 ### Tags Docker générés sur release
 

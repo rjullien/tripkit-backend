@@ -53,9 +53,25 @@ it, both dependency-free:
   happened yet at that point.
 - **the `fixtures-cross-repo` CI job** (`.github/workflows/ci.yaml`) — checks
   `tripkit-frontend` out beside this repo and runs the guard above with
-  `TRIPKIT_REQUIRE_FRONTEND_FIXTURES=1`, which turns the "frontend not checked
+  `TRIPKIT_REQUIRE_FRONTEND_FIXTURES` set, which turns the "frontend not checked
   out" `SKIP` into a failure. Set `TRIPKIT_FRONTEND_CONTRACT_DIR` instead if the
   copy lives somewhere else.
+
+Which frontend ref the job compares against, and how strict it is about it:
+
+| Situation | Ref checked out | `TRIPKIT_REQUIRE_FRONTEND_FIXTURES` |
+|---|---|---|
+| `workflow_dispatch` with `frontend_ref` | that ref | `1` — the fixtures must be there |
+| `tripkit-frontend` has a branch of the same name as this PR's head branch | that branch | `1` |
+| no such branch (or the token cannot list the frontend refs) | the frontend default branch | `0` — compared if the fixtures are there, `SKIP` otherwise |
+
+A fixture change ships as a pair of branches of the same name, one per repo, so
+the middle row is the coordinated case this job exists for. Pinning it to the
+default branch instead made the job fail on exactly that case — the fixtures are
+on the frontend branch, not yet on its default branch — and a job that is red on
+every PR is a job nobody reads. The last row is deliberately non-strict: a
+backend-only PR has no frontend counterpart, and failing it would be the same
+noise.
 
 What the manifest does **not** catch, and why the CI job exists: it is committed
 inside each repo and hashes only its own directory, so a stale frontend copy that

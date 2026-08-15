@@ -68,13 +68,14 @@ func interestScore(it Item, interests map[string]InterestPref) float64 {
 
 	for _, pref := range interests {
 		for _, kw := range pref.Likes {
-			if matchKeyword(name, themeID, kw) {
+			// Prefix matching only on the likes: see matchKeyword.
+			if matchKeyword(name, themeID, kw, true) {
 				adj += likeBoost
 				break // one boost per person max
 			}
 		}
 		for _, kw := range pref.Dislikes {
-			if matchKeyword(name, themeID, kw) {
+			if matchKeyword(name, themeID, kw, false) {
 				adj += dislikePenalty
 				break // one penalty per person max
 			}
@@ -99,30 +100,51 @@ func interestScore(it Item, interests map[string]InterestPref) float64 {
 // are dropped entirely instead of matching nearly every name. A false positive
 // on a dislike costs +10 and demotes a legitimate item.
 //
-// The accepted cost is the compound-word hit substring matching used to catch:
-// "vélo" no longer matches "Vélodrome", "art" no longer matches "Artothèque". A
-// word-PREFIX match cannot buy those back without giving "Longueuil" away too —
-// "vélo" and "long" are both four letters, so no length threshold separates them.
-// The misses are pinned by TestMatchKeyword_CompoundWordsAreKnownMisses.
-func matchKeyword(nameLower, themeIDLower, keyword string) bool {
+// Whole-word comparison alone loses the compound-word hits substring matching
+// used to catch: "vélo" inside "Vélodrome", "art" inside "Artothèque". Those are
+// bought back with allowPrefix, and the axis that makes it safe is DIRECTION, not
+// length ("vélo" and the "long" of "shopping long" are both four letters, so no
+// threshold separates them): a false positive on a LIKE only hands out a ranking
+// bonus, while a false positive on a DISLIKE demotes a legitimate item. So
+// interestScore prefix-matches the likes and keeps the dislikes on whole words,
+// which is what keeps "Longueuil" out of "shopping long". Pinned by
+// TestMatchKeyword_PrefixMatchingIsLikeOnly.
+func matchKeyword(nameLower, themeIDLower, keyword string, allowPrefix bool) bool {
 	tokens := keywordTokens(keyword)
 	if len(tokens) == 0 {
 		return false
 	}
-	haystack := wordForms(nameLower, themeIDLower)
+	haystack, words := wordForms(nameLower, themeIDLower)
 	for _, tok := range tokens {
-		matched := false
-		for _, form := range matchForms(tok) {
-			if haystack[form] {
-				matched = true
-				break
-			}
-		}
-		if !matched {
+		if !matchToken(haystack, words, tok, allowPrefix) {
 			return false
 		}
 	}
 	return true
+}
+
+// prefixMinRunes is the shortest keyword token allowed to match as a prefix.
+// "art" (3) must reach "Artothèque"; below that a token is a fragment that would
+// prefix half the names in a city.
+const prefixMinRunes = 3
+
+// matchToken matches one keyword token against the words of the item, as a whole
+// word first and, when allowed, as a word prefix.
+func matchToken(haystack map[string]bool, words []string, tok string, allowPrefix bool) bool {
+	for _, form := range matchForms(tok) {
+		if haystack[form] {
+			return true
+		}
+	}
+	if !allowPrefix || len([]rune(tok)) < prefixMinRunes {
+		return false
+	}
+	for _, w := range words {
+		if strings.HasPrefix(w, tok) {
+			return true
+		}
+	}
+	return false
 }
 
 // keywordTokens normalises a keyword into match tokens, dropping the
@@ -141,17 +163,21 @@ func keywordTokens(keyword string) []string {
 }
 
 // wordForms collects every match form of every word of the given texts, so a
-// keyword token can be compared against whole words only.
-func wordForms(texts ...string) map[string]bool {
+// keyword token can be compared against whole words only. The normalised words
+// themselves are returned alongside, for the prefix comparison, which needs the
+// word and not its derived forms.
+func wordForms(texts ...string) (map[string]bool, []string) {
 	set := make(map[string]bool)
+	var words []string
 	for _, t := range texts {
 		for _, w := range splitWords(normalizeText(t)) {
+			words = append(words, w)
 			for _, f := range matchForms(w) {
 				set[f] = true
 			}
 		}
 	}
-	return set
+	return set, words
 }
 
 // splitWords cuts a normalised string on anything that is not a letter or digit.

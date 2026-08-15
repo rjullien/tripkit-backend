@@ -148,9 +148,12 @@ func TestMatchKeyword_RealSeedVocabulary(t *testing.T) {
 		{"aviation still matches on the theme id", "Some Place", "aviation", "aviation", true},
 	}
 
+	// allowPrefix=false: the strict whole-word semantics, which is what the
+	// dislikes use. The like direction is covered by
+	// TestMatchKeyword_PrefixMatchingIsLikeOnly.
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := matchKeyword(strings.ToLower(tc.item), strings.ToLower(tc.themeID), tc.keyword)
+			got := matchKeyword(strings.ToLower(tc.item), strings.ToLower(tc.themeID), tc.keyword, false)
 			if got != tc.want {
 				t.Errorf("matchKeyword(%q, %q, %q) = %v, want %v", tc.item, tc.themeID, tc.keyword, got, tc.want)
 			}
@@ -194,9 +197,12 @@ func TestMatchKeyword_PluralsAndWordBoundaries(t *testing.T) {
 		{"dropping the apostrophe token keeps the real tokens required", "Boulangerie Denise", "food", "d'art", false},
 	}
 
+	// allowPrefix=false, as for the dislikes: this is where "long" must stay out
+	// of "Longueuil", and that guarantee is exactly what prefix matching is NOT
+	// allowed to weaken.
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := matchKeyword(strings.ToLower(tc.item), strings.ToLower(tc.themeID), tc.keyword)
+			got := matchKeyword(strings.ToLower(tc.item), strings.ToLower(tc.themeID), tc.keyword, false)
 			if got != tc.want {
 				t.Errorf("matchKeyword(%q, %q, %q) = %v, want %v", tc.item, tc.themeID, tc.keyword, got, tc.want)
 			}
@@ -204,42 +210,78 @@ func TestMatchKeyword_PluralsAndWordBoundaries(t *testing.T) {
 	}
 }
 
-// TestMatchKeyword_CompoundWordsAreKnownMisses records the price of whole-word
-// comparison, so the trade-off is a decision under test rather than an accident
-// nobody notices moving.
+// TestMatchKeyword_PrefixMatchingIsLikeOnly pins the compound-word trade-off on
+// the axis that actually separates the wanted hits from the unwanted ones.
 //
 // Substring matching used to catch a keyword inside a compound name: "vélo" hit
-// "Vélodrome", "art" hit "Artothèque". Whole-word comparison loses both. The
-// obvious repair — accepting a word-PREFIX match above a length threshold — does
-// not work here: "vélo" (4 letters) and the "long" of "shopping long" (4 letters)
-// are the same length, so no threshold keeps the wanted prefix hit while still
-// keeping "long" out of "Longueuil". Since a false positive lands on dislikes too
-// (+10, demoting a legitimate item) while a false negative only forgoes a ranking
-// bonus, the false negatives below are the deliberate choice.
-//
-// If prefix matching is ever revisited, these cases flip to `true` and this test
-// is where that shows up.
-func TestMatchKeyword_CompoundWordsAreKnownMisses(t *testing.T) {
+// "Vélodrome", "art" hit "Artothèque". Whole-word comparison loses both, and
+// LENGTH cannot buy them back — "vélo" and the "long" of "shopping long" are both
+// four letters. DIRECTION can: "long" comes from a dislike, and per interestScore
+// a false positive on a dislike demotes a legitimate item (+10) while a false
+// positive on a like only hands out a ranking bonus. So the likes prefix-match and
+// the dislikes stay on whole words, and the same token can legitimately behave
+// differently depending on which list it came from.
+func TestMatchKeyword_PrefixMatchingIsLikeOnly(t *testing.T) {
 	tests := []struct {
-		name    string
-		item    string
-		themeID string
-		keyword string
-		want    bool
+		name        string
+		item        string
+		themeID     string
+		keyword     string
+		allowPrefix bool // true = the keyword came from Likes
+		want        bool
 	}{
-		{"velo does not match Velodrome (accepted miss)", "Vélodrome de Montréal", "sport", "vélo", false},
-		{"art does not match Artotheque (accepted miss)", "Artothèque de Québec", "musees", "art", false},
-		{"the same rule keeps long out of Longueuil (the reason)", "Centre commercial Longueuil", "shopping", "long", false},
-		{"the whole word still matches", "Piste cyclable vélo du canal", "sport", "vélo", true},
+		// The hits recovered: a like prefix-matches inside a compound word.
+		{"velo matches Velodrome as a like", "Vélodrome de Montréal", "sport", "vélo", true, true},
+		{"art matches Artotheque as a like", "Artothèque de Québec", "musees", "art", true, true},
+
+		// The guarantee kept: a dislike never does, so "shopping long" cannot
+		// demote a mall in Longueuil.
+		{"long stays out of Longueuil as a dislike", "Centre commercial Longueuil", "shopping", "long", false, false},
+		{"shopping long stays out of Longueuil as a dislike", "Centre commercial Longueuil", "shopping", "shopping long", false, false},
+		{"velo does not match Velodrome as a dislike", "Vélodrome de Montréal", "sport", "vélo", false, false},
+
+		// Accepted cost of the like direction: a prefix hit a whole-word match
+		// would have refused. It only adds a bonus, never a penalty.
+		{"parc matches Parcheminerie as a like (accepted false positive)", "Parcheminerie du Vieux-Québec", "patrimoine", "parc", true, true},
+
+		// Floor on the prefix: a two-letter token would prefix half a city.
+		{"a two-letter token does not prefix-match even as a like", "Vélodrome de Montréal", "sport", "vé", true, false},
+
+		// Whole words still match in both directions.
+		{"the whole word matches as a like", "Piste cyclable vélo du canal", "sport", "vélo", true, true},
+		{"the whole word matches as a dislike", "Piste cyclable vélo du canal", "sport", "vélo", false, true},
+
+		// Every token of a multi-word keyword is still required.
+		{"a multi-word like still needs all its tokens", "Musée des techniques", "musees", "musées d'art moderne", true, false},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := matchKeyword(strings.ToLower(tc.item), strings.ToLower(tc.themeID), tc.keyword)
+			got := matchKeyword(strings.ToLower(tc.item), strings.ToLower(tc.themeID), tc.keyword, tc.allowPrefix)
 			if got != tc.want {
-				t.Errorf("matchKeyword(%q, %q, %q) = %v, want %v", tc.item, tc.themeID, tc.keyword, got, tc.want)
+				t.Errorf("matchKeyword(%q, %q, %q, allowPrefix=%v) = %v, want %v",
+					tc.item, tc.themeID, tc.keyword, tc.allowPrefix, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestInterestScore_PrefixOnlyHelpsLikes proves the direction rule through the
+// scorer rather than the matcher: the same four-letter token is a bonus when it
+// prefixes an item for a like, and no penalty at all when it prefixes one for a
+// dislike.
+func TestInterestScore_PrefixOnlyHelpsLikes(t *testing.T) {
+	velodrome := Item{Name: "Vélodrome de Montréal", ThemeID: "sport"}
+	longueuil := Item{Name: "Centre commercial Longueuil", ThemeID: "shopping"}
+
+	liked := map[string]InterestPref{"rene": {Likes: []string{"vélo"}}}
+	if got := interestScore(velodrome, liked); got != likeBoost {
+		t.Errorf("a liked prefix must boost: got %v, want %v", got, likeBoost)
+	}
+
+	disliked := map[string]InterestPref{"rene": {Dislikes: []string{"shopping long"}}}
+	if got := interestScore(longueuil, disliked); got != 0 {
+		t.Errorf("a disliked keyword must not match a prefix: got %v, want 0", got)
 	}
 }
 
