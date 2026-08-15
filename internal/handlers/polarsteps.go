@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -8,6 +9,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/rjullien/tripkit-backend/internal/leo"
+	"github.com/rjullien/tripkit-backend/internal/middleware"
+	"github.com/rjullien/tripkit-backend/internal/polarsteps"
 )
 
 type polarstepsCaptionBody struct {
@@ -80,7 +84,11 @@ func (h *Handler) PolarstepsCaption(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-// GeneratePolarstepsCaption runs extract → Bifrost → QA → persist.
+// GeneratePolarstepsCaption starts a detached leo.Hub job (same as Discovery /
+// Léo Plus). POST returns 202 {jobId} immediately; Bifrost runs off the HTTP
+// request so Safari lock / proxy idle cannot kill the generate. Subscribe with
+// GET /leo/jobs/{jobId}/stream. The caption is persisted; GET …/caption is the
+// store the UI can also poll if the SSE drops.
 // POST /trips/{tripId}/polarsteps/caption
 func (h *Handler) GeneratePolarstepsCaption(w http.ResponseWriter, r *http.Request) {
 	if h.polarsteps == nil {
@@ -90,47 +98,84 @@ func (h *Handler) GeneratePolarstepsCaption(w http.ResponseWriter, r *http.Reque
 		})
 		return
 	}
+	user := middleware.EffectiveUser(r)
+	if strings.TrimSpace(user) == "" {
+		writeError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
 	tripID := chi.URLParam(r, "tripId")
 	body, err := parsePolarstepsBody(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
-	res, code, err := h.polarsteps.Generate(tripID, body.UserNote, body.ClientNowISO)
+	note, nowISO := body.UserNote, body.ClientNowISO
+	job := h.leoJobs.Start(user, func(ctx context.Context, emit leo.EmitFunc) error {
+		type outcome struct {
+			res  *polarsteps.Result
+			code int
+			err  error
+		}
+		ch := make(chan outcome, 1)
+		go func() {
+			res, code, err := h.polarsteps.Generate(tripID, note, nowISO)
+			ch <- outcome{res: res, code: code, err: err}
+		}()
+		tick := time.NewTicker(10 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case o := <-ch:
+				return emitPolarstepsOutcome(emit, o.res, o.code, o.err)
+			case <-tick.C:
+				_ = emit("progress", leo.StreamEvent{Text: "Génération…"})
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	})
+	writeJSON(w, http.StatusAccepted, map[string]any{"jobId": job.ID})
+}
+
+func emitPolarstepsOutcome(emit leo.EmitFunc, res *polarsteps.Result, code int, err error) error {
 	if err != nil {
 		if code == 0 {
 			code = http.StatusInternalServerError
 		}
 		if code == http.StatusUnprocessableEntity && res != nil {
-			writeJSON(w, code, map[string]any{
-				"error": err.Error(),
-				"code":  "qa_failed",
-				"qa":    res.QA,
-				"day":   res.Day,
-				"kind":  res.Kind,
+			_ = emit("error", leo.StreamEvent{
+				Error:  err.Error(),
+				Code:   "qa_failed",
+				Detail: res.QA.Summary,
+				Tool:   map[string]any{"qa": res.QA, "day": res.Day, "kind": res.Kind},
 			})
-			return
+			return nil
 		}
-		writeJSON(w, code, map[string]any{
-			"error": err.Error(),
-			"code":  polarstepsErrCode(code),
+		_ = emit("error", leo.StreamEvent{
+			Error:  err.Error(),
+			Code:   polarstepsErrCode(code),
+			Detail: err.Error(),
 		})
-		return
+		return nil
 	}
 	if code == http.StatusUnprocessableEntity {
-		writeJSON(w, code, map[string]any{
-			"error": res.QA.Summary,
-			"code":  "qa_failed",
-			"qa":    res.QA,
-			"day":   res.Day,
-			"kind":  res.Kind,
+		sum := ""
+		var tool map[string]any
+		if res != nil {
+			sum = res.QA.Summary
+			tool = map[string]any{"qa": res.QA, "day": res.Day, "kind": res.Kind}
+		}
+		_ = emit("error", leo.StreamEvent{
+			Error:  sum,
+			Code:   "qa_failed",
+			Detail: sum,
+			Tool:   tool,
 		})
-		return
+		return nil
 	}
-	if code == 0 {
-		code = http.StatusOK
-	}
-	writeJSON(w, code, res)
+	raw, _ := json.Marshal(res)
+	_ = emit("done", leo.StreamEvent{Reply: string(raw)})
+	return nil
 }
 
 func polarstepsErrCode(httpCode int) string {

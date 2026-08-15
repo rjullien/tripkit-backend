@@ -48,7 +48,21 @@ func polarstepsRouter(t *testing.T, c polarsteps.Completer) (*Handler, http.Hand
 	r.Get("/trips/{tripId}/polarsteps/status", h.PolarstepsStatus)
 	r.Get("/trips/{tripId}/polarsteps/caption", h.PolarstepsCaption)
 	r.Post("/trips/{tripId}/polarsteps/caption", h.GeneratePolarstepsCaption)
+	r.Get("/leo/jobs/{jobId}/stream", h.LeoJobStream)
 	return h, r
+}
+
+func waitPolarstepsJob(t *testing.T, h *Handler, jobID string) {
+	t.Helper()
+	j := h.LeoHub().Get(jobID)
+	if j == nil {
+		t.Fatal("job missing")
+	}
+	select {
+	case <-j.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("job timeout")
+	}
 }
 
 func seedQuebecPolarsteps(t *testing.T, h *Handler) {
@@ -122,16 +136,35 @@ func TestPolarstepsGenerate_OKAndLast(t *testing.T) {
 	body := `{"userNote":"escale longue à Genève","clientNowISO":"2026-08-14T18:00:00-04:00"}`
 	req := httptest.NewRequest(http.MethodPost, "/trips/quebec-2026/polarsteps/caption", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Remote-User", "rene")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-	if w.Code != 200 {
+	if w.Code != http.StatusAccepted {
 		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "Décollage") {
+	var accepted map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &accepted); err != nil {
+		t.Fatal(err)
+	}
+	jobID, _ := accepted["jobId"].(string)
+	if jobID == "" {
 		t.Fatalf("body=%s", w.Body.String())
 	}
+	waitPolarstepsJob(t, h, jobID)
 	if strings.Contains(w.Body.String(), "PNR") {
 		t.Fatal("PNR leaked")
+	}
+	j := h.LeoHub().Get(jobID)
+	backlog, _, unsub := j.Subscribe(0)
+	unsub()
+	var sawDone bool
+	for _, ev := range backlog {
+		if ev.Event == "done" && strings.Contains(ev.Data.Reply, "Décollage") {
+			sawDone = true
+		}
+	}
+	if !sawDone {
+		t.Fatalf("expected done.reply with caption, events=%d", len(backlog))
 	}
 
 	req2 := httptest.NewRequest(http.MethodGet, "/trips/quebec-2026/polarsteps/caption?now=2026-08-14T18:00:00-04:00", nil)
@@ -147,18 +180,32 @@ func TestPolarstepsGenerate_QAFailNoText(t *testing.T) {
 	seedQuebecPolarsteps(t, h)
 	req := httptest.NewRequest(http.MethodPost, "/trips/quebec-2026/polarsteps/caption", bytes.NewReader([]byte(`{"clientNowISO":"2026-08-14T18:00:00-04:00"}`)))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Remote-User", "rene")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-	if w.Code != 422 {
+	if w.Code != http.StatusAccepted {
 		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
 	}
-	var m map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &m)
-	if m["code"] != "qa_failed" {
-		t.Fatalf("body=%s", w.Body.String())
+	var accepted map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &accepted); err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := m["text"]; ok {
-		t.Fatal("FAILED must not include copyable text")
+	jobID, _ := accepted["jobId"].(string)
+	waitPolarstepsJob(t, h, jobID)
+	j := h.LeoHub().Get(jobID)
+	backlog, _, unsub := j.Subscribe(0)
+	unsub()
+	var sawQA bool
+	for _, ev := range backlog {
+		if ev.Event == "error" && ev.Data.Code == "qa_failed" {
+			sawQA = true
+		}
+		if ev.Event == "done" && strings.Contains(ev.Data.Reply, `"text"`) {
+			t.Fatal("FAILED must not include copyable text on done")
+		}
+	}
+	if !sawQA {
+		t.Fatalf("expected qa_failed on job, events=%d", len(backlog))
 	}
 }
 
