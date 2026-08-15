@@ -182,6 +182,7 @@ func BuildCanonical(seed SeedFile, people map[string]Person, family, sourceID, g
 		// Optional per-trip wall-clock "HH:MM" (day location TZ). Overrides ops sendLocalHour/Minute.
 		"briefSendTime": seed.Trip["briefSendTime"],
 		"polarsteps":    seed.Trip["polarsteps"],
+		"construction":  seed.Trip["construction"],
 	}
 
 	// Hotels block also stored in trip.data (FE expects it).
