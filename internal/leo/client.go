@@ -145,6 +145,9 @@ type PromptContext struct {
 	AllowedRepos []string // full "owner/name", e.g. rjullien/tripkit-seeds-nadia
 	IsAdmin      bool
 	TripID       string
+	// AllowedModes gates the client-supplied ChatRequest.Mode. Server-side only:
+	// a mode absent from this list resolves to ModeDefault. Empty means default only.
+	AllowedModes []string
 	Construction *ConstructionContext // set by handler when mode is non-default
 }
 
@@ -153,8 +156,24 @@ func SystemPrompt(ctx PromptContext) string {
 	return basePrompt(ctx)
 }
 
+// writePolicy says whether the composed prompt grants seed writing.
+// A non-writing mode composes a base WITHOUT the write directive instead of
+// layering a negation on top of it, so exactly one instruction about seed
+// writing ever reaches the model.
+type writePolicy int
+
+const (
+	writeSeedAllowed writePolicy = iota
+	writeSeedDeferred
+)
+
 // basePrompt is the single source of truth for Leo identity and perimetre rules.
 func basePrompt(ctx PromptContext) string {
+	return basePromptWith(ctx, writeSeedAllowed)
+}
+
+// basePromptWith builds the base prompt for a given seed-write policy.
+func basePromptWith(ctx PromptContext, policy writePolicy) string {
 	user := strings.TrimSpace(ctx.Username)
 	if user == "" {
 		user = "(inconnu)"
@@ -173,7 +192,11 @@ func basePrompt(ctx PromptContext) string {
 	var b strings.Builder
 	b.WriteString("Tu es Léo, agent de planification de voyage TripKit. Centre : le voyage de l'utilisateur.\n")
 	b.WriteString("Réponds à toute question vaguement liée au voyage (resto, météo, idées, horaires, transports, packing, culture, « on mange où ? »…).\n")
-	b.WriteString("Cherche si besoin, puis propose / écris dans le seed. Ne demande pas à l'utilisateur de te fournir ce que tu peux trouver.\n")
+	if policy == writeSeedDeferred {
+		b.WriteString("Cherche si besoin, puis propose. Ne demande pas à l'utilisateur de te fournir ce que tu peux trouver.\n")
+	} else {
+		b.WriteString("Cherche si besoin, puis propose / écris dans le seed. Ne demande pas à l'utilisateur de te fournir ce que tu peux trouver.\n")
+	}
 	b.WriteString("Respecte ce pré-prompt (identité, repos, secrets).\n\n")
 
 	b.WriteString("IDENTITÉ UTILISATEUR\n")
@@ -206,8 +229,14 @@ func basePrompt(ctx PromptContext) string {
 	}
 
 	b.WriteString("\nPÉRIMÈTRE\n")
-	b.WriteString("- Écriture git : uniquement le(s) repo(s) seed autorisé(s) ")
-	b.WriteString("(`*-*.js` data-only, `people.js`, `travel-profile.js`, `checklist-config.js`, assets).\n")
+	if policy == writeSeedDeferred {
+		b.WriteString("- Écriture git : aucune à ce stade. Ne crée ni ne modifie de fichier seed ")
+		b.WriteString("(`*-*.js` data-only, `people.js`, `travel-profile.js`, `checklist-config.js`, assets) : ")
+		b.WriteString("on reste sur des propositions.\n")
+	} else {
+		b.WriteString("- Écriture git : uniquement le(s) repo(s) seed autorisé(s) ")
+		b.WriteString("(`*-*.js` data-only, `people.js`, `travel-profile.js`, `checklist-config.js`, assets).\n")
+	}
 	b.WriteString("- Questions voyage : TOUJOURS répondre (même sans write). Resto / météo / activités ")
 	b.WriteString("font partie du voyage — ce n'est pas du hors-sujet. Utiliser tes outils (recherche) est normal, pas un contournement.\n")
 	b.WriteString("- Hors sujet vrai (autre repo, ops cluster, secrets, chat sans rapport avec un voyage) : ")

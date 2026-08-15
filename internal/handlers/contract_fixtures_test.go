@@ -22,7 +22,9 @@ package handlers
 // See testdata/contract/README.md.
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"net/http"
 	"net/http/httptest"
@@ -30,13 +32,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rjullien/tripkit-backend/internal/construction"
 	"github.com/rjullien/tripkit-backend/internal/database"
+	"github.com/rjullien/tripkit-backend/internal/discovery"
 	"github.com/rjullien/tripkit-backend/internal/formalities"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/models"
+	"github.com/rjullien/tripkit-backend/internal/nuisance"
 )
 
 var updateContract = flag.Bool("update", false, "regenerate the golden contract fixtures in testdata/contract/")
@@ -196,6 +201,129 @@ func TestContractFixtures(t *testing.T) {
 					path, want, got)
 			}
 		})
+	}
+}
+
+// nuisanceTripData: one located stop, coordinates fixed so the scored
+// distances in the fixture are deterministic.
+const nuisanceTripData = `{
+  "locations": {
+    "loc-mtl": {"name": "Montréal Vieux-Port", "lat": 45.5, "lon": -73.5}
+  }
+}`
+
+// contractQuerier is a deterministic Overpass stub: the trains query fails
+// (Overpass unreachable) while nightlife returns three bars. The public
+// Overpass API is not reachable from the test environment, so the failure path
+// can only be proven with a stub.
+type contractQuerier struct{}
+
+func (contractQuerier) Search(_ context.Context, lat, lon float64, theme discovery.Theme) ([]discovery.Item, error) {
+	switch theme.ID {
+	case "nuisance-trains":
+		return nil, errors.New("overpass HTTP 429")
+	case "nuisance-nightlife":
+		return []discovery.Item{
+			{ID: "osm:node:1", Name: "Bar A", Lat: lat + 0.0005, Lon: lon},
+			{ID: "osm:node:2", Name: "Bar B", Lat: lat - 0.0005, Lon: lon},
+			{ID: "osm:node:3", Name: "Bar C", Lat: lat, Lon: lon + 0.0005},
+		}, nil
+	default:
+		return nil, nil
+	}
+}
+
+// TestContractFixtures_Nuisance pins the {results:[...]} nuisance envelope,
+// including the INDETERMINE level, the per-category `unavailable` flag and the
+// self-describing `incomplete` / `failedCategories` fields. The completer is nil,
+// as in a deployment without Bifrost configuration.
+func TestContractFixtures_Nuisance(t *testing.T) {
+	db, err := database.InitMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(db)
+	fixed := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
+	svc := &nuisance.Service{
+		DB:       db,
+		Overpass: contractQuerier{},
+		Hub:      h.LeoHub(),
+		Now:      func() time.Time { return fixed },
+	}
+	h.SetNuisance(svc)
+
+	tripData := nuisanceTripData
+	start, end := "2026-08-14", "2026-08-20"
+	trip := models.Trip{ID: "trip-contract-nuisance", Name: "Contract Fixture", StartDate: &start, EndDate: &end, Data: &tripData}
+	if err := db.Create(&trip).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	job := svc.StartCheck("nadia", nuisance.CheckRequest{TripID: "trip-contract-nuisance", All: true})
+	<-job.Done()
+
+	r := chi.NewRouter()
+	r.Use(middleware.UserIdentity)
+	r.Get("/trips/{tripId}/nuisance-check", h.GetNuisanceCheck)
+
+	req := httptest.NewRequest(http.MethodGet, "/trips/trip-contract-nuisance/nuisance-check", nil)
+	req.Header.Set("Remote-User", "nadia")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d: %s", rec.Code, rec.Body.String())
+	}
+
+	got := canonicalJSON(t, rec.Body.Bytes())
+	path := filepath.Join(contractDir, "nuisance-check.json")
+
+	if *updateContract {
+		if err := os.WriteFile(path, got, 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+		t.Logf("updated %s", path)
+		return
+	}
+
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v (run `go test ./internal/handlers/ -run TestContractFixtures -update`)", path, err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("%s is out of date.\n--- want ---\n%s\n--- got ---\n%s\n"+
+			"If the change is intentional: regenerate with `-update`, then copy the\n"+
+			"fixtures to tripkit-frontend/tests/fixtures/construction-contract/.",
+			path, want, got)
+	}
+}
+
+// The optional LLM `summary` must be absent when no completer is configured, so
+// the admin-check/health-check golden fixtures stay valid.
+func TestContractFixtures_SummaryOmittedWithoutCompleter(t *testing.T) {
+	for _, tc := range []struct {
+		path     string
+		tripData string
+		tripID   string
+	}{
+		{"/trips/trip-summary-admin/admin-check", adminTripData, "trip-summary-admin"},
+		{"/trips/trip-summary-health/health-check", healthTripData, "trip-summary-health"},
+	} {
+		r := contractRouter(t, tc.tripID, tc.tripData)
+		req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader("{}"))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Remote-User", "nadia")
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status=%d: %s", tc.path, rec.Code, rec.Body.String())
+		}
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := body["summary"]; ok {
+			t.Errorf("%s must omit `summary` when Completer is nil, got %v", tc.path, body["summary"])
+		}
 	}
 }
 

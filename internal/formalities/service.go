@@ -12,8 +12,10 @@ import (
 
 // Service orchestrates admin-check and health-check operations.
 // The Completer field is optional: if nil, synthesis (LLM-powered summaries)
-// is skipped and the service returns deterministic rule-engine results only.
-// A warning is logged at startup if Completer is nil so operators notice.
+// is skipped, the optional `summary` field stays absent from the response, and
+// the service returns deterministic rule-engine results only.
+// cmd/api/main.go logs a startup warning when the Bifrost configuration is
+// incomplete and the Completer is therefore left nil, so operators notice.
 type Service struct {
 	DB        *gorm.DB
 	Completer bifrost.Completer
@@ -49,11 +51,19 @@ func (s *Service) AdminCheck(tripID string) (*AdminCheckResult, error) {
 	}
 	verdict := worstVerdict(statuses)
 
-	return &AdminCheckResult{
+	result := &AdminCheckResult{
 		Verdict:   verdict,
 		Countries: countries,
 		Items:     items,
-	}, nil
+	}
+	// Optional LLM synthesis. Never blocks nor degrades the deterministic items:
+	// FormatAdminResults is bounded by summaryTimeout and soft-fails to plain text.
+	if s.Completer != nil {
+		if summary, err := FormatAdminResults(s.Completer, result); err == nil {
+			result.Summary = summary
+		}
+	}
+	return result, nil
 }
 
 // HealthCheck runs the full health-check pipeline for a trip.
@@ -81,11 +91,18 @@ func (s *Service) HealthCheck(tripID string) (*HealthCheckResult, error) {
 	}
 	verdict := worstVerdict(statuses)
 
-	return &HealthCheckResult{
+	result := &HealthCheckResult{
 		Verdict:   verdict,
 		Countries: countries,
 		Items:     items,
-	}, nil
+	}
+	// Same optional, bounded, soft-failing synthesis as AdminCheck.
+	if s.Completer != nil {
+		if summary, err := FormatHealthResults(s.Completer, result); err == nil {
+			result.Summary = summary
+		}
+	}
+	return result, nil
 }
 
 // loadTripData fetches and parses a trip's JSON data field.

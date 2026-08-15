@@ -54,11 +54,31 @@ API REST en Go pour TripKit — gestion de voyages, jours, hébergements, listes
 | `TRIPKIT_HERMES_API_KEY` | For `/leo/*` | — | Same logical key as Hermes `API_SERVER_KEY` (Infisical → Secret `tripkit-hermes-key`) |
 | `TRIPKIT_LEO_DASHBOARD_URL` | No | `https://hermes-leo.bapttf.com` | Public dashboard link for FE fallback |
 | `TRIPKIT_LEO_TELEGRAM_URL` | No | — | Optional `https://t.me/…` deep-link for FE fallback |
-| `TRIPKIT_BIFROST_API_KEY` | If Bifrost requires auth | — | Bearer for Daily Brief format (not Hermes) |
+| `TRIPKIT_BIFROST_API_KEY` | If Bifrost requires auth | — | Bearer for Daily Brief format, Plus chat **and** construction synthesis (nuisance recommendations, admin/health summaries). Not Hermes. |
 | `TRIPKIT_DAILY_BRIEF_JSON` | Emergency | — | Raw override of `ops/daily-brief.json` |
 | `TRIPKIT_DAILY_BRIEF_CACHE` | No | `$TMPDIR/tripkit-daily-brief.json` | Disk cache for Daily Brief ops JSON |
 
 Daily Brief SoT (URLs + model + `adminPhone`): private `rjullien/tripkit/ops/daily-brief.json` via `TRIPKIT_GITHUB_TOKEN` (same pattern as Publish). GoWA only — no HA. Format via Bifrost — no Hermes. This public repo must not contain phone numbers, WhatsApp JIDs, or Tailscale MagicDNS hostnames — those stay in private ops/seeds.
+
+### Mode Construction: config is hardcoded in this release
+
+There is **no `TRIPKIT_CONSTRUCTION_*` variable and no ops loader**: unlike
+Discovery or Daily Brief, the construction mode has no config path.
+`ops/construction.json` is **not consumed** by this binary. Concretely:
+
+- the 6 phases, their order and the phase gates are compiled in (`internal/construction/phase.go`);
+- the QA thresholds are compiled in (`internal/construction/qa.go`), except those already read from the seed `travelProfile`;
+- the nuisance categories, radii and scoring thresholds are compiled in (`internal/nuisance/categories.go`), and the Overpass cache TTL (24h) and concurrency (2) with them;
+- the Bifrost endpoint and model used for construction synthesis are **inherited from the Plus chat ops config** (`ops/plus-chat.json` → `bifrostBaseUrl` + `chatModel`) with `TRIPKIT_BIFROST_API_KEY` as the secret. That is a deliberate reuse, not a design: it exists because construction has no ops config of its own yet.
+
+When any of those three values is missing, startup logs a `WARNING: construction
+synthesis disabled (missing …)` line naming what is disabled: nuisance
+recommendations/alternatives stay empty and admin-check/health-check return no
+`summary`. Deterministic scoring and rules are unaffected.
+
+A dedicated loader (`ops/construction.json` with phases, thresholds and model
+selection) is tracked separately as lot 0.3 in `rjullien/tripkit`
+(`construction/TASKS.md`) and is deliberately **out of scope** here.
 
 ### Léo / Hermes endpoints
 

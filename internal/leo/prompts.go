@@ -33,9 +33,16 @@ func allModesList() []string {
 	return out
 }
 
-// AllModesList is the exported version for use by handlers.
-func AllModesList() []string {
-	return allModesList()
+// ClientSelectableModes is the allowlist handlers must pass as PromptContext
+// AllowedModes: the construction dialogue modes only. ModeProfileEdit is
+// deliberately absent — it stays reachable from server-side code only, so a
+// client cannot put the plain chat stream into profile-edit.
+func ClientSelectableModes() []string {
+	return []string{
+		string(ModeIdeation),
+		string(ModeRoute),
+		string(ModeActivities),
+	}
 }
 
 // ResolveMode maps a client-requested mode to a known Mode constant.
@@ -97,11 +104,23 @@ type ConstructionInterest struct {
 	Dislikes []string
 }
 
+// writePolicyFor says whether a mode may write seed files. Ideation is a
+// brainstorming phase: its base prompt omits the seed-write directive entirely
+// rather than contradicting it in the overlay. Route, activities and
+// profile-edit keep the writing base.
+func writePolicyFor(mode Mode) writePolicy {
+	if mode == ModeIdeation {
+		return writeSeedDeferred
+	}
+	return writeSeedAllowed
+}
+
 // SystemPromptFor builds a mode-specific system prompt.
 // For ModeDefault it delegates to basePrompt (identity + perimetre).
-// For construction modes it appends a mode overlay after the base prompt.
+// For construction modes it appends a mode overlay after a base prompt composed
+// with the mode's seed-write policy.
 func SystemPromptFor(mode Mode, ctx PromptContext, cc *ConstructionContext) string {
-	base := basePrompt(ctx)
+	base := basePromptWith(ctx, writePolicyFor(mode))
 	if mode == ModeDefault {
 		return base
 	}
@@ -133,7 +152,9 @@ func ideationOverlay(cc *ConstructionContext) string {
 	b.WriteString("MODE CONSTRUCTION : IDÉATION\n")
 	b.WriteString("- Phase : brainstorming destination / dates / budget.\n")
 	b.WriteString("- Propose des idées, pose des questions ouvertes pour affiner.\n")
-	b.WriteString("- Ne crée pas encore de fichiers seed.\n")
+	// No "ne crée pas de seed" line here on purpose: the base prompt for this
+	// mode is composed without the seed-write directive (writeSeedDeferred),
+	// so the model gets one instruction instead of two contradictory ones.
 	writeContextBlock(&b, cc)
 	return b.String()
 }

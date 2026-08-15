@@ -61,9 +61,10 @@ func prepareMessages(ctx PromptContext, req ChatRequest) ([]ChatMessage, error) 
 		promptCtx.TripID = strings.TrimSpace(req.TripID)
 	}
 
-	// Resolve mode: unknown/empty falls back to default (never error).
-	// Pass all known modes as allowed; handler-level restriction is a future concern.
-	mode := ResolveMode(req.Mode, allModesList())
+	// Resolve mode: unknown, empty or not-allowed falls back to default (never
+	// error). The allowed list comes from the server-side PromptContext, never
+	// from the client, so a client-requested mode outside it is ignored.
+	mode := ResolveMode(req.Mode, promptCtx.AllowedModes)
 	var sysContent string
 	if mode != ModeDefault {
 		sysContent = SystemPromptFor(mode, promptCtx, promptCtx.Construction)

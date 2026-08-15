@@ -15,14 +15,19 @@ import (
 	"gorm.io/gorm"
 )
 
-const concurrency = 4
+// concurrency caps the number of locations analysed in parallel. The public
+// Overpass API allots roughly two slots per IP and sheds extra load with
+// 429/504, so 2 is the ceiling that keeps a large trip from failing open.
+const concurrency = 2
 
 // Service runs nuisance analysis for trip locations.
 type Service struct {
-	DB        *gorm.DB
-	Overpass  discovery.Querier
-	Bifrost   bifrost.Completer
-	Hub       *leo.Hub
+	DB       *gorm.DB
+	Overpass discovery.Querier
+	Bifrost  bifrost.Completer
+	Hub      *leo.Hub
+	// Now is an optional clock override used by the cache TTL (tests only).
+	Now func() time.Time
 }
 
 // ProgressFunc reports progress for SSE streaming.
@@ -36,15 +41,19 @@ type CheckRequest struct {
 }
 
 // CheckResult is the stored output for one location.
+// Incomplete/FailedCategories make a persisted result self-describing: a reader
+// can tell "we looked and found nothing" apart from "we could not look".
 type CheckResult struct {
-	LocationID   string           `json:"locationId"`
-	LocationName string           `json:"locationName"`
-	Verdict      string           `json:"verdict"`
-	VerdictEmoji string           `json:"verdictEmoji"`
-	Categories   []CategoryResult `json:"categories"`
-	Recommendation string         `json:"recommendation"`
-	Alternatives   []string       `json:"alternatives"`
-	AnalyzedAt   time.Time        `json:"analyzedAt"`
+	LocationID       string           `json:"locationId"`
+	LocationName     string           `json:"locationName"`
+	Verdict          string           `json:"verdict"`
+	VerdictEmoji     string           `json:"verdictEmoji"`
+	Categories       []CategoryResult `json:"categories"`
+	Recommendation   string           `json:"recommendation"`
+	Alternatives     []string         `json:"alternatives"`
+	Incomplete       bool             `json:"incomplete,omitempty"`
+	FailedCategories []string         `json:"failedCategories,omitempty"`
+	AnalyzedAt       time.Time        `json:"analyzedAt"`
 }
 
 // StartCheck launches a nuisance analysis as a leo.Hub job.
@@ -96,7 +105,7 @@ func (s *Service) runCheck(ctx context.Context, req CheckRequest, emit leo.EmitF
 				return
 			}
 
-			results := s.analyzeLocation(ctx, loc)
+			results := s.analyzeLocation(ctx, req.TripID, loc)
 			mu.Lock()
 			allResults = append(allResults, results)
 			mu.Unlock()
@@ -128,14 +137,16 @@ func (s *Service) runCheck(ctx context.Context, req CheckRequest, emit leo.EmitF
 		syn := synthesis[lr.LocationID]
 
 		checkResult := CheckResult{
-			LocationID:     lr.LocationID,
-			LocationName:   lr.LocationName,
-			Verdict:        lr.Verdict,
-			VerdictEmoji:   VerdictEmoji(lr.Verdict),
-			Categories:     lr.Categories,
-			Recommendation: syn.Recommendation,
-			Alternatives:   syn.Alternatives,
-			AnalyzedAt:     time.Now(),
+			LocationID:       lr.LocationID,
+			LocationName:     lr.LocationName,
+			Verdict:          lr.Verdict,
+			VerdictEmoji:     VerdictEmoji(lr.Verdict),
+			Categories:       lr.Categories,
+			Recommendation:   syn.Recommendation,
+			Alternatives:     syn.Alternatives,
+			Incomplete:       len(lr.FailedCategories) > 0,
+			FailedCategories: lr.FailedCategories,
+			AnalyzedAt:       s.now(),
 		}
 
 		data, _ := json.Marshal(checkResult)
@@ -201,7 +212,7 @@ func (s *Service) resolveLocations(tripID string, locationIDs []string, all bool
 	return result, nil
 }
 
-func (s *Service) analyzeLocation(ctx context.Context, loc location) LocationResults {
+func (s *Service) analyzeLocation(ctx context.Context, tripID string, loc location) LocationResults {
 	lr := LocationResults{
 		LocationID:   loc.id,
 		LocationName: loc.name,
@@ -214,13 +225,23 @@ func (s *Service) analyzeLocation(ctx context.Context, loc location) LocationRes
 		var items []discovery.Item
 		if len(cat.Tags) > 0 && s.Overpass != nil {
 			theme := ThemeForCategory(cat)
-			got, err := s.Overpass.Search(ctx, loc.lat, loc.lon, theme)
-			if err != nil {
-				// Soft-fail: log and continue with zero items for this category.
-				log.Printf("nuisance: overpass category=%s location=%s: %v (soft-fail)", cat.ID, loc.id, err)
-				got = nil
+			cached, ok := s.loadCache(tripID, loc.lat, loc.lon, theme.ID)
+			if ok {
+				items = cached
+			} else {
+				got, err := s.Overpass.Search(ctx, loc.lat, loc.lon, theme)
+				if err != nil {
+					// A failed query has NO data: score INDETERMINE instead of
+					// zero items (which would read as "nothing nearby"), and do
+					// not cache the failure.
+					log.Printf("nuisance: overpass category=%s location=%s: %v (unavailable)", cat.ID, loc.id, err)
+					lr.Categories = append(lr.Categories, UnavailableCategory(cat))
+					lr.FailedCategories = append(lr.FailedCategories, cat.ID)
+					continue
+				}
+				s.saveCache(tripID, loc.lat, loc.lon, theme.ID, got)
+				items = got
 			}
-			items = got
 		}
 		result := ScoreCategory(cat, items, loc.lat, loc.lon)
 		lr.Categories = append(lr.Categories, result)

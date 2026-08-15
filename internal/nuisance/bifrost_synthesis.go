@@ -24,6 +24,9 @@ type LocationResults struct {
 	LocationName string           `json:"locationName"`
 	Verdict      string           `json:"verdict"`
 	Categories   []CategoryResult `json:"categories"`
+	// FailedCategories lists the category IDs whose source query failed; a
+	// non-empty slice means the analysis is incomplete.
+	FailedCategories []string `json:"failedCategories,omitempty"`
 }
 
 // Synthesize calls Bifrost once with ALL locations' results and returns

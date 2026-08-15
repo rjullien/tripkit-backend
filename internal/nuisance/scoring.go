@@ -7,11 +7,20 @@ import (
 )
 
 // Scoring levels (French, matching SPEC-nuisance-check.md).
+//
+// LevelIndetermine is a deliberate extension of the spec, which defines only
+// ELEVE/MODERE/FAIBLE: a category whose Overpass query failed has NO data, and
+// absence of data must never render as the reassuring green FAIBLE.
 const (
-	LevelEleve  = "ELEVE"  // Red - high nuisance
-	LevelModere = "MODERE" // Yellow - moderate nuisance
-	LevelFaible = "FAIBLE" // Green - low/no nuisance
+	LevelEleve       = "ELEVE"       // Red - high nuisance
+	LevelModere      = "MODERE"      // Yellow - moderate nuisance
+	LevelFaible      = "FAIBLE"      // Green - low/no nuisance
+	LevelIndetermine = "INDETERMINE" // Grey - data unavailable (query failed)
 )
+
+// unavailableDetail is the French wording surfaced for a category whose data
+// could not be fetched.
+const unavailableDetail = "Donnée indisponible (Overpass injoignable)."
 
 // CategoryResult is the deterministic output of scoring one nuisance category.
 type CategoryResult struct {
@@ -21,6 +30,22 @@ type CategoryResult struct {
 	Distance float64 `json:"distance"` // meters to nearest item (0 if count-based or no items)
 	Count    int     `json:"count"`    // number of items found (for count-based)
 	Detail   string  `json:"detail"`
+	// Unavailable marks a category whose source query failed: the level is
+	// INDETERMINE and Distance/Count carry no meaning.
+	Unavailable bool `json:"unavailable,omitempty"`
+}
+
+// UnavailableCategory returns the INDETERMINE result for a category whose
+// Overpass query failed. It must be used instead of scoring zero items, which
+// would read as "nothing nearby".
+func UnavailableCategory(cat NuisanceCategory) CategoryResult {
+	return CategoryResult{
+		Category:    cat.ID,
+		Emoji:       cat.Emoji,
+		Level:       LevelIndetermine,
+		Detail:      unavailableDetail,
+		Unavailable: true,
+	}
 }
 
 // ScoreCategory scores a single nuisance category given the Overpass items found
@@ -77,17 +102,25 @@ func ScoreCategory(cat NuisanceCategory, items []discovery.Item, refLat, refLon 
 	return result
 }
 
-// GlobalVerdict returns the highest severity across all category results.
-// Any red = ELEVE, any yellow = MODERE, all green = FAIBLE.
+// GlobalVerdict returns the highest severity across all category results,
+// with the precedence ELEVE > INDETERMINE > MODERE > FAIBLE. An unavailable
+// category outranks MODERE on purpose: a partially failed analysis must not
+// surface as a verdict the user could read as reassuring.
 func GlobalVerdict(results []CategoryResult) string {
+	hasIndetermine := false
 	hasYellow := false
 	for _, r := range results {
 		switch r.Level {
 		case LevelEleve:
 			return LevelEleve
+		case LevelIndetermine:
+			hasIndetermine = true
 		case LevelModere:
 			hasYellow = true
 		}
+	}
+	if hasIndetermine {
+		return LevelIndetermine
 	}
 	if hasYellow {
 		return LevelModere
@@ -102,6 +135,8 @@ func VerdictEmoji(level string) string {
 		return "🔴"
 	case LevelModere:
 		return "🟡"
+	case LevelIndetermine:
+		return "⚪"
 	default:
 		return "🟢"
 	}

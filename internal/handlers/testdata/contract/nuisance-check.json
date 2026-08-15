@@ -1,0 +1,68 @@
+{
+  "results": [
+    {
+      "alternatives": null,
+      "analyzedAt": "2026-08-14T10:00:00Z",
+      "categories": [
+        {
+          "category": "trains",
+          "count": 0,
+          "detail": "Donnée indisponible (Overpass injoignable).",
+          "distance": 0,
+          "emoji": "🚂",
+          "level": "INDETERMINE",
+          "unavailable": true
+        },
+        {
+          "category": "airports",
+          "count": 0,
+          "detail": "Aucun element detecte.",
+          "distance": 0,
+          "emoji": "✈️",
+          "level": "FAIBLE"
+        },
+        {
+          "category": "highways",
+          "count": 0,
+          "detail": "Aucun element detecte.",
+          "distance": 0,
+          "emoji": "🛣️",
+          "level": "FAIBLE"
+        },
+        {
+          "category": "nightlife",
+          "count": 3,
+          "detail": "3 etablissements detectes dans un rayon de 200m.",
+          "distance": 39,
+          "emoji": "🎵",
+          "level": "MODERE"
+        },
+        {
+          "category": "industrial",
+          "count": 0,
+          "detail": "Aucun element detecte.",
+          "distance": 0,
+          "emoji": "🏭",
+          "level": "FAIBLE"
+        },
+        {
+          "category": "security",
+          "count": 0,
+          "detail": "Pas de signalement particulier.",
+          "distance": 0,
+          "emoji": "🔒",
+          "level": "FAIBLE"
+        }
+      ],
+      "failedCategories": [
+        "trains"
+      ],
+      "incomplete": true,
+      "locationId": "loc-mtl",
+      "locationName": "Montréal Vieux-Port",
+      "recommendation": "",
+      "verdict": "INDETERMINE",
+      "verdictEmoji": "⚪"
+    }
+  ]
+}

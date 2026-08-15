@@ -25,17 +25,22 @@ type HealthCheckItem struct {
 }
 
 // AdminCheckResult holds the full admin-check output for a trip.
+// Summary is the optional LLM synthesis of Items: omitempty keeps the envelope
+// byte-identical to the contract fixtures when no Completer is configured.
 type AdminCheckResult struct {
 	Verdict   string           `json:"verdict"` // "ok", "warning", "action_required"
 	Countries []string         `json:"countries"`
 	Items     []AdminCheckItem `json:"items"`
+	Summary   string           `json:"summary,omitempty"`
 }
 
 // HealthCheckResult holds the full health-check output for a trip.
+// Summary is the optional LLM synthesis of Items (see AdminCheckResult).
 type HealthCheckResult struct {
 	Verdict   string            `json:"verdict"` // "none", "ok", "warning", "action_required"
 	Countries []string          `json:"countries"`
 	Items     []HealthCheckItem `json:"items"`
+	Summary   string            `json:"summary,omitempty"`
 }
 
 // worstVerdict returns the most severe verdict from a list of statuses.

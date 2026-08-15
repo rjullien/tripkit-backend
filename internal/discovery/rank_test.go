@@ -1,6 +1,9 @@
 package discovery
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestRankItems_Table(t *testing.T) {
 	tests := []struct {
@@ -118,6 +121,69 @@ func TestRankItems_Table(t *testing.T) {
 				t.Errorf("last=%q, want %q; scores: %+v", got[len(got)-1].Name, tc.wantLast, got)
 			}
 		})
+	}
+}
+
+// TestMatchKeyword_RealSeedVocabulary feeds the matcher the ACTUAL keywords
+// stored in tripkit-seeds/travel-profile.js (multi-word, accented, plural)
+// against realistic OSM names. Whole-phrase substring matching failed every one
+// of these except "aviation".
+func TestMatchKeyword_RealSeedVocabulary(t *testing.T) {
+	tests := []struct {
+		name    string
+		item    string
+		themeID string
+		keyword string
+		want    bool
+	}{
+		{"parcs nationaux matches a singular national park", "Parc national de la Jacques-Cartier", "rando", "parcs nationaux", true},
+		{"musees techniques matches a technical museum", "Musée des techniques de Montréal", "musees", "musées techniques", true},
+		{"musees d'art moderne matches a modern art museum", "Musée d'art moderne de Québec", "musees", "musées d'art moderne", true},
+		{"musees d'art moderne does not match a technical museum", "Musée des techniques de Montréal", "musees", "musées d'art moderne", false},
+		{"marches matches the accented market name", "Marché du Vieux-Port", "marches", "marchés", true},
+		{"shopping long does not match an unrelated shop", "Boutique Souvenirs du Port", "shopping", "shopping long", false},
+		{"shopping long matches a long shopping session venue", "Long Shopping Outlet Mall", "shopping", "shopping long", true},
+		{"villages matches a village name", "Village de Sainte-Rose", "villages", "villages", true},
+		{"rando difficile does not match an easy trail", "Sentier facile du lac", "rando", "rando difficile", false},
+		{"aviation still matches on the theme id", "Some Place", "aviation", "aviation", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := matchKeyword(strings.ToLower(tc.item), strings.ToLower(tc.themeID), tc.keyword)
+			if got != tc.want {
+				t.Errorf("matchKeyword(%q, %q, %q) = %v, want %v", tc.item, tc.themeID, tc.keyword, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRankItems_RealSeedInterests proves the ranking actually moves with the
+// production vocabulary: rene's likes promote the national park, his dislikes
+// demote the modern-art museum without dropping it.
+func TestRankItems_RealSeedInterests(t *testing.T) {
+	items := []Item{
+		{Name: "Musée d'art moderne de Québec", ThemeID: "musees", DistKm: 1},
+		{Name: "Parc national de la Jacques-Cartier", ThemeID: "rando", DistKm: 9},
+		{Name: "Marché du Vieux-Port", ThemeID: "marches", DistKm: 4},
+	}
+	cfg := RankConfig{
+		Interests: map[string]InterestPref{
+			"rene": {
+				Likes:    []string{"parcs nationaux", "musées techniques", "aviation"},
+				Dislikes: []string{"shopping long", "musées d'art moderne"},
+			},
+		},
+	}
+	got := RankItems(items, cfg)
+	if len(got) != 3 {
+		t.Fatalf("len=%d, want 3 (dislikes must demote, never drop)", len(got))
+	}
+	if got[0].Name != "Parc national de la Jacques-Cartier" {
+		t.Errorf("first=%q, want the liked national park", got[0].Name)
+	}
+	if got[len(got)-1].Name != "Musée d'art moderne de Québec" {
+		t.Errorf("last=%q, want the disliked modern art museum", got[len(got)-1].Name)
 	}
 }
 

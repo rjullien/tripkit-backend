@@ -2,10 +2,16 @@ package formalities
 
 import (
 	"fmt"
+	"log"
 	"strings"
+	"time"
 
 	"github.com/rjullien/tripkit-backend/internal/bifrost"
 )
+
+// summaryTimeout bounds the LLM summary call. The deterministic items are the
+// product; a slow model must never hold the HTTP response.
+const summaryTimeout = 10 * time.Second
 
 // FormatAdminResults uses the Completer to generate a human-readable summary
 // of admin check results. Falls back to a structured plain-text if the LLM is unavailable.
@@ -20,9 +26,9 @@ Reponds en francais.`
 
 	user := formatAdminPlain(result)
 
-	summary, err := completer.Complete(system, user)
+	summary, err := completeBounded(completer, system, user)
 	if err != nil {
-		// Soft-fail: return plain text on LLM error.
+		// Soft-fail: return plain text on LLM error or timeout.
 		return user, nil
 	}
 	return summary, nil
@@ -41,12 +47,34 @@ Reponds en francais.`
 
 	user := formatHealthPlain(result)
 
-	summary, err := completer.Complete(system, user)
+	summary, err := completeBounded(completer, system, user)
 	if err != nil {
-		// Soft-fail: return plain text on LLM error.
+		// Soft-fail: return plain text on LLM error or timeout.
 		return user, nil
 	}
 	return summary, nil
+}
+
+// completeBounded calls the completer and gives up after summaryTimeout.
+// bifrost.Completer takes no context, so a late answer is discarded rather than
+// cancelled; the client's own HTTP timeout ends the goroutine.
+func completeBounded(completer bifrost.Completer, system, user string) (string, error) {
+	type out struct {
+		text string
+		err  error
+	}
+	ch := make(chan out, 1)
+	go func() {
+		text, err := completer.Complete(system, user)
+		ch <- out{text: text, err: err}
+	}()
+	select {
+	case res := <-ch:
+		return res.text, res.err
+	case <-time.After(summaryTimeout):
+		log.Printf("formalities: summary timed out after %s, falling back to plain text", summaryTimeout)
+		return "", fmt.Errorf("formalities: summary timeout after %s", summaryTimeout)
+	}
 }
 
 // formatAdminPlain builds a structured plain-text fallback for admin results.

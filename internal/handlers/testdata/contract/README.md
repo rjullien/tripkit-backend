@@ -1,7 +1,7 @@
 # Cross-repo contract fixtures (construction mode)
 
-Golden response bodies for the four construction check endpoints, captured from
-the real HTTP handlers against a deterministic in-memory SQLite database:
+Golden response bodies for the construction check endpoints, captured from the
+real HTTP handlers against a deterministic in-memory SQLite database:
 
 | File | Endpoint | Pins |
 | --- | --- | --- |
@@ -9,6 +9,15 @@ the real HTTP handlers against a deterministic in-memory SQLite database:
 | `admin-check.json` | `POST /trips/{tripId}/admin-check` | `{verdict, countries, items}`, `appliesTo` camelCase, and the FR+US bi-national case producing **no** ESTA item |
 | `health-check.json` | `POST /trips/{tripId}/health-check` | `{verdict, countries, items}` with items |
 | `phase-transition-blocked.json` | `PUT /trips/{tripId}/construction/phase` | the 409 body `{error:"transition_blocked", blockers:[QAViolation]}` |
+| `nuisance-check.json` | `GET /trips/{tripId}/nuisance-check` | `{results:[...]}`, the `INDETERMINE` level with `unavailable:true` for a category whose Overpass query failed, one scored `MODERE` category, and the self-describing `incomplete` / `failedCategories` fields |
+
+The nuisance fixture is produced by `TestContractFixtures_Nuisance`, which runs
+the analysis through the service with a stubbed Overpass querier (the trains
+query fails, nightlife returns three bars) and a fixed clock, so `analyzedAt` and
+the computed distances are stable. `INDETERMINE` is a deliberate extension of
+`SPEC-nuisance-check.md`, which defines only `ELEVE`/`MODERE`/`FAIBLE`: verdict
+precedence is `ELEVE > INDETERMINE > MODERE > FAIBLE` so a failed query can never
+surface as a reassuring green verdict.
 
 `tripkit-frontend/tests/fixtures/construction-contract/` holds a
 **byte-identical copy** of every `.json` file in this directory. It is consumed

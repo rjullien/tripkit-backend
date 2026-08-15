@@ -173,6 +173,7 @@ func TestPrepareMessages_WithMode(t *testing.T) {
 		AllowedRepos: []string{"rjullien/tripkit-seeds"},
 		IsAdmin:      true,
 	}
+	ctx.AllowedModes = ClientSelectableModes()
 	req := ChatRequest{
 		Messages: []ChatMessage{{Role: "user", Content: "Salut"}},
 		Mode:     "construction:ideation",
@@ -226,6 +227,91 @@ func TestPrepareMessages_UnknownModeFallsBack(t *testing.T) {
 	sys := msgs[0].Content
 	if strings.Contains(sys, "MODE CONSTRUCTION") {
 		t.Fatal("unknown mode must fallback to default (no overlay)")
+	}
+}
+
+// The mode gate must be effective: a known mode that the server did not allow
+// falls back to default, so a client cannot select construction:profile-edit.
+func TestPrepareMessages_ModeNotAllowedFallsBack(t *testing.T) {
+	ctx := PromptContext{
+		Username:     "nadia",
+		AllowedModes: ClientSelectableModes(),
+	}
+	req := ChatRequest{
+		Messages: []ChatMessage{{Role: "user", Content: "change mon profil"}},
+		Mode:     string(ModeProfileEdit),
+	}
+	msgs, err := prepareMessages(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys := msgs[0].Content
+	if strings.Contains(sys, "MODE CONSTRUCTION") {
+		t.Fatalf("profile-edit must not be client-selectable, got:\n%s", sys)
+	}
+	if ResolveMode(string(ModeProfileEdit), ctx.AllowedModes) != ModeDefault {
+		t.Fatal("ResolveMode must reject a mode outside AllowedModes")
+	}
+}
+
+func TestPrepareMessages_AllowedModeStillResolves(t *testing.T) {
+	ctx := PromptContext{
+		Username:     "rene",
+		AllowedModes: ClientSelectableModes(),
+	}
+	req := ChatRequest{
+		Messages: []ChatMessage{{Role: "user", Content: "on part où ?"}},
+		Mode:     string(ModeRoute),
+	}
+	msgs, err := prepareMessages(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msgs[0].Content, "MODE CONSTRUCTION : ITINÉRAIRE") {
+		t.Fatal("an allowed mode must still resolve to its overlay")
+	}
+}
+
+func TestClientSelectableModes_ExcludesProfileEdit(t *testing.T) {
+	for _, m := range ClientSelectableModes() {
+		if m == string(ModeProfileEdit) {
+			t.Fatal("construction:profile-edit must not be client-selectable")
+		}
+	}
+	if len(ClientSelectableModes()) != 3 {
+		t.Fatalf("expected the 3 dialogue modes, got %v", ClientSelectableModes())
+	}
+}
+
+// The seed-write directive must appear exactly once, in the modes that write.
+func TestSystemPromptFor_IdeationHasNoSeedWriteDirective(t *testing.T) {
+	ctx := PromptContext{
+		Username:     "nadia",
+		AllowedRepos: []string{"rjullien/tripkit-seeds-nadia"},
+	}
+	ideation := SystemPromptFor(ModeIdeation, ctx, nil)
+	if strings.Contains(ideation, "écris dans le seed") {
+		t.Error("ideation prompt must not carry the seed-write directive")
+	}
+	if strings.Contains(ideation, "Écriture git : uniquement") {
+		t.Error("ideation prompt must not grant git write")
+	}
+	if !strings.Contains(ideation, "Écriture git : aucune à ce stade") {
+		t.Error("ideation prompt must state that no write happens yet")
+	}
+	if strings.Contains(ideation, "Ne crée pas encore de fichiers seed") {
+		t.Error("the contradictory overlay negation must be gone")
+	}
+
+	// Default, route and activities keep the writing base.
+	for _, mode := range []Mode{ModeDefault, ModeRoute, ModeActivities, ModeProfileEdit} {
+		got := SystemPromptFor(mode, ctx, nil)
+		if !strings.Contains(got, "écris dans le seed") {
+			t.Errorf("mode %q must keep the seed-write directive", mode)
+		}
+		if !strings.Contains(got, "Écriture git : uniquement") {
+			t.Errorf("mode %q must keep the git write grant", mode)
+		}
 	}
 }
 
