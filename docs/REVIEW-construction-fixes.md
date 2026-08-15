@@ -218,3 +218,23 @@ présente → `ref=<branche> strict=1`, absente → `ref= strict=0`, ref dispatc
 injoignable → `strict=0`. **Ce qui reste non vérifiable ici** : le job lui-même sur les *runners*
 GitHub (le `github.head_ref` réel, le secret `CROSS_REPO_TOKEN`), et tout ce qui demande une
 instance qui tourne (Overpass, Bifrost, Postgres).
+
+---
+
+## 9. Rebase sur `main` v1.19.24 + leftovers #63
+
+Ne **pas** merger #61 ni #63. Cette branche (`cursor/construction-be-rebase-6143`) rejoue
+Construction sur le `main` courant (magasinage `excludeNames` + `theme@v{version}` conservés)
+et reprend le lot utile de #63 :
+
+| De #63 | Statut | Détail |
+|---|---|---|
+| Loader `ops/construction.json` | ✅ | Completer par check ; nil → déterministe, pas de `summary` de repli présenté comme un LLM |
+| Admin par voyageur | ✅ | Fini le faux négatif d'union (René FR a l'ESTA même si Dinah est FR+US). `items[]` reste l'enveloppe FE ; `travelers[]` est **en plus** (`omitempty`) |
+| `deadline` + détail coût/délai | ✅ | Fixture d'or régénérée |
+| Santé silence `none` sans appel LLM | ✅ | Inchangé |
+| Gate nuisances Ph3→Ph4 | ✅ | `NuisanceBlockers` |
+| INDETERMINE déjà dans #61 | ✅ | Cache Overpass conservé ; `partial` alias de `incomplete` pour le gate. Précédence **ELEVE > INDETERMINE > MODERE > FAIBLE** (contrat FE), pas « yellow beats unknown » de #63 |
+| Emoji INDETERMINE | ✅ | ⚪ (fixture FE), pas ❓ |
+
+Write-back Léo (retain / pin / profile-edit) : toujours 501.

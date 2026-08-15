@@ -223,8 +223,8 @@ func TestAdminCheck_SummaryFallsBackWithoutCompleter(t *testing.T) {
 	if len(res.Travelers) == 0 {
 		t.Fatal("travelers must be present without a completer")
 	}
-	if res.Summary == "" {
-		t.Error("want the deterministic plain-text summary as fallback")
+	if res.Summary != "" {
+		t.Errorf("Summary = %q, want empty without a completer (omitempty, pas de prose de repli présentée comme un LLM)", res.Summary)
 	}
 }
 

@@ -60,6 +60,7 @@
       "incomplete": true,
       "locationId": "loc-mtl",
       "locationName": "Montréal Vieux-Port",
+      "partial": true,
       "recommendation": "",
       "verdict": "INDETERMINE",
       "verdictEmoji": "⚪"

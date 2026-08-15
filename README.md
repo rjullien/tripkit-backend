@@ -60,25 +60,23 @@ API REST en Go pour TripKit — gestion de voyages, jours, hébergements, listes
 
 Daily Brief SoT (URLs + model + `adminPhone`): private `rjullien/tripkit/ops/daily-brief.json` via `TRIPKIT_GITHUB_TOKEN` (same pattern as Publish). GoWA only — no HA. Format via Bifrost — no Hermes. This public repo must not contain phone numbers, WhatsApp JIDs, or Tailscale MagicDNS hostnames — those stay in private ops/seeds.
 
-### Mode Construction: config is hardcoded in this release
+### Mode Construction
 
-There is **no `TRIPKIT_CONSTRUCTION_*` variable and no ops loader**: unlike
-Discovery or Daily Brief, the construction mode has no config path.
-`ops/construction.json` is **not consumed** by this binary. Concretely:
+Loader `ops/construction.json` (même discipline que Discovery / Daily Brief :
+env JSON → GitHub → cache disque → dogfood, TTL 2 min). `Origin` est loggée au
+boot. Un Completer Bifrost par check (`adminCheck` / `healthCheck` / `nuisance`)
+via `ModelFor` ; si `enabled=false` ou `bifrostBaseUrl` vide, les checks
+retombent sur la sortie déterministe (pas de `summary` / reco LLM).
 
-- the phase **range** is compiled in (`internal/construction/phase.go`): phases 1 to 4 plus Live (5) as defined by `construction/SPEC.md` §5, plus 0 for "construction pas encore démarrée". A target outside that range is refused with a `400`, and so is a `PUT /construction/phase` body that carries no `phase` key at all: since 0 is a valid target, an absent key must not be read as "rewind to not started". The **order is deliberately not enforced**: the spec allows going back (Ph3 → Ph2 → Ph3 is an assumed loop) and makes Ph3/Ph4 parallelizable. The gate itself is `CanTransition`: QA is evaluated **for the requested target phase**, and a single red violation refuses the transition with a `409 {error:"transition_blocked", blockers:[…]}` unless an admin forces it (`?force=1`, which records the skipped blockers in `construction_phase_log`);
-- the QA thresholds are compiled in (`internal/construction/qa.go`), except those already read from the seed `travelProfile`;
-- the nuisance categories, radii and scoring thresholds are compiled in (`internal/nuisance/categories.go`), and the Overpass cache TTL (24h) and concurrency (2) with them;
-- the Bifrost endpoint and model used for construction synthesis are **inherited from the Plus chat ops config** (`ops/plus-chat.json` → `bifrostBaseUrl` + `chatModel`) with `TRIPKIT_BIFROST_API_KEY` as the secret. That is a deliberate reuse, not a design: it exists because construction has no ops config of its own yet.
+Secret : `TRIPKIT_BIFROST_API_KEY`. Override d'urgence :
+`TRIPKIT_CONSTRUCTION_JSON`. Cache : `TRIPKIT_CONSTRUCTION_CACHE` (défaut
+`$TMPDIR/tripkit-construction.json`).
 
-When any of those three values is missing, startup logs a `WARNING: construction
-synthesis disabled (missing …)` line naming what is disabled: nuisance
-recommendations/alternatives stay empty and admin-check/health-check return no
-`summary`. Deterministic scoring and rules are unaffected.
-
-A dedicated loader (`ops/construction.json` with phases, thresholds and model
-selection) is tracked separately as lot 0.3 in `rjullien/tripkit`
-(`construction/TASKS.md`) and is deliberately **out of scope** here.
+Toujours compilés en dur (lot 5.3 / seuils QA) : plage de phases
+(`internal/construction/phase.go`), catégories nuisances et cache Overpass.
+Le gate de phase évalue la QA **pour la phase cible** ; un 🔴 refuse avec
+`409 {error:"transition_blocked", blockers:[…]}` sauf `?force=1` admin.
+Un verdict nuisances `ELEVE` non traité bloque Ph3 → Ph4.
 
 ### Léo / Hermes endpoints
 
