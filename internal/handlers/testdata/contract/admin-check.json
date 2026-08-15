@@ -1,0 +1,21 @@
+{
+  "countries": [
+    "CA",
+    "US"
+  ],
+  "items": [
+    {
+      "appliesTo": [
+        "FR"
+      ],
+      "cost": "7 CAD",
+      "country": "CA",
+      "detail": "7 CAD",
+      "label": "eTA / AVE (Autorisation de Voyage Électronique)",
+      "status": "action_required",
+      "type": "eta",
+      "url": "https://www.canada.ca/eta"
+    }
+  ],
+  "verdict": "action_required"
+}

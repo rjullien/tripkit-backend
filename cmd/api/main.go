@@ -12,12 +12,16 @@ import (
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/rjullien/tripkit-backend/internal/bifrost"
+	"github.com/rjullien/tripkit-backend/internal/construction"
 	"github.com/rjullien/tripkit-backend/internal/dailybrief"
 	"github.com/rjullien/tripkit-backend/internal/database"
 	"github.com/rjullien/tripkit-backend/internal/discovery"
+	"github.com/rjullien/tripkit-backend/internal/formalities"
 	"github.com/rjullien/tripkit-backend/internal/handlers"
 	"github.com/rjullien/tripkit-backend/internal/leo"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
+	"github.com/rjullien/tripkit-backend/internal/nuisance"
 	"github.com/rjullien/tripkit-backend/internal/pluschat"
 	"github.com/rjullien/tripkit-backend/internal/polarsteps"
 	"github.com/rjullien/tripkit-backend/internal/publish"
@@ -77,6 +81,34 @@ func main() {
 	leoCfg := leoOps.Bootstrap()
 	log.Printf("leo ops: origin=%s default=%s models=%d", leoCfg.Origin, leoCfg.DefaultModel, len(leoCfg.Models))
 	h.SetLeoOps(leoOps)
+
+	// Construction mode wiring.
+	// NOTE: construction phases, QA thresholds and LLM model selection are
+	// hardcoded in this release. ops/construction.json is NOT consumed and no
+	// TRIPKIT_CONSTRUCTION_* loader exists yet (tracked as lot 0.3); the Bifrost
+	// endpoint and model used for construction synthesis below are therefore
+	// inherited from the plus-chat ops config. See README.md.
+	h.SetConstruction(&construction.Service{DB: db})
+
+	// Bifrost completer for construction synthesis (nuisance recommendations,
+	// admin/health summaries). Pragmatic reuse of the plus-chat endpoint+model
+	// config because construction has no ops config of its own yet.
+	constructionCompleter := buildConstructionCompleter(plusCfg)
+
+	// Nuisance analysis service (reuses the discovery Overpass client).
+	// Uses the shared leoJobs hub so the frontend SSE subscription
+	// (GET /leo/jobs/{jobId}/stream) can find nuisance check jobs.
+	discOverpass := discovery.NewClient(discCfg.Overpass)
+	h.SetNuisance(&nuisance.Service{
+		DB:       db,
+		Overpass: discOverpass,
+		Bifrost:  constructionCompleter,
+		Hub:      h.LeoHub(),
+	})
+
+	// Formalities service (admin-check, health-check): deterministic rules
+	// engine; the completer only adds an optional `summary` on top.
+	h.SetFormalities(&formalities.Service{DB: db, Completer: constructionCompleter})
 
 	// In-process worker: auto-on when TRIPKIT_GITHUB_TOKEN is set; override via TRIPKIT_PUBLISH_WORKER.
 	if publish.WorkerEnabled() {
@@ -172,6 +204,29 @@ func main() {
 		r.Post("/trips/{tripId}/discovery/search", h.DiscoverySearch)
 		r.Get("/trips/{tripId}/discovery/results", h.DiscoveryResults)
 
+		// Construction
+		r.Get("/trips/{tripId}/construction", h.GetConstruction)
+		r.Put("/trips/{tripId}/construction/phase", h.TransitionPhase)
+		r.Post("/trips/{tripId}/construction/qa", h.RunConstructionQA)
+		r.Get("/trips/{tripId}/construction/qa", h.GetConstructionQA)
+		r.Get("/trips/{tripId}/travel-profile", h.GetTravelProfile)
+		r.Post("/trips/{tripId}/travel-profile/request", h.CreateProfileRequest)
+
+		// Formalities (admin-check, health-check)
+		r.Post("/trips/{tripId}/admin-check", h.RunAdminCheck)
+		r.Get("/trips/{tripId}/admin-check", h.GetAdminCheck)
+		r.Post("/trips/{tripId}/health-check", h.RunHealthCheck)
+		r.Get("/trips/{tripId}/health-check", h.GetHealthCheck)
+
+		// Discovery retain (add item to seed via Leo)
+		r.Post("/trips/{tripId}/discovery/retain", h.RetainDiscoveryItem)
+
+		// Nuisance analysis
+		r.Post("/trips/{tripId}/nuisance-check", h.RunNuisanceCheck)
+		r.Get("/trips/{tripId}/nuisance-check", h.GetNuisanceCheck)
+		r.Get("/trips/{tripId}/nuisance-check/{locationId}", h.GetNuisanceCheck)
+		r.Post("/trips/{tripId}/nuisance-check/pin", h.PinNuisanceToSeed)
+
 		// Trips
 		r.Get("/trips", h.ListTrips)
 		r.Get("/debug/trips", h.DebugListTrips)
@@ -217,4 +272,42 @@ func main() {
 	if err := http.ListenAndServe(addr, r); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
+}
+
+// buildConstructionCompleter returns the Bifrost completer used by the
+// construction engines (nuisance recommendations, admin/health summaries).
+//
+// It reuses the plus-chat ops config (bifrostBaseUrl + chatModel) and the
+// TRIPKIT_BIFROST_API_KEY secret: construction has no ops config of its own yet
+// (ops/construction.json is not loaded, see README.md), and standing up a second
+// endpoint config for the same Bifrost instance would be duplication.
+//
+// Returns nil when the configuration is incomplete, and logs which synthesis
+// features are disabled so operators notice instead of silently getting empty
+// recommendations.
+func buildConstructionCompleter(cfg pluschat.Config) bifrost.Completer {
+	baseURL := strings.TrimSpace(cfg.BifrostBaseURL)
+	model := strings.TrimSpace(cfg.ChatModel)
+	apiKey := strings.TrimSpace(cfg.BifrostAPIKey)
+
+	var missing []string
+	if baseURL == "" {
+		missing = append(missing, "bifrostBaseUrl (ops/plus-chat.json)")
+	}
+	if model == "" {
+		missing = append(missing, "chatModel (ops/plus-chat.json)")
+	}
+	if apiKey == "" {
+		missing = append(missing, "TRIPKIT_BIFROST_API_KEY")
+	}
+	if len(missing) > 0 {
+		log.Printf("WARNING: construction synthesis disabled (missing %s): "+
+			"nuisance recommendations/alternatives stay empty and admin-check/health-check "+
+			"return no summary; deterministic scoring and rules are unaffected",
+			strings.Join(missing, ", "))
+		return nil
+	}
+
+	log.Printf("construction synthesis: bifrost=%s model=%s (config inherited from plus-chat)", baseURL, model)
+	return bifrost.NewClient(baseURL, apiKey, model).AsCompleter()
 }

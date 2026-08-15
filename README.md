@@ -54,11 +54,31 @@ API REST en Go pour TripKit — gestion de voyages, jours, hébergements, listes
 | `TRIPKIT_HERMES_API_KEY` | For `/leo/*` | — | Same logical key as Hermes `API_SERVER_KEY` (Infisical → Secret `tripkit-hermes-key`) |
 | `TRIPKIT_LEO_DASHBOARD_URL` | No | `https://hermes-leo.bapttf.com` | Public dashboard link for FE fallback |
 | `TRIPKIT_LEO_TELEGRAM_URL` | No | — | Optional `https://t.me/…` deep-link for FE fallback |
-| `TRIPKIT_BIFROST_API_KEY` | If Bifrost requires auth | — | Bearer for Daily Brief format (not Hermes) |
+| `TRIPKIT_BIFROST_API_KEY` | If Bifrost requires auth | — | Bearer for Daily Brief format, Plus chat **and** construction synthesis (nuisance recommendations, admin/health summaries). Not Hermes. |
 | `TRIPKIT_DAILY_BRIEF_JSON` | Emergency | — | Raw override of `ops/daily-brief.json` |
 | `TRIPKIT_DAILY_BRIEF_CACHE` | No | `$TMPDIR/tripkit-daily-brief.json` | Disk cache for Daily Brief ops JSON |
 
 Daily Brief SoT (URLs + model + `adminPhone`): private `rjullien/tripkit/ops/daily-brief.json` via `TRIPKIT_GITHUB_TOKEN` (same pattern as Publish). GoWA only — no HA. Format via Bifrost — no Hermes. This public repo must not contain phone numbers, WhatsApp JIDs, or Tailscale MagicDNS hostnames — those stay in private ops/seeds.
+
+### Mode Construction: config is hardcoded in this release
+
+There is **no `TRIPKIT_CONSTRUCTION_*` variable and no ops loader**: unlike
+Discovery or Daily Brief, the construction mode has no config path.
+`ops/construction.json` is **not consumed** by this binary. Concretely:
+
+- the phase **range** is compiled in (`internal/construction/phase.go`): phases 1 to 4 plus Live (5) as defined by `construction/SPEC.md` §5, plus 0 for "construction pas encore démarrée". A target outside that range is refused with a `400`, and so is a `PUT /construction/phase` body that carries no `phase` key at all: since 0 is a valid target, an absent key must not be read as "rewind to not started". The **order is deliberately not enforced**: the spec allows going back (Ph3 → Ph2 → Ph3 is an assumed loop) and makes Ph3/Ph4 parallelizable. The gate itself is `CanTransition`: QA is evaluated **for the requested target phase**, and a single red violation refuses the transition with a `409 {error:"transition_blocked", blockers:[…]}` unless an admin forces it (`?force=1`, which records the skipped blockers in `construction_phase_log`);
+- the QA thresholds are compiled in (`internal/construction/qa.go`), except those already read from the seed `travelProfile`;
+- the nuisance categories, radii and scoring thresholds are compiled in (`internal/nuisance/categories.go`), and the Overpass cache TTL (24h) and concurrency (2) with them;
+- the Bifrost endpoint and model used for construction synthesis are **inherited from the Plus chat ops config** (`ops/plus-chat.json` → `bifrostBaseUrl` + `chatModel`) with `TRIPKIT_BIFROST_API_KEY` as the secret. That is a deliberate reuse, not a design: it exists because construction has no ops config of its own yet.
+
+When any of those three values is missing, startup logs a `WARNING: construction
+synthesis disabled (missing …)` line naming what is disabled: nuisance
+recommendations/alternatives stay empty and admin-check/health-check return no
+`summary`. Deterministic scoring and rules are unaffected.
+
+A dedicated loader (`ops/construction.json` with phases, thresholds and model
+selection) is tracked separately as lot 0.3 in `rjullien/tripkit`
+(`construction/TASKS.md`) and is deliberately **out of scope** here.
 
 ### Léo / Hermes endpoints
 
@@ -138,8 +158,25 @@ go test -v -count=1 ./...
 
 | Événement | Jobs | Résultat |
 |-----------|------|----------|
-| `push main` | test + e2e | Tests seulement, pas de build Docker |
+| `push main` | test + e2e + fixtures-cross-repo | Tests seulement, pas de build Docker |
+| `pull_request` | test + e2e + fixtures-cross-repo | Tests seulement |
 | `release published` | test + e2e + **build-and-push** | Image Docker → ghcr.io |
+
+Le job **`fixtures-cross-repo`** compare les fixtures de contrat de
+`internal/handlers/testdata/contract/` à leur copie dans `tripkit-frontend`, qu'il clone à côté de ce
+dépôt. La ref frontend comparée est résolue ainsi :
+
+1. la ref donnée en `workflow_dispatch` (`frontend_ref`) si elle est fournie — comparaison **stricte** ;
+2. sinon la branche de `tripkit-frontend` **portant le même nom** que la branche de tête ici (une
+   modification de fixtures voyage en paire de branches homonymes, une par dépôt) — **stricte** ;
+3. sinon la branche par défaut du frontend, en mode **non strict** : les fixtures présentes sont
+   quand même comparées octet à octet, absentes le garde fait `SKIP` au lieu de faire échouer une PR
+   qui n'a pas de pendant frontend.
+
+Le cas 2 est celui pour lequel le job existe ; le cas 3 évite un job rouge en permanence. Le job a
+besoin du secret `CROSS_REPO_TOKEN` si `tripkit-frontend` est privé (`GITHUB_TOKEN` ne couvre que ce
+dépôt) : sans lui, la résolution retombe sur le cas 3. Il n'est **volontairement pas** dans le
+`needs:` de la release.
 
 ### Tags Docker générés sur release
 
