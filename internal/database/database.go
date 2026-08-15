@@ -78,6 +78,7 @@ func autoMigrate(db *gorm.DB) (*gorm.DB, error) {
 		&models.PolarstepsStep{},
 		&models.DiscoveryCache{},
 		&models.ConstructionPhaseLog{},
+		&models.ConstructionProfileRequest{},
 	); err != nil {
 		return nil, err
 	}

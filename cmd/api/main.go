@@ -180,6 +180,7 @@ func main() {
 		r.Get("/trips/{tripId}/construction", h.GetConstruction)
 		r.Put("/trips/{tripId}/construction/phase", h.TransitionPhase)
 		r.Get("/trips/{tripId}/travel-profile", h.GetTravelProfile)
+		r.Post("/trips/{tripId}/travel-profile/request", h.CreateProfileRequest)
 
 		// Trips
 		r.Get("/trips", h.ListTrips)

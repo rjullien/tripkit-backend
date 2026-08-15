@@ -11,3 +11,14 @@ type ConstructionPhaseLog struct {
 	Blockers string    `gorm:"type:json" json:"blockers"`
 	At       time.Time `gorm:"not null" json:"at"`
 }
+
+// ConstructionProfileRequest tracks a user request to edit the travel profile via Leo.
+type ConstructionProfileRequest struct {
+	ID        string    `gorm:"primaryKey;size:255" json:"id"`
+	TripID    string    `gorm:"not null;index;size:255" json:"trip_id"`
+	Target    string    `gorm:"not null;size:100" json:"target"`
+	Text      string    `gorm:"not null" json:"text"`
+	JobID     string    `gorm:"size:255" json:"job_id"`
+	Status    string    `gorm:"not null;size:50" json:"status"`
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+}
