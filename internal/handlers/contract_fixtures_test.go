@@ -14,22 +14,31 @@ package handlers
 //
 //	cd tripkit-backend && go test ./internal/handlers/ -run TestContractFixtures -update
 //
-// then copy the files over:
+// then copy the files over, CHECKSUMS.txt included:
 //
 //	cp internal/handlers/testdata/contract/*.json \
+//	   internal/handlers/testdata/contract/CHECKSUMS.txt \
 //	   ../tripkit-frontend/tests/fixtures/construction-contract/
+//
+// The copy is not on trust: TestContractFixtures_FrontendCopyInSync compares the
+// two directories when both repos are checked out side by side, and the frontend
+// unit test hashes its own copies against CHECKSUMS.txt.
 //
 // See testdata/contract/README.md.
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -323,6 +332,138 @@ func TestContractFixtures_SummaryOmittedWithoutCompleter(t *testing.T) {
 		}
 		if _, ok := body["summary"]; ok {
 			t.Errorf("%s must omit `summary` when Completer is nil, got %v", tc.path, body["summary"])
+		}
+	}
+}
+
+// ── Cross-repo sync guards ───────────────────────────────────────────────────
+//
+// The fixtures exist so an envelope change fails a test on both sides of the
+// wire. Until now the copy step itself was documented in two READMEs and checked
+// by nothing: regenerate, commit, forget the cp, and the frontend suite stayed
+// green against a stale fixture — structurally the same blind spot the fixtures
+// were introduced to close. Two guards, both dependency-free:
+//
+//  1. checksumFile is committed next to the fixtures and copied over with them.
+//     The frontend unit test hashes its own copies against it, so a JSON copied
+//     without the manifest (or the reverse) fails there.
+//  2. When both repos are checked out side by side — the layout in which the cp
+//     happens — TestContractFixtures_FrontendCopyInSync compares the two
+//     directories byte for byte, so a forgotten cp fails here.
+
+const checksumFile = "CHECKSUMS.txt"
+
+// frontendContractDir is the frontend copy, relative to this package.
+const frontendContractDir = "../../../tripkit-frontend/tests/fixtures/construction-contract"
+
+// contractChecksums renders the sha256 manifest of the golden fixtures, in the
+// `sha256sum` format (hash, two spaces, file name), sorted by file name.
+func contractChecksums(t *testing.T, dir string) []byte {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		t.Fatalf("no golden fixture found in %s", dir)
+	}
+	var b strings.Builder
+	for _, name := range names {
+		raw, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		fmt.Fprintf(&b, "%x  %s\n", sha256.Sum256(raw), name)
+	}
+	return []byte(b.String())
+}
+
+// TestContractFixtures_Checksums pins the manifest the frontend asserts against.
+// It must run after the fixtures themselves have been regenerated, hence its
+// position in this file (Go runs tests in source order).
+func TestContractFixtures_Checksums(t *testing.T) {
+	got := contractChecksums(t, contractDir)
+	path := filepath.Join(contractDir, checksumFile)
+
+	if *updateContract {
+		if err := os.WriteFile(path, got, 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+		t.Logf("updated %s", path)
+		return
+	}
+
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v (run `go test ./internal/handlers/ -run TestContractFixtures -update`)", path, err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("%s is out of date.\n--- want ---\n%s\n--- got ---\n%s\n"+
+			"Regenerate with `-update`, then copy the fixtures AND %s to\n"+
+			"tripkit-frontend/tests/fixtures/construction-contract/.",
+			path, want, got, checksumFile)
+	}
+}
+
+// TestContractFixtures_FrontendCopyInSync fails when the frontend copy has
+// drifted, which is what makes the cross-repo contract real rather than
+// documented. It is skipped when the frontend repo is not checked out beside this
+// one (CI on this repo alone), where the checksum manifest carries the check
+// instead.
+func TestContractFixtures_FrontendCopyInSync(t *testing.T) {
+	if *updateContract {
+		t.Skipf("fixtures just regenerated: copy them to %s, then re-run", frontendContractDir)
+	}
+	if _, err := os.Stat(frontendContractDir); err != nil {
+		t.Skipf("frontend repo not checked out beside this one (%s): the committed %s carries the cross-repo check",
+			frontendContractDir, checksumFile)
+	}
+
+	entries, err := os.ReadDir(contractDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || (!strings.HasSuffix(name, ".json") && name != checksumFile) {
+			continue
+		}
+		mine, err := os.ReadFile(filepath.Join(contractDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		theirs, err := os.ReadFile(filepath.Join(frontendContractDir, name))
+		if err != nil {
+			t.Errorf("%s is missing from the frontend copy: %v\n"+
+				"cp %s/%s %s/", name, err, contractDir, name, frontendContractDir)
+			continue
+		}
+		if !bytes.Equal(mine, theirs) {
+			t.Errorf("%s differs between the two repos.\ncp %s/%s %s/",
+				name, contractDir, name, frontendContractDir)
+		}
+	}
+
+	// A fixture only present on the frontend side is drift too: it means a file
+	// was renamed or removed here without the copy following.
+	feEntries, err := os.ReadDir(frontendContractDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range feEntries {
+		name := e.Name()
+		if e.IsDir() || (!strings.HasSuffix(name, ".json") && name != checksumFile) {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(contractDir, name)); err != nil {
+			t.Errorf("%s exists in the frontend copy but not in %s: stale fixture", name, contractDir)
 		}
 	}
 }

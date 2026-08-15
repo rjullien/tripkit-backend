@@ -145,7 +145,7 @@ func MatchAdminRules(countries []string, nationalities []string) []AdminCheckIte
 				Type:      rule.Type,
 				Label:     rule.Label,
 				Status:    "ok",
-				AppliesTo: nationalities,
+				AppliesTo: matchedNationalities(rule, nationalities),
 				Detail:    "Libre circulation UE - aucune formalité requise",
 			})
 			continue
@@ -153,7 +153,7 @@ func MatchAdminRules(countries []string, nationalities []string) []AdminCheckIte
 
 		// Check if rule applies to the traveler's nationalities.
 		applies := false
-		if len(rule.AppliesTo) == 1 && rule.AppliesTo[0] == "*" {
+		if isWildcard(rule.AppliesTo) {
 			// Wildcard: applies to everyone except nationals of the destination.
 			// We already filtered destination nationals above.
 			applies = true
@@ -167,7 +167,7 @@ func MatchAdminRules(countries []string, nationalities []string) []AdminCheckIte
 
 		// If a more specific rule (ESTA/eTA) matches, skip the generic visa rule.
 		// The logic: if we already added a specific rule for this country, skip "*" visa.
-		if rule.AppliesTo[0] == "*" && rule.Type == "visa" {
+		if isWildcard(rule.AppliesTo) && rule.Type == "visa" {
 			// Check if a more specific rule already matched for this country.
 			alreadyHasSpecific := false
 			for _, item := range items {
@@ -191,7 +191,7 @@ func MatchAdminRules(countries []string, nationalities []string) []AdminCheckIte
 			Type:      rule.Type,
 			Label:     rule.Label,
 			Status:    status,
-			AppliesTo: nationalities,
+			AppliesTo: matchedNationalities(rule, nationalities),
 			Detail:    rule.Cost,
 			URL:       rule.URL,
 			Cost:      rule.Cost,
@@ -199,6 +199,43 @@ func MatchAdminRules(countries []string, nationalities []string) []AdminCheckIte
 	}
 
 	return items
+}
+
+// isWildcard reports whether a rule's nationality list is the ["*"] catch-all.
+func isWildcard(list []string) bool {
+	return len(list) == 1 && list[0] == "*"
+}
+
+// matchedNationalities narrows a rule's nationality list to the nationalities
+// actually present in the trip.
+//
+// AdminCheckItem.AppliesTo used to carry EVERY trip nationality, which made the
+// per-traveler checklist of construction/SPEC.md §7 decorative: the frontend
+// groups items by intersecting AppliesTo with each person's nationalities, so a
+// US-only traveler was told to obtain a Canadian eTA their passport does not
+// require. Only the nationalities that triggered the rule belong here.
+//
+// The order of `nationalities` is preserved (Service sorts it), so the field
+// stays deterministic. A wildcard rule keeps ["*"]: it really does apply to
+// everyone, and that is the bucket the frontend renders as such.
+func matchedNationalities(rule AdminRule, nationalities []string) []string {
+	if isWildcard(rule.AppliesTo) {
+		return []string{"*"}
+	}
+	ruleSet := toSet(rule.AppliesTo)
+	out := make([]string, 0, len(nationalities))
+	for _, n := range nationalities {
+		if ruleSet[n] {
+			out = append(out, n)
+		}
+	}
+	if len(out) == 0 {
+		// Unreachable: callers only build an item once hasAny() matched. Kept
+		// explicit because an empty list is read as "applies to everyone"
+		// downstream, which would silently widen the item back.
+		return []string{"*"}
+	}
+	return out
 }
 
 // toSet converts a string slice to a set map.

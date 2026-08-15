@@ -66,7 +66,7 @@ There is **no `TRIPKIT_CONSTRUCTION_*` variable and no ops loader**: unlike
 Discovery or Daily Brief, the construction mode has no config path.
 `ops/construction.json` is **not consumed** by this binary. Concretely:
 
-- the 6 phases, their order and the phase gates are compiled in (`internal/construction/phase.go`);
+- the phase **range** is compiled in (`internal/construction/phase.go`): phases 1 to 4 plus Live (5) as defined by `construction/SPEC.md` §5, plus 0 for "construction pas encore démarrée". A target outside that range is refused with a `400`. The **order is deliberately not enforced**: the spec allows going back (Ph3 → Ph2 → Ph3 is an assumed loop) and makes Ph3/Ph4 parallelizable. The gate itself is `CanTransition`: QA is evaluated **for the requested target phase**, and a single red violation refuses the transition with a `409 {error:"transition_blocked", blockers:[…]}` unless an admin forces it (`?force=1`, which records the skipped blockers in `construction_phase_log`);
 - the QA thresholds are compiled in (`internal/construction/qa.go`), except those already read from the seed `travelProfile`;
 - the nuisance categories, radii and scoring thresholds are compiled in (`internal/nuisance/categories.go`), and the Overpass cache TTL (24h) and concurrency (2) with them;
 - the Bifrost endpoint and model used for construction synthesis are **inherited from the Plus chat ops config** (`ops/plus-chat.json` → `bifrostBaseUrl` + `chatModel`) with `TRIPKIT_BIFROST_API_KEY` as the secret. That is a deliberate reuse, not a design: it exists because construction has no ops config of its own yet.

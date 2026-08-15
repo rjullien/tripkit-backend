@@ -158,6 +158,52 @@ func TestMatchKeyword_RealSeedVocabulary(t *testing.T) {
 	}
 }
 
+// TestMatchKeyword_PluralsAndWordBoundaries covers the two edges of the matcher:
+//
+//   - "-aux" plurals: mapping them all to "-al" is right for the "national"
+//     family only, so "châteaux" became "chateal" and could never match
+//     "Château Frontenac" — a false negative on an entirely plausible interest;
+//   - substring matching: "long" (from "shopping long") matched inside
+//     "Longueuil" and the one-letter "d" of "musées d'art moderne" matched
+//     nearly any name — a false positive on a dislike costs +10 and demotes a
+//     legitimate item.
+func TestMatchKeyword_PluralsAndWordBoundaries(t *testing.T) {
+	tests := []struct {
+		name    string
+		item    string
+		themeID string
+		keyword string
+		want    bool
+	}{
+		// -aux plurals, both families.
+		{"chateaux matches a singular chateau", "Château Frontenac", "patrimoine", "châteaux", true},
+		{"bateaux matches a singular bateau", "Musée du bateau de Québec", "musees", "bateaux", true},
+		{"parcs nationaux still matches the -al family", "Parc national de la Jacques-Cartier", "rando", "parcs nationaux", true},
+		{"a singular keyword matches a plural name", "Route des Châteaux", "patrimoine", "château", true},
+		{"chateaux does not match an unrelated name", "Musée des techniques de Montréal", "musees", "châteaux", false},
+
+		// Word boundaries.
+		{"shopping long does not match Longueuil", "Centre commercial Longueuil", "shopping", "shopping long", false},
+		{"shopping long still matches a long shopping venue", "Long Shopping Outlet Mall", "shopping", "shopping long", true},
+		{"a token is not matched inside a longer word", "Parcheminerie du Vieux-Québec", "patrimoine", "parc", false},
+		{"a token still matches a hyphenated word", "Vieux-Port de Montréal", "patrimoine", "port", true},
+
+		// One-character tokens.
+		{"the apostrophe token does not create a match on its own", "Marché du Vieux-Port", "marches", "d", false},
+		{"a keyword made only of one-letter tokens never matches", "Musée d'art moderne", "musees", "d'", false},
+		{"dropping the apostrophe token keeps the real tokens required", "Boulangerie Denise", "food", "d'art", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := matchKeyword(strings.ToLower(tc.item), strings.ToLower(tc.themeID), tc.keyword)
+			if got != tc.want {
+				t.Errorf("matchKeyword(%q, %q, %q) = %v, want %v", tc.item, tc.themeID, tc.keyword, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestRankItems_RealSeedInterests proves the ranking actually moves with the
 // production vocabulary: rene's likes promote the national park, his dislikes
 // demote the modern-art museum without dropping it.
@@ -184,6 +230,25 @@ func TestRankItems_RealSeedInterests(t *testing.T) {
 	}
 	if got[len(got)-1].Name != "Musée d'art moderne de Québec" {
 		t.Errorf("last=%q, want the disliked modern art museum", got[len(got)-1].Name)
+	}
+}
+
+// A dislike matching by accident costs +10 and pushes a legitimate item to the
+// bottom of the list. "shopping long" must therefore leave a mall in Longueuil
+// where distance put it.
+func TestRankItems_NoFalsePositiveOnSubstring(t *testing.T) {
+	items := []Item{
+		{Name: "Centre commercial Longueuil", ThemeID: "shopping", DistKm: 2},
+		{Name: "Sentier du lac", ThemeID: "rando", DistKm: 6},
+	}
+	cfg := RankConfig{
+		Interests: map[string]InterestPref{
+			"rene": {Dislikes: []string{"shopping long"}},
+		},
+	}
+	got := RankItems(items, cfg)
+	if got[0].Name != "Centre commercial Longueuil" {
+		t.Errorf("first=%q, want the nearer mall: \"long\" must not match inside \"Longueuil\"", got[0].Name)
 	}
 }
 

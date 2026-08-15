@@ -2,6 +2,7 @@ package construction
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -37,6 +38,13 @@ func (s *Service) GetConstruction(tripID string) (*ConstructionState, int, error
 // Runs QA gates: if blockers (red violations) exist for the target phase,
 // the transition is refused unless force=true.
 func (s *Service) TransitionPhase(tripID string, target int, force bool, user string) (*ConstructionState, int, error) {
+	// The phase model has a range (construction/SPEC.md §5). Without this check
+	// any integer was accepted and persisted, including a phase no gate and no
+	// UI knows about.
+	if !ValidPhase(target) {
+		return nil, http.StatusBadRequest, fmt.Errorf("invalid phase %d: must be between %d and %d", target, PhaseNotStarted, PhaseLive)
+	}
+
 	// Read current state (or create default).
 	state, err := ReadState(s.DB, tripID)
 	if err != nil {
@@ -69,6 +77,10 @@ func (s *Service) TransitionPhase(tripID string, target int, force bool, user st
 	forcedBy := ""
 	if force {
 		forcedBy = user
+		// CanTransition returns no blockers on the forced path, so the audit row
+		// used to record WHO overrode the gate but never WHAT was skipped. The
+		// red violations computed for the target phase are exactly that.
+		blockers = RedViolations(violations)
 	}
 	blockersStr := "[]"
 	if len(blockers) > 0 {

@@ -272,9 +272,13 @@ func (h *Handler) CreateProfileRequest(w http.ResponseWriter, r *http.Request) {
 	// section in the seed, then persist a models.ConstructionProfileRequest row
 	// and answer 202 with its jobId. Until then the endpoint must not claim
 	// success: it used to start a canned job and store a row stuck at
-	// status "running" forever. When the LLM call is wired, body.Text must be
-	// wrapped in <user_request>...</user_request> delimiters so user-supplied
-	// text is never interpreted as instructions.
+	// status "running" forever.
+	//
+	// When the LLM call is wired, body.Text MUST travel through
+	// leo.WrapUserRequest: it delimits user-supplied text as data and neutralizes
+	// a smuggled </user_request>, so the text can never be read as instructions.
+	// The helper and its tests exist (internal/leo/prompts.go,
+	// TestWrapUserRequest) precisely so this requirement is not a comment.
 	writeJSON(w, http.StatusNotImplemented, map[string]any{
 		"error":  "not_implemented",
 		"detail": "La modification du profil voyageur n'est pas encore branchée : aucune écriture n'a été effectuée.",

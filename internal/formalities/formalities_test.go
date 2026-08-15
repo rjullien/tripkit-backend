@@ -1,6 +1,7 @@
 package formalities
 
 import (
+	"reflect"
 	"sort"
 	"testing"
 )
@@ -193,6 +194,94 @@ func TestMatchAdminRules_USFRToCanada(t *testing.T) {
 	}
 	if !foundETA {
 		t.Fatal("FR+US traveler to CA should still need eTA (neither is CA national)")
+	}
+}
+
+// AppliesTo drives the per-traveler checklist of construction/SPEC.md §7 on the
+// frontend, which intersects it with each person's nationalities. Filling it with
+// the whole trip nationality set made that grouping decorative: every traveler
+// received every country formality, including ones their passport does not
+// require.
+func TestMatchAdminRules_AppliesToOnlyTriggeringNationalities(t *testing.T) {
+	// FR+BR travelers to Canada. The Canadian eTA rule covers FR but not BR
+	// (a Brazilian passport needs a visa, not an eTA), so only FR may appear in
+	// AppliesTo.
+	items := MatchAdminRules([]string{"CA"}, []string{"FR", "BR"})
+
+	var eta *AdminCheckItem
+	for i := range items {
+		if items[i].Country == "CA" && items[i].Type == "eta" {
+			eta = &items[i]
+		}
+	}
+	if eta == nil {
+		t.Fatal("FR+BR travelers to CA should get the eTA item")
+	}
+	if !reflect.DeepEqual(eta.AppliesTo, []string{"FR"}) {
+		t.Fatalf("eTA AppliesTo = %v, want [FR] (BR is not eligible for the Canadian eTA)", eta.AppliesTo)
+	}
+}
+
+// A wildcard rule must keep the ["*"] marker: it genuinely applies to every
+// traveler, and that is the bucket the frontend renders as "tous les voyageurs".
+// Substituting the trip nationalities here would hide the distinction.
+func TestMatchAdminRules_AppliesToWildcardKept(t *testing.T) {
+	items := MatchAdminRules([]string{"IN"}, []string{"FR", "JP"})
+
+	found := false
+	for _, item := range items {
+		if item.Country != "IN" {
+			continue
+		}
+		found = true
+		if !reflect.DeepEqual(item.AppliesTo, []string{"*"}) {
+			t.Fatalf("India e-Visa AppliesTo = %v, want [*]", item.AppliesTo)
+		}
+	}
+	if !found {
+		t.Fatal("trip to IN should produce an e-Visa item")
+	}
+}
+
+// Schengen free movement is only granted to the EU nationals of the trip, so the
+// non-EU travelers must not be listed as covered by it.
+func TestMatchAdminRules_AppliesToFreeMovementNarrowed(t *testing.T) {
+	items := MatchAdminRules([]string{"DE"}, []string{"FR", "JP"})
+
+	found := false
+	for _, item := range items {
+		if item.Type != "free_movement" {
+			continue
+		}
+		found = true
+		if !reflect.DeepEqual(item.AppliesTo, []string{"FR"}) {
+			t.Fatalf("free_movement AppliesTo = %v, want [FR] (JP has no EU free movement)", item.AppliesTo)
+		}
+	}
+	if !found {
+		t.Fatal("FR national traveling to DE should get Schengen free movement")
+	}
+}
+
+// AppliesTo must never come back empty: downstream an empty list reads as
+// "applies to everyone", which would silently widen the item again.
+func TestMatchAdminRules_AppliesToNeverEmpty(t *testing.T) {
+	for _, tc := range []struct {
+		countries     []string
+		nationalities []string
+	}{
+		{[]string{"CA"}, []string{"FR", "JP"}},
+		{[]string{"US"}, []string{"FR"}},
+		{[]string{"GB"}, []string{"FR", "US"}},
+		{[]string{"TH", "IN", "CN"}, []string{"FR", "DE"}},
+		{[]string{"DE"}, []string{"FR"}},
+	} {
+		for _, item := range MatchAdminRules(tc.countries, tc.nationalities) {
+			if len(item.AppliesTo) == 0 {
+				t.Fatalf("countries=%v nationalities=%v: item %s/%s has an empty AppliesTo",
+					tc.countries, tc.nationalities, item.Country, item.Type)
+			}
+		}
 	}
 }
 

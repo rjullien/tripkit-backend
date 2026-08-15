@@ -322,6 +322,156 @@ func TestTransitionPhase_NoForce_ForcedByEmpty(t *testing.T) {
 	}
 }
 
+// A forced transition is an admin override of a QA gate: the audit row is only
+// worth writing if it records WHAT was skipped, not just who skipped it.
+// CanTransition returns no blockers when force is true, so Blockers used to be
+// persisted as "[]" on exactly the path where it matters.
+func TestTransitionPhase_Force_RecordsSkippedBlockers(t *testing.T) {
+	db := setupStateTestDB(t)
+
+	// Same red day_gap as TestTransitionPhase_Blocked_ReturnsTypedError.
+	data := `{"startDate":"2026-08-14","days":[` +
+		`{"dayNum":1,"date":"2026-08-14","transport":{"mode":"train","status":"booked"}},` +
+		`{"dayNum":3,"date":"2026-08-16","transport":{"mode":"train","status":"booked"}}` +
+		`],"hotels":[{"dayNum":1,"status":"booked"},{"dayNum":3,"status":"booked"}]}`
+	trip := models.Trip{ID: "trip-force-log", Name: "Forced", Data: &data}
+	if err := db.Create(&trip).Error; err != nil {
+		t.Fatalf("create trip: %v", err)
+	}
+
+	svc := &Service{DB: db}
+	state, code, err := svc.TransitionPhase("trip-force-log", 3, true, "admin-user")
+	if err != nil {
+		t.Fatalf("forced TransitionPhase error: %v", err)
+	}
+	if code != 200 || state.Phase != 3 {
+		t.Fatalf("code=%d phase=%d want 200/3", code, state.Phase)
+	}
+
+	var logs []models.ConstructionPhaseLog
+	db.Where("trip_id = ?", "trip-force-log").Find(&logs)
+	if len(logs) != 1 {
+		t.Fatalf("log count=%d want 1", len(logs))
+	}
+	if logs[0].ForcedBy != "admin-user" {
+		t.Errorf("ForcedBy=%q want admin-user", logs[0].ForcedBy)
+	}
+	if logs[0].Blockers == "" || logs[0].Blockers == "[]" {
+		t.Fatalf("Blockers=%q: a forced transition over a real blocker must record it", logs[0].Blockers)
+	}
+
+	var recorded []QAViolation
+	if err := json.Unmarshal([]byte(logs[0].Blockers), &recorded); err != nil {
+		t.Fatalf("Blockers is not a QAViolation list: %v (%q)", err, logs[0].Blockers)
+	}
+	if len(recorded) != 1 || recorded[0].Code != "day_gap" {
+		t.Fatalf("recorded blockers=%+v want one day_gap", recorded)
+	}
+	if recorded[0].Severity != "red" {
+		t.Errorf("recorded severity=%q want red", recorded[0].Severity)
+	}
+}
+
+// Forcing a clean trip records no blockers: the field says "nothing was skipped",
+// which is different from "we did not look".
+func TestTransitionPhase_Force_CleanTrip_NoBlockers(t *testing.T) {
+	db := setupStateTestDB(t)
+
+	trip := models.Trip{ID: "trip-force-clean", Name: "Forced Clean"}
+	if err := db.Create(&trip).Error; err != nil {
+		t.Fatalf("create trip: %v", err)
+	}
+
+	svc := &Service{DB: db}
+	if _, _, err := svc.TransitionPhase("trip-force-clean", 1, true, "admin-user"); err != nil {
+		t.Fatalf("TransitionPhase error: %v", err)
+	}
+
+	var logs []models.ConstructionPhaseLog
+	db.Where("trip_id = ?", "trip-force-clean").Find(&logs)
+	if len(logs) != 1 {
+		t.Fatalf("log count=%d want 1", len(logs))
+	}
+	if logs[0].Blockers != "[]" {
+		t.Errorf("Blockers=%q want [] (nothing to skip)", logs[0].Blockers)
+	}
+}
+
+// The phase model of construction/SPEC.md §5 has a range. Any integer used to be
+// accepted and persisted, including phases no gate and no UI knows about.
+func TestTransitionPhase_RejectsTargetOutOfRange(t *testing.T) {
+	db := setupStateTestDB(t)
+
+	trip := models.Trip{ID: "trip-range", Name: "Range"}
+	if err := db.Create(&trip).Error; err != nil {
+		t.Fatalf("create trip: %v", err)
+	}
+
+	svc := &Service{DB: db}
+	for _, target := range []int{-1, 6, 42} {
+		state, code, err := svc.TransitionPhase("trip-range", target, false, "nadia")
+		if err == nil {
+			t.Fatalf("target=%d: expected an error", target)
+		}
+		if code != 400 {
+			t.Errorf("target=%d: code=%d want 400", target, code)
+		}
+		if state != nil {
+			t.Errorf("target=%d: expected nil state, got %+v", target, state)
+		}
+	}
+
+	// Nothing was persisted and nothing was logged.
+	persisted, err := ReadState(db, "trip-range")
+	if err != nil {
+		t.Fatalf("ReadState: %v", err)
+	}
+	if persisted != nil && persisted.Phase != 0 {
+		t.Errorf("persisted phase=%d want 0", persisted.Phase)
+	}
+	var count int64
+	db.Model(&models.ConstructionPhaseLog{}).Where("trip_id = ?", "trip-range").Count(&count)
+	if count != 0 {
+		t.Errorf("phase log rows=%d want 0", count)
+	}
+}
+
+// Every phase the model defines must be accepted, including phase 0 (the
+// retro-compatible "not started" default the frontend renders) and phase 5
+// (Live). The frontend's first click requests phase 1.
+func TestTransitionPhase_AcceptsEveryDefinedPhase(t *testing.T) {
+	db := setupStateTestDB(t)
+
+	trip := models.Trip{ID: "trip-all-phases", Name: "All Phases"}
+	if err := db.Create(&trip).Error; err != nil {
+		t.Fatalf("create trip: %v", err)
+	}
+
+	svc := &Service{DB: db}
+	for target := PhaseNotStarted; target <= PhaseLive; target++ {
+		state, code, err := svc.TransitionPhase("trip-all-phases", target, false, "nadia")
+		if err != nil {
+			t.Fatalf("target=%d: %v", target, err)
+		}
+		if code != 200 || state.Phase != target {
+			t.Fatalf("target=%d: code=%d phase=%d", target, code, state.Phase)
+		}
+	}
+}
+
+func TestValidPhase(t *testing.T) {
+	for _, tc := range []struct {
+		target int
+		want   bool
+	}{
+		{-1, false}, {0, true}, {1, true}, {2, true}, {3, true}, {4, true}, {5, true}, {6, false}, {99, false},
+	} {
+		if got := ValidPhase(tc.target); got != tc.want {
+			t.Errorf("ValidPhase(%d)=%v want %v", tc.target, got, tc.want)
+		}
+	}
+}
+
 func TestGetConstruction_DefaultPhaseZero(t *testing.T) {
 	db := setupStateTestDB(t)
 

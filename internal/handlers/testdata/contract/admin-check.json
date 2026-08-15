@@ -6,8 +6,7 @@
   "items": [
     {
       "appliesTo": [
-        "FR",
-        "US"
+        "FR"
       ],
       "cost": "7 CAD",
       "country": "CA",

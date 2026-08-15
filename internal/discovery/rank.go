@@ -88,39 +88,71 @@ func interestScore(it Item, interests map[string]InterestPref) float64 {
 // The real vocabulary in tripkit-seeds/travel-profile.js is multi-word French
 // ("parcs nationaux", "musées techniques", "shopping long"), which never appears
 // as a contiguous substring of an OSM name ("Parc national de la Jacques-Cartier").
-// So the keyword is normalised (lowercased, accents stripped), split on
-// whitespace and punctuation, lightly singularised, and EVERY token must be
-// found in the normalised name or theme id. Requiring all tokens keeps
-// "shopping long" from matching a plain shop.
+// So both sides are normalised (lowercased, accents stripped) and split into
+// words on whitespace and punctuation, and EVERY keyword token must match a
+// WHOLE word of the name or theme id, up to a light plural rule. Requiring all
+// tokens keeps "shopping long" from matching a plain shop.
+//
+// Matching whole words rather than substrings matters in both directions: it
+// keeps "long" (from "shopping long") out of "Longueuil", and one-character
+// tokens — the "d" of "musées d'art moderne" once the apostrophe is split on —
+// are dropped entirely instead of matching nearly every name. A false positive
+// on a dislike costs +10 and demotes a legitimate item.
 func matchKeyword(nameLower, themeIDLower, keyword string) bool {
 	tokens := keywordTokens(keyword)
 	if len(tokens) == 0 {
 		return false
 	}
-	name := normalizeText(nameLower)
-	theme := normalizeText(themeIDLower)
+	haystack := wordForms(nameLower, themeIDLower)
 	for _, tok := range tokens {
-		if !strings.Contains(name, tok) && !strings.Contains(theme, tok) {
+		matched := false
+		for _, form := range matchForms(tok) {
+			if haystack[form] {
+				matched = true
+				break
+			}
+		}
+		if !matched {
 			return false
 		}
 	}
 	return true
 }
 
-// keywordTokens normalises a keyword into singularised match tokens.
+// keywordTokens normalises a keyword into match tokens, dropping the
+// one-character ones (an apostrophe or a hyphen splits words into fragments that
+// would match anything).
 func keywordTokens(keyword string) []string {
-	fields := strings.FieldsFunc(normalizeText(keyword), func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
-	})
+	fields := splitWords(normalizeText(keyword))
 	out := make([]string, 0, len(fields))
 	for _, f := range fields {
-		f = singularize(f)
-		if f == "" {
+		if len([]rune(f)) < 2 {
 			continue
 		}
 		out = append(out, f)
 	}
 	return out
+}
+
+// wordForms collects every match form of every word of the given texts, so a
+// keyword token can be compared against whole words only.
+func wordForms(texts ...string) map[string]bool {
+	set := make(map[string]bool)
+	for _, t := range texts {
+		for _, w := range splitWords(normalizeText(t)) {
+			for _, f := range matchForms(w) {
+				set[f] = true
+			}
+		}
+	}
+	return set
+}
+
+// splitWords cuts a normalised string on anything that is not a letter or digit.
+func splitWords(s string) []string {
+	return strings.FieldsFunc(s, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
 }
 
 // normalizeText lowercases and strips French accents so "musées" matches "musees".
@@ -151,18 +183,27 @@ var accentFolds = map[rune]rune{
 	'ñ': 'n',
 }
 
-// singularize applies light French plural rules so a plural keyword matches a
-// singular name: "parcs" -> "parc", "nationaux" -> "national", "musées" -> "musee".
-// Short words are left alone ("bus", "aux" would otherwise be mangled).
-func singularize(tok string) string {
-	if len(tok) <= 3 {
-		return tok
+// matchForms returns the forms a word may match as, applying light French plural
+// rules so a plural keyword matches a singular name: "parcs" -> "parc",
+// "musées" -> "musee". Short words are left alone ("bus", "aux" would otherwise
+// be mangled).
+//
+// French has two families of "-aux" plurals and guessing one of them is wrong
+// half the time: "nationaux" -> "national" but "châteaux" -> "château",
+// "bateaux" -> "bateau". Both candidates are returned and either may match, and
+// the word itself is always kept so a singular keyword still matches a plural
+// name ("château" against "Route des Châteaux").
+func matchForms(word string) []string {
+	forms := []string{word}
+	if len(word) <= 3 {
+		return forms
 	}
-	if strings.HasSuffix(tok, "aux") && len(tok) > 4 {
-		return strings.TrimSuffix(tok, "aux") + "al"
+	if strings.HasSuffix(word, "aux") && len(word) > 4 {
+		base := strings.TrimSuffix(word, "aux")
+		return append(forms, base+"al", base+"au")
 	}
-	if strings.HasSuffix(tok, "s") || strings.HasSuffix(tok, "x") {
-		return tok[:len(tok)-1]
+	if strings.HasSuffix(word, "s") || strings.HasSuffix(word, "x") {
+		return append(forms, word[:len(word)-1])
 	}
-	return tok
+	return forms
 }
