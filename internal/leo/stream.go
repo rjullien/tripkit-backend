@@ -60,8 +60,19 @@ func prepareMessages(ctx PromptContext, req ChatRequest) ([]ChatMessage, error) 
 	if strings.TrimSpace(promptCtx.TripID) == "" {
 		promptCtx.TripID = strings.TrimSpace(req.TripID)
 	}
+
+	// Resolve mode: unknown/empty falls back to default (never error).
+	// Pass all known modes as allowed; handler-level restriction is a future concern.
+	mode := ResolveMode(req.Mode, allModesList())
+	var sysContent string
+	if mode != ModeDefault {
+		sysContent = SystemPromptFor(mode, promptCtx, nil)
+	} else {
+		sysContent = SystemPrompt(promptCtx)
+	}
+
 	out := make([]ChatMessage, 0, len(msgs)+1)
-	out = append(out, ChatMessage{Role: "system", Content: SystemPrompt(promptCtx)})
+	out = append(out, ChatMessage{Role: "system", Content: sysContent})
 	out = append(out, msgs...)
 	return out, nil
 }

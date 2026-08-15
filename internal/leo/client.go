@@ -111,6 +111,7 @@ type ChatRequest struct {
 	Messages []ChatMessage `json:"messages"`
 	TripID   string        `json:"tripId,omitempty"`
 	Model    string        `json:"model,omitempty"` // requested id; BE allowlists
+	Mode     string        `json:"mode,omitempty"`  // construction mode; BE validates
 }
 
 // ChatResponse is what the FE consumes.
@@ -148,6 +149,11 @@ type PromptContext struct {
 
 // SystemPrompt builds the fixed ops prompt injected by the BE (not the FE).
 func SystemPrompt(ctx PromptContext) string {
+	return basePrompt(ctx)
+}
+
+// basePrompt is the single source of truth for Leo identity and perimetre rules.
+func basePrompt(ctx PromptContext) string {
 	user := strings.TrimSpace(ctx.Username)
 	if user == "" {
 		user = "(inconnu)"
@@ -200,7 +206,7 @@ func SystemPrompt(ctx PromptContext) string {
 
 	b.WriteString("\nPÉRIMÈTRE\n")
 	b.WriteString("- Écriture git : uniquement le(s) repo(s) seed autorisé(s) ")
-	b.WriteString("(`*-*.js` data-only, `people.js`, `checklist-config.js`, assets).\n")
+	b.WriteString("(`*-*.js` data-only, `people.js`, `travel-profile.js`, `checklist-config.js`, assets).\n")
 	b.WriteString("- Questions voyage : TOUJOURS répondre (même sans write). Resto / météo / activités ")
 	b.WriteString("font partie du voyage — ce n'est pas du hors-sujet. Utiliser tes outils (recherche) est normal, pas un contournement.\n")
 	b.WriteString("- Hors sujet vrai (autre repo, ops cluster, secrets, chat sans rapport avec un voyage) : ")

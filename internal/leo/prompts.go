@@ -1,0 +1,127 @@
+package leo
+
+import "strings"
+
+// Mode represents a Leo operating mode (default or construction phase).
+type Mode string
+
+const (
+	ModeDefault     Mode = ""
+	ModeIdeation    Mode = "construction:ideation"
+	ModeRoute       Mode = "construction:route"
+	ModeActivities  Mode = "construction:activities"
+	ModeProfileEdit Mode = "construction:profile-edit"
+)
+
+// allModes is the full registry of known construction modes.
+var allModes = map[Mode]bool{
+	ModeIdeation:    true,
+	ModeRoute:       true,
+	ModeActivities:  true,
+	ModeProfileEdit: true,
+}
+
+// allModesList returns the known modes as a string slice (for ResolveMode allowed param).
+func allModesList() []string {
+	out := make([]string, 0, len(allModes))
+	for m := range allModes {
+		out = append(out, string(m))
+	}
+	return out
+}
+
+// ResolveMode maps a client-requested mode to a known Mode constant.
+// Rules: empty or unknown input always returns ModeDefault (never an error).
+// If allowed is nil or empty, only ModeDefault is permitted.
+func ResolveMode(requested string, allowed []string) Mode {
+	want := Mode(strings.TrimSpace(requested))
+	if want == ModeDefault {
+		return ModeDefault
+	}
+	if !allModes[want] {
+		return ModeDefault
+	}
+	// Check the allowed list -- nil/empty means nothing beyond default is permitted.
+	for _, a := range allowed {
+		if Mode(strings.TrimSpace(a)) == want {
+			return want
+		}
+	}
+	return ModeDefault
+}
+
+// ConstructionContext carries trip-level state for construction mode prompts.
+// Placeholder struct -- fields will be populated as construction phases land.
+type ConstructionContext struct {
+	Phase      int    // current construction phase (1-based)
+	TripStatus string // e.g. "draft", "planning", "booked"
+	Travelers  int    // number of travelers
+	TripName   string // human-friendly trip name
+}
+
+// SystemPromptFor builds a mode-specific system prompt.
+// For ModeDefault it delegates to basePrompt (identity + perimetre).
+// For construction modes it appends a mode overlay after the base prompt.
+func SystemPromptFor(mode Mode, ctx PromptContext, cc *ConstructionContext) string {
+	base := basePrompt(ctx)
+	if mode == ModeDefault {
+		return base
+	}
+	overlay := modeOverlay(mode, cc)
+	if overlay == "" {
+		return base
+	}
+	return base + "\n" + overlay
+}
+
+// modeOverlay returns mode-specific instructions appended after the base prompt.
+func modeOverlay(mode Mode, cc *ConstructionContext) string {
+	switch mode {
+	case ModeIdeation:
+		return ideationOverlay(cc)
+	case ModeRoute:
+		return routeOverlay(cc)
+	case ModeActivities:
+		return activitiesOverlay(cc)
+	case ModeProfileEdit:
+		return profileEditOverlay(cc)
+	default:
+		return ""
+	}
+}
+
+func ideationOverlay(_ *ConstructionContext) string {
+	var b strings.Builder
+	b.WriteString("MODE CONSTRUCTION : IDÉATION\n")
+	b.WriteString("- Phase : brainstorming destination / dates / budget.\n")
+	b.WriteString("- Propose des idées, pose des questions ouvertes pour affiner.\n")
+	b.WriteString("- Ne crée pas encore de fichiers seed.\n")
+	return b.String()
+}
+
+func routeOverlay(_ *ConstructionContext) string {
+	var b strings.Builder
+	b.WriteString("MODE CONSTRUCTION : ITINÉRAIRE\n")
+	b.WriteString("- Phase : construction de l'itinéraire jour par jour.\n")
+	b.WriteString("- Propose un routing logique, optimise les trajets.\n")
+	b.WriteString("- Écris les fichiers seed d'itinéraire quand validé.\n")
+	return b.String()
+}
+
+func activitiesOverlay(_ *ConstructionContext) string {
+	var b strings.Builder
+	b.WriteString("MODE CONSTRUCTION : ACTIVITÉS\n")
+	b.WriteString("- Phase : enrichissement avec activités, restos, visites.\n")
+	b.WriteString("- Cherche et propose des activités adaptées au profil voyageur.\n")
+	b.WriteString("- Écris dans les fichiers seed appropriés.\n")
+	return b.String()
+}
+
+func profileEditOverlay(_ *ConstructionContext) string {
+	var b strings.Builder
+	b.WriteString("MODE CONSTRUCTION : PROFIL VOYAGEUR\n")
+	b.WriteString("- Phase : édition du profil voyageur (travel-profile.js).\n")
+	b.WriteString("- Aide l'utilisateur à renseigner préférences, allergies, centres d'intérêt.\n")
+	b.WriteString("- Écris dans travel-profile.js uniquement.\n")
+	return b.String()
+}
