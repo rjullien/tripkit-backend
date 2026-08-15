@@ -22,3 +22,14 @@ type ConstructionProfileRequest struct {
 	Status    string    `gorm:"not null;size:50" json:"status"`
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 }
+
+// ConstructionCheck stores QA or other check results for a trip.
+type ConstructionCheck struct {
+	ID        uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	TripID    string    `gorm:"not null;index;size:255" json:"trip_id"`
+	Kind      string    `gorm:"not null;size:50" json:"kind"`
+	TargetID  string    `gorm:"size:255" json:"target_id"`
+	Data      string    `gorm:"type:json" json:"data"`
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}

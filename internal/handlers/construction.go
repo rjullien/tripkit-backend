@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/rjullien/tripkit-backend/internal/construction"
 	"github.com/rjullien/tripkit-backend/internal/leo"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/models"
@@ -113,6 +114,96 @@ func rawToAny(raw json.RawMessage) any {
 		return nil
 	}
 	return v
+}
+
+// RunConstructionQA runs QA rules synchronously and stores the result.
+// POST /trips/{tripId}/construction/qa
+func (h *Handler) RunConstructionQA(w http.ResponseWriter, r *http.Request) {
+	tripID := chi.URLParam(r, "tripId")
+
+	// Load trip data
+	var trip struct {
+		Data *string
+	}
+	if err := h.db.Table("trips").Select("data").Where("id = ?", tripID).Scan(&trip).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Trip not found")
+		return
+	}
+
+	// Parse trip data
+	var tripData map[string]any
+	if trip.Data != nil && *trip.Data != "" {
+		if err := json.Unmarshal([]byte(*trip.Data), &tripData); err != nil {
+			tripData = make(map[string]any)
+		}
+	} else {
+		tripData = make(map[string]any)
+	}
+
+	// Extract travel profile
+	var profile map[string]any
+	if tp, ok := tripData["travelProfile"].(map[string]any); ok {
+		profile = tp
+	}
+
+	// Get current phase
+	phase := 0
+	if h.construction != nil {
+		state, _, _ := h.construction.GetConstruction(tripID)
+		if state != nil {
+			phase = state.Phase
+		}
+	}
+
+	// Run QA
+	violations := construction.RunQA(tripData, profile, phase)
+	if violations == nil {
+		violations = []construction.QAViolation{}
+	}
+
+	// Store result
+	resultJSON := construction.QAResultJSON(violations)
+	check := models.ConstructionCheck{
+		TripID: tripID,
+		Kind:   "qa",
+		Data:   resultJSON,
+	}
+	h.db.Create(&check)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"violations": violations,
+		"phase":      phase,
+		"count":      len(violations),
+	})
+}
+
+// GetConstructionQA returns the last cached QA result for a trip.
+// GET /trips/{tripId}/construction/qa
+func (h *Handler) GetConstructionQA(w http.ResponseWriter, r *http.Request) {
+	tripID := chi.URLParam(r, "tripId")
+
+	var check models.ConstructionCheck
+	if err := h.db.Where("trip_id = ? AND kind = ?", tripID, "qa").Order("created_at DESC").First(&check).Error; err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"violations": []any{},
+			"phase":      0,
+			"count":      0,
+			"cached":     false,
+		})
+		return
+	}
+
+	var violations []construction.QAViolation
+	if err := json.Unmarshal([]byte(check.Data), &violations); err != nil {
+		violations = []construction.QAViolation{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"violations": violations,
+		"count":      len(violations),
+		"cached":     true,
+		"cachedAt":   check.CreatedAt,
+	})
 }
 
 // validProfileTargets is the set of allowed targets for profile edit requests.

@@ -179,6 +179,8 @@ func main() {
 		// Construction
 		r.Get("/trips/{tripId}/construction", h.GetConstruction)
 		r.Put("/trips/{tripId}/construction/phase", h.TransitionPhase)
+		r.Post("/trips/{tripId}/construction/qa", h.RunConstructionQA)
+		r.Get("/trips/{tripId}/construction/qa", h.GetConstructionQA)
 		r.Get("/trips/{tripId}/travel-profile", h.GetTravelProfile)
 		r.Post("/trips/{tripId}/travel-profile/request", h.CreateProfileRequest)
 
