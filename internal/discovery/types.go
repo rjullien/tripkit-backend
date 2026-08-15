@@ -30,17 +30,19 @@ type Scope struct {
 
 // Item is one search hit (candidate, not a seed decision).
 type Item struct {
-	ID      string  `json:"id"`
-	ThemeID string  `json:"themeId"`
-	Name    string  `json:"name"`
-	Lat     float64 `json:"lat"`
-	Lon     float64 `json:"lon"`
-	DistKm  float64 `json:"distKm"`
-	URL     string  `json:"url,omitempty"`
-	When    string  `json:"when,omitempty"`
-	Note    string  `json:"note,omitempty"`
-	Source  string  `json:"source,omitempty"` // osm | editorial
-	Cached  bool    `json:"cached,omitempty"`
+	ID              string  `json:"id"`
+	ThemeID         string  `json:"themeId"`
+	Name            string  `json:"name"`
+	Lat             float64 `json:"lat"`
+	Lon             float64 `json:"lon"`
+	DistKm          float64 `json:"distKm"`
+	DetourKm        float64 `json:"detourKm,omitempty"`
+	DetourEstimated bool    `json:"detourEstimated,omitempty"`
+	URL             string  `json:"url,omitempty"`
+	When            string  `json:"when,omitempty"`
+	Note            string  `json:"note,omitempty"`
+	Source          string  `json:"source,omitempty"` // osm | editorial
+	Cached          bool    `json:"cached,omitempty"`
 }
 
 // Result is the payload of one search (all requested themes).
