@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBifrostCompleter_OK(t *testing.T) {
@@ -44,6 +45,13 @@ func TestBifrostCompleter_OK(t *testing.T) {
 	}
 	if got != "hello polarsteps" {
 		t.Fatalf("got=%q", got)
+	}
+}
+
+func TestNewBifrostCompleter_TimeoutAboveNginxDefault(t *testing.T) {
+	c := NewBifrostCompleter(DefaultConfig())
+	if c.HTTPClient == nil || c.HTTPClient.Timeout != 90*time.Second {
+		t.Fatalf("timeout=%v want 90s (must exceed nginx's 60s default)", c.HTTPClient.Timeout)
 	}
 }
 

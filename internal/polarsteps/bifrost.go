@@ -30,7 +30,9 @@ func NewBifrostCompleter(cfg Config) *BifrostCompleter {
 		APIKey:  strings.TrimSpace(cfg.BifrostAPIKey),
 		Model:   strings.TrimSpace(cfg.CaptionModel),
 		HTTPClient: &http.Client{
-			Timeout: 60 * time.Second,
+			// 90s: nginx /api/ is 180s, FE Polarsteps is 120s. The old 60s
+			// raced nginx's default proxy_read_timeout (HTML 502 to Safari).
+			Timeout: 90 * time.Second,
 		},
 	}
 }
