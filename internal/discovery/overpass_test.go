@@ -100,6 +100,46 @@ func TestClient_SoftFailTimeout429Malformed(t *testing.T) {
 	})
 }
 
+func TestExcludedName_HardwareChains(t *testing.T) {
+	needles := []string{"canadian tire", "home depot", "walmart", "ikea"}
+	if !excludedName("Canadian Tire Tadoussac", needles) {
+		t.Fatal("Canadian Tire must be excluded")
+	}
+	if !excludedName("Walmart Supercentre", needles) {
+		t.Fatal("Walmart must be excluded")
+	}
+	if excludedName("Boutique des artisans", needles) {
+		t.Fatal("tourist shop must stay")
+	}
+	if excludedName("", needles) {
+		t.Fatal("empty name is not excluded")
+	}
+}
+
+func TestClient_DropsExcludedNames(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"elements": []any{
+				map[string]any{"type": "node", "id": 1, "lat": 48.15, "lon": -69.72, "tags": map[string]string{"name": "Canadian Tire"}},
+				map[string]any{"type": "node", "id": 2, "lat": 48.16, "lon": -69.70, "tags": map[string]string{"name": "Boutique des artisans"}},
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient(OverpassConfig{BaseURL: srv.URL, TimeoutSec: 2})
+	items, err := c.Search(context.Background(), 48.1454, -69.7173, Theme{
+		ID: "magasinage", RadiusKm: 10,
+		Overpass:     []string{"shop=mall"},
+		ExcludeNames: []string{"canadian tire"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Name != "Boutique des artisans" {
+		t.Fatalf("%+v", items)
+	}
+}
+
 func TestParseOverpassJSON_EmptyElements(t *testing.T) {
 	items, err := parseOverpassJSON([]byte(`{"elements":[]}`))
 	if err != nil || len(items) != 0 {

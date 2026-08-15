@@ -258,7 +258,8 @@ func (s *Service) Search(ctx context.Context, tripID string, sc Scope, themeIDs 
 			case <-ctx.Done():
 				return
 			}
-			items, cached := s.loadCache(tripID, key, theme.ID, geoTTLHours*time.Hour)
+			ck := s.cacheThemeKey(theme.ID)
+			items, cached := s.loadCache(tripID, key, ck, geoTTLHours*time.Hour)
 			if !cached {
 				q := s.querier()
 				got, qerr := q.Search(ctx, lat, lon, theme)
@@ -266,7 +267,7 @@ func (s *Service) Search(ctx context.Context, tripID string, sc Scope, themeIDs 
 					log.Printf("discovery: overpass theme=%s: %v (soft-fail)", theme.ID, qerr)
 					got = nil
 				} else {
-					s.saveCache(tripID, key, theme.ID, got)
+					s.saveCache(tripID, key, ck, got)
 				}
 				items = got
 			}
@@ -290,7 +291,8 @@ func (s *Service) Search(ctx context.Context, tripID string, sc Scope, themeIDs 
 			if ctx.Err() != nil {
 				break
 			}
-			items, cached := s.loadCache(tripID, key, theme.ID, editorialTTLHours*time.Hour)
+			ck := s.cacheThemeKey(theme.ID)
+			items, cached := s.loadCache(tripID, key, ck, editorialTTLHours*time.Hour)
 			if !cached {
 				got, qerr := s.searchEditorial(ctx, EditorialQuery{
 					Theme:    theme,
@@ -304,7 +306,7 @@ func (s *Service) Search(ctx context.Context, tripID string, sc Scope, themeIDs 
 					log.Printf("discovery: editorial theme=%s: %v (soft-fail)", theme.ID, qerr)
 					got = nil
 				} else {
-					s.saveCache(tripID, key, theme.ID, got)
+					s.saveCache(tripID, key, ck, got)
 				}
 				items = got
 			}

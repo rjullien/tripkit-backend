@@ -2,16 +2,17 @@ package discovery
 
 // Theme is one catalogue entry (ops/discovery-themes.json).
 type Theme struct {
-	ID         string   `json:"id"`
-	Label      string   `json:"label"`
-	Emoji      string   `json:"emoji,omitempty"`
-	Engine     string   `json:"engine"` // geo | editorial
-	Corridor   bool     `json:"corridor,omitempty"`
-	Seasonal   bool     `json:"seasonal,omitempty"`
-	RadiusKm   float64  `json:"radiusKm,omitempty"`
-	Overpass   []string `json:"overpass,omitempty"` // key=value tags, never hardcoded in Go
-	QueryHints []string `json:"queryHints,omitempty"`
-	Origin     string   `json:"origin,omitempty"` // template | added | override
+	ID           string   `json:"id"`
+	Label        string   `json:"label"`
+	Emoji        string   `json:"emoji,omitempty"`
+	Engine       string   `json:"engine"` // geo | editorial
+	Corridor     bool     `json:"corridor,omitempty"`
+	Seasonal     bool     `json:"seasonal,omitempty"`
+	RadiusKm     float64  `json:"radiusKm,omitempty"`
+	Overpass     []string `json:"overpass,omitempty"` // key=value tags, never hardcoded in Go
+	ExcludeNames []string `json:"excludeNames,omitempty"`
+	QueryHints   []string `json:"queryHints,omitempty"`
+	Origin       string   `json:"origin,omitempty"` // template | added | override
 }
 
 // ThemePrefs is travel-profile.js → themes (family personalization).
