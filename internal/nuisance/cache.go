@@ -3,9 +3,11 @@ package nuisance
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rjullien/tripkit-backend/internal/discovery"
+	"github.com/rjullien/tripkit-backend/internal/geocode"
 	"github.com/rjullien/tripkit-backend/internal/models"
 	"gorm.io/gorm/clause"
 )
@@ -78,4 +80,67 @@ func (s *Service) now() time.Time {
 		return s.Now()
 	}
 	return time.Now()
+}
+
+// geocodeTTL is how long a resolved hotel address stays valid. A street address
+// does not move, and the public Nominatim instance allows one request per
+// second: re-resolving the same hotel on every run would be both slow and rude.
+const geocodeTTL = 30 * 24 * time.Hour
+
+// geocodeScopeKey identifies a geocoded address. The address is normalised
+// (collapsed whitespace, lowercase) so a cosmetic seed edit still hits.
+func geocodeScopeKey(addr string) string {
+	return "geocode:" + strings.ToLower(strings.Join(strings.Fields(addr), " "))
+}
+
+type cachedPoint struct {
+	Lat         float64 `json:"lat"`
+	Lon         float64 `json:"lon"`
+	DisplayName string  `json:"displayName,omitempty"`
+}
+
+func (s *Service) loadGeocodeCache(tripID, addr string) (geocode.Point, bool) {
+	if s == nil || s.DB == nil {
+		return geocode.Point{}, false
+	}
+	var row models.DiscoveryCache
+	err := s.DB.Where("trip_id = ? AND scope_key = ? AND theme_id = ?",
+		tripID, geocodeScopeKey(addr), "geocode").First(&row).Error
+	if err != nil {
+		return geocode.Point{}, false
+	}
+	if s.now().Sub(row.FetchedAt) > geocodeTTL {
+		return geocode.Point{}, false
+	}
+	var p cachedPoint
+	if err := json.Unmarshal([]byte(row.Payload), &p); err != nil {
+		return geocode.Point{}, false
+	}
+	if p.Lat == 0 && p.Lon == 0 {
+		return geocode.Point{}, false
+	}
+	return geocode.Point{Lat: p.Lat, Lon: p.Lon, DisplayName: p.DisplayName}, true
+}
+
+// saveGeocodeCache stores a SUCCESSFUL resolution only. Caching a failure would
+// pin a booked hotel to its city centre for a month.
+func (s *Service) saveGeocodeCache(tripID, addr string, pt geocode.Point) {
+	if s == nil || s.DB == nil || (pt.Lat == 0 && pt.Lon == 0) {
+		return
+	}
+	raw, err := json.Marshal(cachedPoint{Lat: pt.Lat, Lon: pt.Lon, DisplayName: pt.DisplayName})
+	if err != nil {
+		return
+	}
+	row := models.DiscoveryCache{
+		TripID:    tripID,
+		ScopeKey:  geocodeScopeKey(addr),
+		ThemeID:   "geocode",
+		Payload:   string(raw),
+		FetchedAt: s.now(),
+	}
+	_ = s.DB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "trip_id"}, {Name: "scope_key"}, {Name: "theme_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"payload", "fetched_at"}),
+	}).Create(&row).Error
 }

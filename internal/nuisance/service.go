@@ -11,6 +11,7 @@ import (
 
 	"github.com/rjullien/tripkit-backend/internal/bifrost"
 	"github.com/rjullien/tripkit-backend/internal/discovery"
+	"github.com/rjullien/tripkit-backend/internal/geocode"
 	"github.com/rjullien/tripkit-backend/internal/leo"
 	"github.com/rjullien/tripkit-backend/internal/models"
 	"gorm.io/gorm"
@@ -55,6 +56,9 @@ type Service struct {
 	Overpass discovery.Querier
 	Bifrost  bifrost.Completer
 	Hub      *leo.Hub
+	// Geocoder resolves a booked hotel's address. Nil means the analysis stays
+	// on the trip stop and says so, rather than pretending.
+	Geocoder geocode.Geocoder
 	// Now is an optional clock override used by the cache TTL (tests only).
 	Now func() time.Time
 	// Sleep overrides the pacing wait (tests). Nil means a real, cancellable sleep.
@@ -78,12 +82,18 @@ type CheckRequest struct {
 	All         bool     `json:"all"`
 }
 
-// CheckResult is the stored output for one location.
+// CheckResult is the stored output for one analysed point.
 // Incomplete/FailedCategories make a persisted result self-describing: a reader
 // can tell "we looked and found nothing" apart from "we could not look".
+// AddressSource/AddressUsed answer the other question a reader must be able to
+// ask: WHERE was this measured — at the hotel door or at the centre of its city?
 type CheckResult struct {
 	LocationID       string           `json:"locationId"`
 	LocationName     string           `json:"locationName"`
+	HotelID          string           `json:"hotelId,omitempty"`
+	AddressSource    string           `json:"addressSource,omitempty"` // hotel | step
+	AddressUsed      string           `json:"addressUsed,omitempty"`
+	AddressNote      string           `json:"addressNote,omitempty"`
 	Verdict          string           `json:"verdict"`
 	VerdictEmoji     string           `json:"verdictEmoji"`
 	Categories       []CategoryResult `json:"categories"`
@@ -110,8 +120,9 @@ func (s *Service) runCheck(ctx context.Context, req CheckRequest, emit leo.EmitF
 		Tool: map[string]any{"tripId": req.TripID},
 	})
 
-	// Resolve locations from trip data.
-	locations, err := s.resolveLocations(req.TripID, req.LocationIDs, req.All)
+	// Resolve WHAT to analyse: a booked hotel is analysed at its own address,
+	// anything else at the trip stop (see resolveTargets).
+	locations, err := s.resolveTargets(ctx, req.TripID, req.LocationIDs, req.All)
 	if err != nil {
 		return err
 	}
@@ -248,6 +259,10 @@ func (s *Service) persist(tripID string, lr LocationResults, syn SynthesisResult
 	checkResult := CheckResult{
 		LocationID:       lr.LocationID,
 		LocationName:     lr.LocationName,
+		HotelID:          lr.HotelID,
+		AddressSource:    lr.AddressSource,
+		AddressUsed:      lr.AddressUsed,
+		AddressNote:      lr.AddressNote,
 		Verdict:          lr.Verdict,
 		VerdictEmoji:     VerdictEmoji(lr.Verdict),
 		Categories:       lr.Categories,
@@ -259,7 +274,9 @@ func (s *Service) persist(tripID string, lr LocationResults, syn SynthesisResult
 		AnalyzedAt:       s.now(),
 	}
 	data, _ := json.Marshal(checkResult)
-	s.storeResult(tripID, lr.LocationID, string(data))
+	// Keyed by target, not by location: two booked hotels in the same city are
+	// two distinct verdicts and must not overwrite each other.
+	s.storeResult(tripID, firstNonEmpty(lr.targetID, lr.LocationID), string(data))
 }
 
 // doneMessage says plainly whether the analysis is complete. A run that ran out
@@ -279,64 +296,19 @@ func (s *Service) doneMessage(budgetCtx context.Context, total int, results []Lo
 	return msg
 }
 
-type location struct {
-	id   string
-	name string
-	lat  float64
-	lon  float64
-}
-
-func (s *Service) resolveLocations(tripID string, locationIDs []string, all bool) ([]location, error) {
-	var trip models.Trip
-	if err := s.DB.First(&trip, "id = ?", tripID).Error; err != nil {
-		return nil, fmt.Errorf("trip not found: %s", tripID)
-	}
-
-	if trip.Data == nil || *trip.Data == "" {
-		return nil, nil
-	}
-
-	var tripData map[string]any
-	if err := json.Unmarshal([]byte(*trip.Data), &tripData); err != nil {
-		return nil, nil
-	}
-
-	locs, _ := tripData["locations"].(map[string]any)
-	if locs == nil {
-		return nil, nil
-	}
-
-	var result []location
-	for id, v := range locs {
-		if !all && !contains(locationIDs, id) {
-			continue
-		}
-		locMap, _ := v.(map[string]any)
-		if locMap == nil {
-			continue
-		}
-		lat, latOk := asFloat(locMap["lat"])
-		lon, lonOk := asFloat(locMap["lon"])
-		if !latOk || !lonOk || (lat == 0 && lon == 0) {
-			continue
-		}
-		name, _ := locMap["name"].(string)
-		if name == "" {
-			name = id
-		}
-		result = append(result, location{id: id, name: name, lat: lat, lon: lon})
-	}
-	return result, nil
-}
-
 // categoryProgress is called after each category so the SSE stream can report
 // progress while the run is still going. Nil is allowed.
 type categoryProgress func(cat NuisanceCategory, done int)
 
-func (s *Service) analyzeLocation(ctx context.Context, tripID string, loc location, onCategory categoryProgress) LocationResults {
+func (s *Service) analyzeLocation(ctx context.Context, tripID string, loc target, onCategory categoryProgress) LocationResults {
 	lr := LocationResults{
-		LocationID:   loc.id,
-		LocationName: loc.name,
+		LocationID:    firstNonEmpty(loc.locationID, loc.id),
+		LocationName:  loc.name,
+		HotelID:       loc.hotelID,
+		AddressSource: loc.source,
+		AddressUsed:   loc.addr,
+		AddressNote:   loc.note,
+		targetID:      loc.id,
 	}
 
 	for i, cat := range Categories {
@@ -385,7 +357,7 @@ func (s *Service) report(fn categoryProgress, cat NuisanceCategory, done int) {
 // queryCategory runs one Overpass query: waits for its turn (global pacing),
 // then gives the client its own slice of the budget so one slow endpoint cannot
 // starve the categories that follow.
-func (s *Service) queryCategory(ctx context.Context, cat NuisanceCategory, theme discovery.Theme, loc location) ([]discovery.Item, error) {
+func (s *Service) queryCategory(ctx context.Context, cat NuisanceCategory, theme discovery.Theme, loc target) ([]discovery.Item, error) {
 	if err := s.throttle(ctx); err != nil {
 		return nil, err
 	}
@@ -494,27 +466,32 @@ func (s *Service) GetResults(tripID string) ([]CheckResult, error) {
 	return results, nil
 }
 
-// GetResult returns the stored nuisance result for a specific location.
-func (s *Service) GetResult(tripID, locationID string) (*CheckResult, error) {
+// GetResult returns the stored nuisance result for one id, which may be a hotel
+// id or a stop id. Results are keyed by target (hotel id when a hotel drove the
+// point), so a lookup by stop id falls back to scanning: the Résa button has
+// always sent the stop id and must keep working.
+func (s *Service) GetResult(tripID, id string) (*CheckResult, error) {
 	var check models.ConstructionCheck
-	if err := s.DB.Where("trip_id = ? AND kind = ? AND target_id = ?", tripID, "nuisance", locationID).
-		Order("created_at DESC").First(&check).Error; err != nil {
-		return nil, err
+	err := s.DB.Where("trip_id = ? AND kind = ? AND target_id = ?", tripID, "nuisance", id).
+		Order("created_at DESC").First(&check).Error
+	if err == nil {
+		var cr CheckResult
+		if err := json.Unmarshal([]byte(check.Data), &cr); err != nil {
+			return nil, err
+		}
+		return &cr, nil
 	}
-	var cr CheckResult
-	if err := json.Unmarshal([]byte(check.Data), &cr); err != nil {
-		return nil, err
-	}
-	return &cr, nil
-}
 
-func contains(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
+	results, listErr := s.GetResults(tripID)
+	if listErr != nil {
+		return nil, err
+	}
+	for i := range results {
+		if results[i].LocationID == id || results[i].HotelID == id {
+			return &results[i], nil
 		}
 	}
-	return false
+	return nil, err
 }
 
 func asFloat(v any) (float64, bool) {

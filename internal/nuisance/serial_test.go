@@ -179,7 +179,7 @@ func TestAnalyzeLocation_BudgetExhausted_NoCategoryIsDropped(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // budget already gone
 
-	got := svc.analyzeLocation(ctx, "trip-1", location{id: "hotel-1", name: "Hotel", lat: 45.5, lon: -73.6}, nil)
+	got := svc.analyzeLocation(ctx, "trip-1", target{id: "hotel-1", name: "Hotel", lat: 45.5, lon: -73.6}, nil)
 
 	if len(got.Categories) != len(Categories) {
 		t.Fatalf("categories=%d, want %d (none may be skipped)", len(got.Categories), len(Categories))

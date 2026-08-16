@@ -24,14 +24,23 @@ Règles strictes :
 Réponds en JSON avec la structure :
 {"recommendations": [{"locationId": "...", "text": "...", "alternatives": ["..."]}]}`
 
-// LocationResults groups the scoring output for one location.
+// LocationResults groups the scoring output for one analysed point.
 type LocationResults struct {
 	LocationID       string           `json:"locationId"`
 	LocationName     string           `json:"locationName"`
+	HotelID          string           `json:"hotelId,omitempty"`
+	AddressSource    string           `json:"addressSource,omitempty"` // hotel | step
+	AddressUsed      string           `json:"addressUsed,omitempty"`
+	AddressNote      string           `json:"addressNote,omitempty"`
 	Verdict          string           `json:"verdict"`
 	Categories       []CategoryResult `json:"categories"`
 	FailedCategories []string         `json:"failedCategories,omitempty"`
 	Partial          bool             `json:"partial,omitempty"`
+
+	// targetID is the storage key (the hotel id when a hotel drove the point,
+	// so two hotels in one city no longer overwrite each other). Internal
+	// routing detail, deliberately not part of the JSON contract.
+	targetID string `json:"-"`
 }
 
 // Synthesize calls Bifrost once with ALL locations' results and returns
