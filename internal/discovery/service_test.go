@@ -68,7 +68,9 @@ func seedTripNamed(t *testing.T, db *gorm.DB, id string) {
 	start, end := "2026-08-14", "2026-09-01"
 	data := map[string]any{
 		"locations": map[string]any{
-			"tadoussac": map[string]any{"lat": 48.1454, "lon": -69.7173, "tz": "America/Toronto"},
+			"tadoussac":        map[string]any{"lat": 48.1454, "lon": -69.7173, "tz": "America/Toronto"},
+			"baie-saint-paul":  map[string]any{"lat": 47.4411, "lon": -70.4989, "name": "Baie-Saint-Paul"},
+			"riviere-eternite": map[string]any{"lat": 48.256, "lon": -70.414, "name": "Rivière-Éternité"},
 		},
 		"travelProfile": map[string]any{
 			"family": "jullien",
@@ -459,5 +461,49 @@ func TestScopeKey_LocationIncludesDate(t *testing.T) {
 	}
 	if got := scopeKey(Scope{DayNum: 8, DateISO: "2026-08-21"}); got != "day:8" {
 		t.Fatalf("day path stays dayNum-only: %s", got)
+	}
+	if got := scopeKey(Scope{Corridor: []string{"baie-saint-paul", "riviere-eternite"}, DateISO: "2026-08-19"}); got != "corridor:baie-saint-paul:riviere-eternite:2026-08-19" {
+		t.Fatalf("corridor+date: %s", got)
+	}
+	if scopeKey(Scope{Corridor: []string{"a", "b"}, DateISO: "2026-08-19"}) == scopeKey(Scope{Corridor: []string{"a", "b"}, DateISO: "2026-08-20"}) {
+		t.Fatal("same corridor on two dates must not share a cache key")
+	}
+}
+
+func TestSearch_CorridorAlongDrive(t *testing.T) {
+	db, err := database.InitMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedTrip(t, db)
+	q := &fakeQ{items: map[string][]Item{
+		"outlets": {{ID: "osm:outlet:1", Name: "Village de marques", Lat: 47.8, Lon: -70.45}},
+	}}
+	svc := &Service{DB: db, Overpass: q}
+	res, err := svc.Search(context.Background(), "quebec-2026", Scope{
+		Corridor: []string{"baie-saint-paul", "riviere-eternite"},
+		DateISO:  "2026-08-19",
+	}, []string{"outlets"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items=%d %+v", len(res.Items), res.Items)
+	}
+	if !res.Items[0].DetourEstimated {
+		t.Fatal("detour must be marked estimated")
+	}
+	if res.Place != "Baie-Saint-Paul → Rivière-Éternité" {
+		t.Fatalf("place=%q", res.Place)
+	}
+	cached, err := svc.Results("quebec-2026", Scope{
+		Corridor: []string{"baie-saint-paul", "riviere-eternite"},
+		DateISO:  "2026-08-19",
+	}, []string{"outlets"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cached.Items) != 1 || !cached.Items[0].Cached {
+		t.Fatalf("cache miss: %+v", cached.Items)
 	}
 }

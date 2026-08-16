@@ -2,13 +2,34 @@ package discovery
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/rjullien/tripkit-backend/internal/models"
 	"gorm.io/gorm/clause"
 )
 
+// corridorPair returns from/to location ids when this is a corridor search.
+func corridorPair(sc Scope) (from, to string, ok bool) {
+	if len(sc.Corridor) != 2 {
+		return "", "", false
+	}
+	from = strings.TrimSpace(sc.Corridor[0])
+	to = strings.TrimSpace(sc.Corridor[1])
+	if from == "" || to == "" || from == to {
+		return "", "", false
+	}
+	return from, to, true
+}
+
 func scopeKey(sc Scope) string {
+	if from, to, ok := corridorPair(sc); ok {
+		key := "corridor:" + from + ":" + to
+		if sc.DateISO != "" {
+			return key + ":" + sc.DateISO
+		}
+		return key
+	}
 	if sc.LocationID != "" {
 		key := "loc:" + sc.LocationID
 		if sc.DateISO != "" {
@@ -115,5 +136,8 @@ func (s *Service) cachedResults(tripID string, sc Scope, themeIDs []string) *Res
 		res.Items = append(res.Items, items...)
 	}
 	res.Items = rankItems(res.Items)
+	if _, _, ok := corridorPair(sc); ok {
+		res.Items = rankByDetour(res.Items)
+	}
 	return res
 }

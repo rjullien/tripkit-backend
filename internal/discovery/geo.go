@@ -26,3 +26,11 @@ func rankItems(items []Item) []Item {
 	})
 	return out
 }
+
+func rankByDetour(items []Item) []Item {
+	out := append([]Item(nil), items...)
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].DetourKm < out[j].DetourKm
+	})
+	return out
+}

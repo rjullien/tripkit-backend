@@ -58,7 +58,9 @@ func seedDiscoveryTrip(t *testing.T, h *Handler) {
 	start, end := "2026-08-14", "2026-09-01"
 	data := map[string]any{
 		"locations": map[string]any{
-			"tadoussac": map[string]any{"lat": 48.1454, "lon": -69.7173, "tz": "America/Toronto"},
+			"tadoussac":        map[string]any{"lat": 48.1454, "lon": -69.7173, "tz": "America/Toronto"},
+			"baie-saint-paul":  map[string]any{"lat": 47.4411, "lon": -70.4989, "name": "Baie-Saint-Paul"},
+			"riviere-eternite": map[string]any{"lat": 48.256, "lon": -70.414, "name": "Rivière-Éternité"},
 		},
 	}
 	raw, _ := json.Marshal(data)
@@ -187,5 +189,39 @@ func TestDiscoverySearch_EditorialFestivals(t *testing.T) {
 	}
 	if ed.last.DateISO != "2026-08-21" {
 		t.Fatalf("dateISO=%q", ed.last.DateISO)
+	}
+}
+
+func TestDiscoverySearch_Corridor(t *testing.T) {
+	h, r := discoveryRouter(t)
+	seedDiscoveryTrip(t, h)
+
+	body := `{"themes":["outlets"],"scope":{"corridor":["baie-saint-paul","riviere-eternite"],"dateISO":"2026-08-19"}}`
+	req := httptest.NewRequest(http.MethodPost, "/trips/quebec-2026/discovery/search", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Remote-User", "rene")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("search %d %s", rec.Code, rec.Body.String())
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var got string
+	for time.Now().Before(deadline) {
+		req = httptest.NewRequest(http.MethodGet, "/trips/quebec-2026/discovery/results?fromLoc=baie-saint-paul&toLoc=riviere-eternite&dateISO=2026-08-19", nil)
+		rec = httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		got = rec.Body.String()
+		if rec.Code == 200 && strings.Contains(got, "Village de marques") && strings.Contains(got, `"detourEstimated":true`) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !strings.Contains(got, "Village de marques") {
+		t.Fatalf("results=%s", got)
+	}
+	if !strings.Contains(got, `"detourEstimated":true`) {
+		t.Fatalf("expected detourEstimated: %s", got)
 	}
 }
