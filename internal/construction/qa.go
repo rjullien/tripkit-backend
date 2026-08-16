@@ -635,11 +635,59 @@ func checkBudgetExceeded(days []qaDay, hotels []qaHotel, p qaProfile, phase int)
 
 // ── QA result serialization helper ──────────────────────────────────────────
 
-// QAResultJSON serializes violations to JSON string for storage.
-func QAResultJSON(violations []QAViolation) string {
-	b, err := json.Marshal(violations)
+// storedQA is the JSON object persisted in construction_checks.kind=qa.
+// Older rows stored a bare violations array; ParseStoredQA accepts both.
+type storedQA struct {
+	Violations []QAViolation `json:"violations"`
+	Phase      int           `json:"phase"`
+}
+
+// QAResultJSON serializes violations + the phase they were run against.
+func QAResultJSON(violations []QAViolation, phase int) string {
+	if violations == nil {
+		violations = []QAViolation{}
+	}
+	b, err := json.Marshal(storedQA{Violations: violations, Phase: phase})
 	if err != nil {
-		return "[]"
+		return `{"violations":[],"phase":0}`
 	}
 	return string(b)
+}
+
+// ParseStoredQA reads a construction_checks QA row. A wrapped object
+// `{violations, phase}` is the current shape; a legacy JSON array is still
+// accepted (phaseOK=false so the caller can fall back to the trip's phase).
+func ParseStoredQA(data string) (violations []QAViolation, phase int, phaseOK bool) {
+	data = strings.TrimSpace(data)
+	if data == "" || data == "null" {
+		return []QAViolation{}, 0, false
+	}
+	switch data[0] {
+	case '[':
+		var vs []QAViolation
+		if err := json.Unmarshal([]byte(data), &vs); err != nil {
+			return []QAViolation{}, 0, false
+		}
+		if vs == nil {
+			vs = []QAViolation{}
+		}
+		return vs, 0, false
+	case '{':
+		var wrap struct {
+			Violations []QAViolation `json:"violations"`
+			Phase      *int          `json:"phase"`
+		}
+		if err := json.Unmarshal([]byte(data), &wrap); err != nil {
+			return []QAViolation{}, 0, false
+		}
+		if wrap.Violations == nil {
+			wrap.Violations = []QAViolation{}
+		}
+		if wrap.Phase != nil {
+			return wrap.Violations, *wrap.Phase, true
+		}
+		return wrap.Violations, 0, false
+	default:
+		return []QAViolation{}, 0, false
+	}
 }

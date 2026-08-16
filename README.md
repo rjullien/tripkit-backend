@@ -84,8 +84,11 @@ PUT GitHub : parse JS → réécriture chirurgicale du seul entier `phase` →
 re-parse + `StructuralValidate` / `BuildCanonical` → diff JSON allowlist
 (`trip.construction.phase` seulement). Un parse cassé, un diff hors allowlist
 ou un conflit SHA **n'écrase pas** le fichier. L'échec git n'annule pas la
-transition : la réponse 200 porte `seedPush: {ok:false, error}`. Pin / retain /
-profil restent en 501 (Léo) jusqu'à un prochain patch typé.
+transition : la réponse 200 porte `seedPush: {ok:false, error}`. Retain et pin
+utilisent le même chemin typé (`PushActivity` / `PushPin`) et répondent **200**
+avec le même `seedPush` optionnel. La modification de profil voyageur démarre
+un vrai job Léo (`construction:profile-edit`) et répond **202** `{jobId}` —
+**503** si Hermes n'est pas configuré.
 
 Un 403 GitHub sur ce chemin veut dire que le PAT n'a pas **Contents:write**
 sur `rjullien/tripkit-seeds*` — Contents:read suffit au Publish, pas au

@@ -1,16 +1,19 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rjullien/tripkit-backend/internal/construction"
 	"github.com/rjullien/tripkit-backend/internal/database"
+	"github.com/rjullien/tripkit-backend/internal/leo"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/models"
 )
@@ -28,6 +31,9 @@ func constructionRouter(t *testing.T) (*Handler, http.Handler) {
 	r.Use(middleware.UserIdentity)
 	r.Post("/trips/{tripId}/travel-profile/request", h.CreateProfileRequest)
 	r.Put("/trips/{tripId}/construction/phase", h.TransitionPhase)
+	r.Post("/trips/{tripId}/construction/qa", h.RunConstructionQA)
+	r.Get("/trips/{tripId}/construction/qa", h.GetConstructionQA)
+	r.Get("/trips/{tripId}/version", h.TripVersion)
 	r.Get("/leo/jobs/{jobId}/stream", h.LeoJobStream)
 	return h, r
 }
@@ -43,12 +49,21 @@ func seedConstructionTrip(t *testing.T, h *Handler) {
 	}
 }
 
-// A valid body passes validation but the profile-edit write path is not wired:
-// the endpoint must answer 501, start no job and persist no row (it used to
-// leave rows stuck at status "running" forever -- review finding 5).
-func TestCreateProfileRequest_NotImplemented(t *testing.T) {
+// A valid body starts a real Léo job in construction:profile-edit. User text
+// travels through WrapUserRequest; a 202 is returned only when a job runs.
+func TestCreateProfileRequest_StartsJob(t *testing.T) {
 	h, r := constructionRouter(t)
 	seedConstructionTrip(t, h)
+
+	var sawMode leo.Mode
+	var sawText string
+	h.leoRun = func(ctx context.Context, pctx leo.PromptContext, req leo.ChatRequest, emit leo.EmitFunc) error {
+		sawMode = leo.ResolveMode(req.Mode, pctx.AllowedModes)
+		if len(req.Messages) > 0 {
+			sawText = req.Messages[0].Content
+		}
+		return emit("done", leo.StreamEvent{Reply: "ok"})
+	}
 
 	body := `{"target":"travelStyle","text":"Nous preferons un rythme lent avec des pauses"}`
 	req := httptest.NewRequest(http.MethodPost, "/trips/trip-constr/travel-profile/request", strings.NewReader(body))
@@ -57,25 +72,70 @@ func TestCreateProfileRequest_NotImplemented(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("expected 501, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	var resp map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("json decode: %v", err)
 	}
-	if resp["error"] != "not_implemented" {
-		t.Fatalf("expected error=not_implemented, got: %s", rec.Body.String())
-	}
-	if detail, ok := resp["detail"].(string); !ok || detail == "" {
-		t.Fatalf("expected a non-empty detail, got: %s", rec.Body.String())
-	}
-	if _, ok := resp["jobId"]; ok {
-		t.Fatalf("expected no jobId (no job must be started), got: %s", rec.Body.String())
+	jobID, _ := resp["jobId"].(string)
+	if jobID == "" {
+		t.Fatalf("expected jobId, got: %s", rec.Body.String())
 	}
 
-	// No row must be created.
+	deadline := time.Now().Add(2 * time.Second)
+	var row models.ConstructionProfileRequest
+	for time.Now().Before(deadline) {
+		if err := h.db.Where("trip_id = ?", "trip-constr").First(&row).Error; err == nil && row.Status == "done" && row.JobID != "" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if row.ID == "" {
+		t.Fatal("expected a construction_profile_requests row")
+	}
+	if row.Status != "done" {
+		t.Fatalf("status=%q want done", row.Status)
+	}
+	if row.JobID != jobID {
+		t.Fatalf("row.jobId=%q want %q", row.JobID, jobID)
+	}
+	if row.Target != "travelStyle" {
+		t.Fatalf("target=%q", row.Target)
+	}
+	if sawMode != leo.ModeProfileEdit {
+		t.Fatalf("mode=%q want %s", sawMode, leo.ModeProfileEdit)
+	}
+	if !strings.Contains(sawText, leo.UserRequestOpen) || !strings.Contains(sawText, "rythme lent") {
+		t.Fatalf("user text not wrapped: %q", sawText)
+	}
+	if !strings.Contains(sawText, "travel-profile.js") || !strings.Contains(sawText, "Cible : travelStyle") {
+		t.Fatalf("prompt missing repo/file/target: %q", sawText)
+	}
+}
+
+func TestCreateProfileRequest_NoHermes_503(t *testing.T) {
+	h, r := constructionRouter(t)
+	seedConstructionTrip(t, h)
+	t.Setenv("TRIPKIT_HERMES_API_KEY", "")
+
+	body := `{"target":"travelStyle","text":"Nous preferons un rythme lent"}`
+	req := httptest.NewRequest(http.MethodPost, "/trips/trip-constr/travel-profile/request", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Remote-User", "rene")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp["code"] != "missing_hermes_key" {
+		t.Fatalf("code=%v body=%s", resp["code"], rec.Body.String())
+	}
 	var count int64
 	h.db.Model(&models.ConstructionProfileRequest{}).Where("trip_id = ?", "trip-constr").Count(&count)
 	if count != 0 {
@@ -114,6 +174,7 @@ func TestCreateProfileRequest_MissingText(t *testing.T) {
 }
 
 func TestCreateProfileRequest_NoAuth(t *testing.T) {
+	t.Setenv("TRIPKIT_HERMES_API_KEY", "")
 	h, r := constructionRouter(t)
 	seedConstructionTrip(t, h)
 
@@ -131,15 +192,18 @@ func TestCreateProfileRequest_NoAuth(t *testing.T) {
 	r.ServeHTTP(rec, req)
 
 	// With UserIdentity, anonymous is a valid user string (not empty), so the
-	// request reaches the (unwired) write path and gets the same 501.
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("expected 501 (anonymous passes handler check), got %d: %s", rec.Code, rec.Body.String())
+	// request reaches the write path. Without Hermes it is 503, not 401.
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 (anonymous passes handler check), got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
 func TestCreateProfileRequest_AllTargets(t *testing.T) {
 	h, r := constructionRouter(t)
 	seedConstructionTrip(t, h)
+	h.leoRun = func(ctx context.Context, pctx leo.PromptContext, req leo.ChatRequest, emit leo.EmitFunc) error {
+		return emit("done", leo.StreamEvent{Reply: "ok"})
+	}
 
 	targets := []string{"travelStyle", "budgetRules", "interests", "mealPattern", "lessons"}
 	for _, target := range targets {
@@ -150,8 +214,8 @@ func TestCreateProfileRequest_AllTargets(t *testing.T) {
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusNotImplemented {
-			t.Fatalf("target %q: expected 501, got %d: %s", target, rec.Code, rec.Body.String())
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("target %q: expected 202, got %d: %s", target, rec.Code, rec.Body.String())
 		}
 	}
 }
@@ -360,5 +424,132 @@ func TestTransitionPhase_ExplicitZeroAccepted(t *testing.T) {
 	}
 	if state.Phase != 0 {
 		t.Fatalf("phase=%d want 0", state.Phase)
+	}
+}
+
+func TestConstructionQA_GetMatchesPostEnvelopeAndTouchesTrip(t *testing.T) {
+	h, r := constructionRouter(t)
+	seedConstructionTrip(t, h)
+
+	verReq := httptest.NewRequest(http.MethodGet, "/trips/trip-constr/version", nil)
+	verRec := httptest.NewRecorder()
+	r.ServeHTTP(verRec, verReq)
+	if verRec.Code != http.StatusOK {
+		t.Fatalf("version before: %d %s", verRec.Code, verRec.Body.String())
+	}
+	var before map[string]any
+	json.Unmarshal(verRec.Body.Bytes(), &before)
+	v0, _ := before["version"].(float64)
+
+	time.Sleep(10 * time.Millisecond)
+
+	postReq := httptest.NewRequest(http.MethodPost, "/trips/trip-constr/construction/qa", strings.NewReader("{}"))
+	postReq.Header.Set("Content-Type", "application/json")
+	postRec := httptest.NewRecorder()
+	r.ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("POST qa: %d %s", postRec.Code, postRec.Body.String())
+	}
+	var posted map[string]any
+	json.Unmarshal(postRec.Body.Bytes(), &posted)
+	if _, ok := posted["phase"]; !ok {
+		t.Fatalf("POST missing phase: %s", postRec.Body.String())
+	}
+
+	verReq = httptest.NewRequest(http.MethodGet, "/trips/trip-constr/version", nil)
+	verRec = httptest.NewRecorder()
+	r.ServeHTTP(verRec, verReq)
+	var after map[string]any
+	json.Unmarshal(verRec.Body.Bytes(), &after)
+	v1, _ := after["version"].(float64)
+	if v1 <= v0 {
+		t.Fatalf("version did not bump after QA: before=%v after=%v", v0, v1)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/trips/trip-constr/construction/qa", nil)
+	getRec := httptest.NewRecorder()
+	r.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET qa: %d %s", getRec.Code, getRec.Body.String())
+	}
+	var got map[string]any
+	json.Unmarshal(getRec.Body.Bytes(), &got)
+	if got["cached"] != true {
+		t.Fatalf("cached=%v want true: %s", got["cached"], getRec.Body.String())
+	}
+	if got["phase"] != posted["phase"] {
+		t.Fatalf("GET phase=%v POST phase=%v", got["phase"], posted["phase"])
+	}
+	if _, ok := got["cachedAt"]; !ok {
+		t.Fatalf("GET missing cachedAt: %s", getRec.Body.String())
+	}
+	if _, ok := got["violations"]; !ok {
+		t.Fatalf("GET missing violations: %s", getRec.Body.String())
+	}
+
+	var row models.ConstructionCheck
+	if err := h.db.Where("trip_id = ? AND kind = ?", "trip-constr", "qa").First(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.Data == "" || row.Data[0] != '{' {
+		t.Fatalf("stored QA must be an object, got %q", row.Data)
+	}
+}
+
+func TestConstructionQA_GetEmptyCache(t *testing.T) {
+	h, r := constructionRouter(t)
+	seedConstructionTrip(t, h)
+
+	req := httptest.NewRequest(http.MethodGet, "/trips/trip-constr/construction/qa", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET qa: %d %s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &got)
+	if got["cached"] != false {
+		t.Fatalf("cached=%v want false: %s", got["cached"], rec.Body.String())
+	}
+	if got["phase"] != float64(0) {
+		t.Fatalf("phase=%v want 0", got["phase"])
+	}
+	if got["count"] != float64(0) {
+		t.Fatalf("count=%v want 0", got["count"])
+	}
+}
+
+func TestConstructionQA_GetLegacyArrayFallsBackToCurrentPhase(t *testing.T) {
+	h, r := constructionRouter(t)
+	seedConstructionTrip(t, h)
+
+	legacy := `[{"code":"day_gap","severity":"red","message":"gap","dayNum":2}]`
+	if err := h.db.Create(&models.ConstructionCheck{
+		TripID: "trip-constr", Kind: "qa", Data: legacy,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	data := `{"construction":{"phase":4}}`
+	if err := h.db.Model(&models.Trip{}).Where("id = ?", "trip-constr").Update("data", data).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/trips/trip-constr/construction/qa", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET qa: %d %s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &got)
+	if got["cached"] != true {
+		t.Fatalf("cached=%v", got["cached"])
+	}
+	if got["phase"] != float64(4) {
+		t.Fatalf("phase=%v want 4 (legacy array fallback)", got["phase"])
+	}
+	vs, _ := got["violations"].([]any)
+	if len(vs) != 1 {
+		t.Fatalf("violations=%v", got["violations"])
 	}
 }

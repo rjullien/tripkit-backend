@@ -507,6 +507,14 @@ func (s *stubSeedGit) PushPhase(tripID string, phase int, user string) (*SeedPus
 	return s.res, s.err
 }
 
+func (s *stubSeedGit) PushActivity(string, map[string]any, string) (*SeedPushResult, error) {
+	return s.res, s.err
+}
+
+func (s *stubSeedGit) PushPin(string, map[string]any, map[string]map[string]any, string) (*SeedPushResult, error) {
+	return s.res, s.err
+}
+
 func TestTransitionPhase_SeedGitFailureStill200(t *testing.T) {
 	db := setupStateTestDB(t)
 	trip := models.Trip{ID: "trip-seedgit-fail", Name: "SeedGit Fail"}

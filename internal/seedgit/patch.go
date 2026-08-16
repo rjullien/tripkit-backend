@@ -306,6 +306,12 @@ func parseGeneric(code string) (map[string]any, error) {
 }
 
 func allowlistPhaseOnly(before, after string) error {
+	return allowlistPaths(before, after, func(p string) bool {
+		return p == allowedPhasePath
+	})
+}
+
+func allowlistPaths(before, after string, ok func(string) bool) error {
 	a, err := parseGeneric(before)
 	if err != nil {
 		return fmt.Errorf("parse original seed: %w", err)
@@ -317,14 +323,15 @@ func allowlistPhaseOnly(before, after string) error {
 	var leaves []string
 	diffLeaves(a, b, "", &leaves)
 	for _, p := range leaves {
-		if p != allowedPhasePath {
+		if !ok(p) {
 			return fmt.Errorf("refusing patch: change outside allowlist at %s", p)
 		}
 	}
-	if len(leaves) == 0 {
-		return nil
-	}
 	return nil
+}
+
+func pathHasPrefix(p, prefix string) bool {
+	return p == prefix || strings.HasPrefix(p, prefix+".") || strings.HasPrefix(p, prefix+"[")
 }
 
 func diffLeaves(a, b any, path string, out *[]string) {

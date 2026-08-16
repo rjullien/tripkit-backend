@@ -119,6 +119,65 @@ func (s *Service) PushPhase(tripID string, phase int, user string) (*constructio
 	if err != nil {
 		return failPush("", "", "", err), nil
 	}
+	return s.applyPatch(target, phaseCommitMessage(tripID, phase, user),
+		func(src string) (string, error) { return PatchPhase(src, phase) },
+		func(before, after string) error {
+			return validatePhasePatch(before, after, tripID, phase, target.Source.ExpectedFamily)
+		},
+	), nil
+}
+
+// PushActivity writes one trip.activities entry into the seed repo.
+func (s *Service) PushActivity(tripID string, activity map[string]any, user string) (*construction.SeedPushResult, error) {
+	if s == nil || s.Files == nil {
+		return failPush("", "", "", fmt.Errorf("seedgit not configured")), nil
+	}
+	id, _ := activity["id"].(string)
+	if strings.TrimSpace(id) == "" {
+		return failPush("", "", "", fmt.Errorf("activity id required")), nil
+	}
+	target, err := LocateTrip(s.Registry, s.Manifest, tripID)
+	if err != nil {
+		return failPush("", "", "", err), nil
+	}
+	return s.applyPatch(target, activityCommitMessage(tripID, id, user),
+		func(src string) (string, error) { return PatchActivity(src, activity) },
+		func(before, after string) error {
+			return validateWritePatch(before, after, tripID, target.Source.ExpectedFamily, func(p string) bool {
+				return pathHasPrefix(p, "activities")
+			})
+		},
+	), nil
+}
+
+// PushPin writes lastQa + hotels[].nuisance into the seed repo.
+func (s *Service) PushPin(tripID string, lastQa map[string]any, hotelNuisance map[string]map[string]any, user string) (*construction.SeedPushResult, error) {
+	if s == nil || s.Files == nil {
+		return failPush("", "", "", fmt.Errorf("seedgit not configured")), nil
+	}
+	target, err := LocateTrip(s.Registry, s.Manifest, tripID)
+	if err != nil {
+		return failPush("", "", "", err), nil
+	}
+	return s.applyPatch(target, pinCommitMessage(tripID, user),
+		func(src string) (string, error) { return PatchPin(src, lastQa, hotelNuisance) },
+		func(before, after string) error {
+			return validateWritePatch(before, after, tripID, target.Source.ExpectedFamily, func(p string) bool {
+				if p == "trip.construction.lastQa" || pathHasPrefix(p, "trip.construction.lastQa") {
+					return true
+				}
+				return strings.HasPrefix(p, "hotels.") && strings.Contains(p, ".nuisance")
+			})
+		},
+	), nil
+}
+
+func (s *Service) applyPatch(
+	target Target,
+	message string,
+	patch func(string) (string, error),
+	validate func(before, after string) error,
+) *construction.SeedPushResult {
 	ref := target.Source.Ref
 	if ref == "" {
 		ref = "main"
@@ -128,44 +187,38 @@ func (s *Service) PushPhase(tripID string, phase int, user string) (*constructio
 		Path: target.Seed.Path,
 		Ref:  ref,
 	}
-
+	if s == nil || s.Files == nil {
+		result.Error = "seedgit not configured"
+		return result
+	}
 	content, sha, err := s.Files.GetFile(target.Source.Repo, ref, target.Seed.Path)
 	if err != nil {
 		result.Error = err.Error()
-		return result, nil
+		return result
 	}
-
-	patched, err := PatchPhase(string(content), phase)
+	patched, err := patch(string(content))
 	if err != nil {
 		result.Error = err.Error()
-		return result, nil
+		return result
 	}
-	if err := validatePhasePatch(string(content), patched, tripID, phase, target.Source.ExpectedFamily); err != nil {
+	if err := validate(string(content), patched); err != nil {
 		result.Error = err.Error()
-		return result, nil
+		return result
 	}
 	if patched == string(content) {
 		result.OK = true
 		result.SHA = sha
 		result.Unchanged = true
-		return result, nil
+		return result
 	}
-
-	newSHA, err := s.Files.PutFile(
-		target.Source.Repo,
-		ref,
-		target.Seed.Path,
-		phaseCommitMessage(tripID, phase, user),
-		sha,
-		[]byte(patched),
-	)
+	newSHA, err := s.Files.PutFile(target.Source.Repo, ref, target.Seed.Path, message, sha, []byte(patched))
 	if err != nil {
 		result.Error = err.Error()
-		return result, nil
+		return result
 	}
 	result.OK = true
 	result.SHA = newSHA
-	return result, nil
+	return result
 }
 
 func failPush(repo, path, ref string, err error) *construction.SeedPushResult {
@@ -176,7 +229,7 @@ func failPush(repo, path, ref string, err error) *construction.SeedPushResult {
 	return &construction.SeedPushResult{Repo: repo, Path: path, Ref: ref, Error: msg}
 }
 
-func phaseCommitMessage(tripID string, phase int, user string) string {
+func sanitizeCommitUser(user string) string {
 	user = strings.TrimSpace(strings.ReplaceAll(user, "\n", " "))
 	if len(user) > 64 {
 		user = user[:64]
@@ -184,7 +237,23 @@ func phaseCommitMessage(tripID string, phase int, user string) string {
 	if user == "" {
 		user = "tripkit"
 	}
-	return fmt.Sprintf("feat(construction): set %s phase to %d\n\nTriggered-by: %s\n", tripID, phase, user)
+	return user
+}
+
+func phaseCommitMessage(tripID string, phase int, user string) string {
+	return fmt.Sprintf("feat(construction): set %s phase to %d\n\nTriggered-by: %s\n", tripID, phase, sanitizeCommitUser(user))
+}
+
+func activityCommitMessage(tripID, activityID, user string) string {
+	id := strings.TrimSpace(activityID)
+	if id == "" {
+		id = "activity"
+	}
+	return fmt.Sprintf("feat(construction): retain activity %s (%s)\n\nTriggered-by: %s\n", id, tripID, sanitizeCommitUser(user))
+}
+
+func pinCommitMessage(tripID, user string) string {
+	return fmt.Sprintf("feat(construction): pin nuisance (%s)\n\nTriggered-by: %s\n", tripID, sanitizeCommitUser(user))
 }
 
 func validatePhasePatch(before, after, tripID string, phase int, family string) error {
@@ -208,6 +277,20 @@ func validatePhasePatch(before, after, tripID string, phase int, family string) 
 		return err
 	}
 	return nil
+}
+
+func validateWritePatch(before, after, tripID, family string, ok func(string) bool) error {
+	afterSeed, err := publish.ParseSeedFile(after)
+	if err != nil {
+		return fmt.Errorf("patched seed does not parse: %w", err)
+	}
+	if errs := publish.StructuralValidate(afterSeed, tripID, family, family); len(errs) > 0 {
+		return fmt.Errorf("patched seed failed canonical checks: %s", strings.Join(errs, "; "))
+	}
+	if _, err := publish.BuildCanonical(afterSeed, map[string]publish.Person{}, family, "seedgit", "", nil); err != nil {
+		return fmt.Errorf("patched seed failed BuildCanonical: %w", err)
+	}
+	return allowlistPaths(before, after, ok)
 }
 
 func constructionPhaseOf(seed publish.SeedFile) int {
