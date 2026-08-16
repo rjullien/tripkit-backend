@@ -74,6 +74,27 @@ Secret : `TRIPKIT_BIFROST_API_KEY`. Override d'urgence :
 
 Toujours compilés en dur (lot 5.3 / seuils QA) : plage de phases
 (`internal/construction/phase.go`), catégories nuisances et cache Overpass.
+
+**Overpass (Discovery + nuisances).** Réglé dans `ops/discovery-themes.json`,
+clé `overpass` : `baseUrl`, `mirrors` (défaut : `overpass.kumi.systems` puis
+`overpass.openstreetmap.fr` — les deux vérifiés planétaires ; `["none"]` pour
+désactiver), `timeoutSec` (défaut 90, plafond 180), `maxAttempts` (défaut 3,
+plafond 6), `retryBackoffMs`, `concurrency` (défaut **2** : l'API publique
+n'alloue que ~2 slots par IP et le backend n'a qu'une IP de sortie). Une
+tentative = un endpoint, en rotation ; un `Retry-After` est respecté ; seul un
+HTTP 400 (requête fautive) n'est pas réessayé. Un 200 porteur d'un `remark`
+d'erreur Overpass est traité comme un échec, jamais comme « aucun élément ».
+
+Le check nuisances interroge Overpass **séquentiellement** (`concurrency = 1`),
+requêtes espacées de 800 ms à l'échelle du service, budget 150 s par catégorie
+et 8 min par job (sous le `jobRunTimeout` de 10 min de `leo`). Un `progress` est
+réémis toutes les 8 s pendant une requête longue (contrat
+`.cursor/skills/tripkit-llm-jobs` : ≤ 10 s). Chaque lieu est
+enregistré dès qu'il est analysé : le FE lit le job en asynchrone (SSE
+`progress`/`delta` puis `GET .../nuisance-check`), donc un job interrompu laisse
+des résultats partiels lisibles au lieu de tout perdre. Une catégorie non
+récupérée reste `INDETERMINE` ⚪ avec la raison (`Overpass saturé…`, `délai
+Overpass dépassé`), jamais un 🟢 rassurant.
 Le gate de phase évalue la QA **pour la phase cible** ; un 🔴 refuse avec
 `409 {error:"transition_blocked", blockers:[…]}` sauf `?force=1` admin.
 Un verdict nuisances `ELEVE` non traité bloque Ph3 → Ph4.

@@ -47,6 +47,10 @@ func (m *mockQuerier) callCount() int {
 	return m.calls
 }
 
+// noPace removes the inter-query pause so tests do not really wait 800ms per
+// Overpass call. Production keeps the pause: that is the point of it.
+func noPace(_ context.Context, _ time.Duration) error { return nil }
+
 // newTestDB builds an in-memory SQLite DB with a trip holding one located stop.
 func newTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -202,6 +206,7 @@ func TestServiceCheckWithMocks(t *testing.T) {
 		Overpass: querier,
 		Bifrost:  completer,
 		Hub:      leo.NewHub(),
+		Sleep:    noPace,
 	}
 
 	// Start a check job.
@@ -318,7 +323,7 @@ func TestGlobalVerdict_EleveOutranksIndetermine(t *testing.T) {
 func TestServiceCheck_OverpassFailure_IndetermineAndIncomplete(t *testing.T) {
 	db := newTestDB(t)
 	querier := &mockQuerier{err: errors.New("overpass HTTP 429")}
-	svc := &Service{DB: db, Overpass: querier, Hub: leo.NewHub()}
+	svc := &Service{DB: db, Overpass: querier, Hub: leo.NewHub(), Sleep: noPace}
 
 	runCheckSync(t, svc)
 
@@ -350,7 +355,7 @@ func TestServiceCheck_OverpassFailure_IndetermineAndIncomplete(t *testing.T) {
 func TestServiceCheck_FailedQueryIsNotCached(t *testing.T) {
 	db := newTestDB(t)
 	querier := &mockQuerier{err: errors.New("overpass HTTP 504")}
-	svc := &Service{DB: db, Overpass: querier, Hub: leo.NewHub()}
+	svc := &Service{DB: db, Overpass: querier, Hub: leo.NewHub(), Sleep: noPace}
 
 	runCheckSync(t, svc)
 
@@ -375,7 +380,7 @@ func TestServiceCheck_CacheHitAvoidsSecondOverpassCall(t *testing.T) {
 	querier := &mockQuerier{items: map[string][]discovery.Item{
 		"nuisance-trains": {{ID: "osm:way:1", Name: "BNSF Railway", Lat: 35.1894 + 0.00135, Lon: -114.0530}},
 	}}
-	svc := &Service{DB: db, Overpass: querier, Hub: leo.NewHub()}
+	svc := &Service{DB: db, Overpass: querier, Hub: leo.NewHub(), Sleep: noPace}
 
 	runCheckSync(t, svc)
 	first := querier.callCount()
@@ -405,7 +410,7 @@ func TestServiceCheck_ExpiredCacheRequeries(t *testing.T) {
 	db := newTestDB(t)
 	querier := &mockQuerier{}
 	now := time.Now()
-	svc := &Service{DB: db, Overpass: querier, Hub: leo.NewHub(), Now: func() time.Time { return now }}
+	svc := &Service{DB: db, Overpass: querier, Hub: leo.NewHub(), Sleep: noPace, Now: func() time.Time { return now }}
 
 	runCheckSync(t, svc)
 	first := querier.callCount()
@@ -419,8 +424,8 @@ func TestServiceCheck_ExpiredCacheRequeries(t *testing.T) {
 }
 
 func TestConcurrencyRespectsOverpassSlots(t *testing.T) {
-	if concurrency != 2 {
-		t.Errorf("concurrency=%d, want 2 (public Overpass allots ~2 slots/IP)", concurrency)
+	if concurrency != 1 {
+		t.Errorf("concurrency=%d, want 1 (nuisance queries Overpass serially; the frontend reads the job asynchronously)", concurrency)
 	}
 }
 

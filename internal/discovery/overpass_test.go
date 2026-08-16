@@ -16,8 +16,22 @@ func TestNewClient_HTTPTimeoutExceedsQL(t *testing.T) {
 	if c.Timeout != 25*time.Second {
 		t.Fatalf("QL timeout=%v", c.Timeout)
 	}
-	if c.HTTPClient == nil || c.HTTPClient.Timeout != 30*time.Second {
-		t.Fatalf("HTTP timeout=%v", c.HTTPClient.Timeout)
+	// The HTTP budget must stay above the QL budget, or a server-side Overpass
+	// timeout is reported as our own client deadline and the "query timed out"
+	// remark is lost.
+	if c.HTTPClient == nil || c.HTTPClient.Timeout != 25*time.Second+httpTimeoutMargin {
+		t.Fatalf("HTTP timeout=%v, want QL+%v", c.HTTPClient.Timeout, httpTimeoutMargin)
+	}
+}
+
+func TestNewClient_TimeoutDefaultAndCeiling(t *testing.T) {
+	if got := NewClient(OverpassConfig{}).Timeout; got != defaultTimeoutSec*time.Second {
+		t.Errorf("default QL timeout=%v, want %ds", got, defaultTimeoutSec)
+	}
+	// A config asking for more than the ceiling is clamped: overpass-api.de
+	// answers 504 on absurd budgets and a held slot makes rate limiting worse.
+	if got := NewClient(OverpassConfig{TimeoutSec: 3600}).Timeout; got != maxTimeoutSec*time.Second {
+		t.Errorf("clamped QL timeout=%v, want %ds", got, maxTimeoutSec)
 	}
 }
 
@@ -43,7 +57,7 @@ func TestClient_SoftFailTimeout429Malformed(t *testing.T) {
 			_, _ = io.WriteString(w, `{"elements":[]}`)
 		}))
 		t.Cleanup(srv.Close)
-		c := &Client{BaseURL: srv.URL, Timeout: 20 * time.Millisecond, HTTPClient: &http.Client{Timeout: 20 * time.Millisecond}}
+		c := &Client{BaseURL: srv.URL, Timeout: 20 * time.Millisecond, HTTPClient: &http.Client{Timeout: 20 * time.Millisecond}, Attempts: 1}
 		items, err := c.Search(context.Background(), 48, -69, Theme{ID: "outlets", RadiusKm: 10, Overpass: []string{"shop=outlet"}})
 		if err == nil {
 			t.Fatal("expected timeout error from client (service must swallow it)")
@@ -58,7 +72,7 @@ func TestClient_SoftFailTimeout429Malformed(t *testing.T) {
 			_, _ = io.WriteString(w, "rate")
 		}))
 		t.Cleanup(srv.Close)
-		c := NewClient(OverpassConfig{BaseURL: srv.URL, TimeoutSec: 2})
+		c := NewClient(OverpassConfig{BaseURL: srv.URL, TimeoutSec: 2, RetryBackoffMs: 1})
 		_, err := c.Search(context.Background(), 48, -69, Theme{ID: "outlets", RadiusKm: 10, Overpass: []string{"shop=outlet"}})
 		if err == nil || !strings.Contains(err.Error(), "429") {
 			t.Fatalf("err=%v", err)
@@ -70,7 +84,7 @@ func TestClient_SoftFailTimeout429Malformed(t *testing.T) {
 			_, _ = io.WriteString(w, "<html>nope</html>")
 		}))
 		t.Cleanup(srv.Close)
-		c := NewClient(OverpassConfig{BaseURL: srv.URL, TimeoutSec: 2})
+		c := NewClient(OverpassConfig{BaseURL: srv.URL, TimeoutSec: 2, RetryBackoffMs: 1})
 		_, err := c.Search(context.Background(), 48, -69, Theme{ID: "outlets", RadiusKm: 10, Overpass: []string{"shop=outlet"}})
 		if err == nil {
 			t.Fatal("expected parse error")
@@ -86,7 +100,7 @@ func TestClient_SoftFailTimeout429Malformed(t *testing.T) {
 			})
 		}))
 		t.Cleanup(srv.Close)
-		c := NewClient(OverpassConfig{BaseURL: srv.URL, TimeoutSec: 2})
+		c := NewClient(OverpassConfig{BaseURL: srv.URL, TimeoutSec: 2, RetryBackoffMs: 1})
 		items, err := c.Search(context.Background(), 48.1454, -69.7173, Theme{ID: "outlets", RadiusKm: 10, Overpass: []string{"shop=outlet"}})
 		if err != nil {
 			t.Fatal(err)
@@ -126,7 +140,7 @@ func TestClient_DropsExcludedNames(t *testing.T) {
 		})
 	}))
 	t.Cleanup(srv.Close)
-	c := NewClient(OverpassConfig{BaseURL: srv.URL, TimeoutSec: 2})
+	c := NewClient(OverpassConfig{BaseURL: srv.URL, TimeoutSec: 2, RetryBackoffMs: 1})
 	items, err := c.Search(context.Background(), 48.1454, -69.7173, Theme{
 		ID: "magasinage", RadiusKm: 10,
 		Overpass:     []string{"shop=mall"},

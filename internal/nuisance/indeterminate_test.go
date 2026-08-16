@@ -100,11 +100,11 @@ func TestHasUnknown(t *testing.T) {
 // This is the behaviour that made a rate-limited request look like a quiet hotel.
 func TestAnalyzeLocation_OverpassDownIsNotGreen(t *testing.T) {
 	fq := &failingQuerier{}
-	svc := &Service{Overpass: fq}
+	svc := &Service{Overpass: fq, Sleep: noPace}
 
 	got := svc.analyzeLocation(context.Background(), "trip-1", location{
 		id: "hotel-1", name: "Hotel Test", lat: 45.5, lon: -73.6,
-	})
+	}, nil)
 
 	if fq.calls == 0 {
 		t.Fatal("expected Overpass to be queried")

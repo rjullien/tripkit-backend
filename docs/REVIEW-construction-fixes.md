@@ -83,8 +83,13 @@ ne l'exigeait) : `DetectCountries` et `extractNationalities` trient désormais l
 
 ### Vérifiable seulement contre une instance qui tourne
 
-- Comportement réel d'Overpass sous rate-limiting (429/504) et taux de succès effectif du cache 24 h :
-  ici, uniquement des `Querier` bouchonnés (erreur forcée, appels comptés).
+- ~~Comportement réel d'Overpass sous rate-limiting (429/504)~~ : **vérifié** (16/08/2026, retry +
+  miroirs). Un run complet des 6 catégories contre l'API publique depuis l'environnement de travail :
+  59,8 s, verdict 🔴 `ELEVE` (trains à 76 m de Matabiau), `incomplete=false`. `overpass-api.de` a
+  réellement répondu **429 en cours de run** ; la rotation est repartie sur `overpass.kumi.systems`
+  et la catégorie a abouti — c'est exactement le cas qui produisait « Donnée indisponible ».
+  `kumi.systems` a aussi été vu en 504, récupéré par `overpass.openstreetmap.fr` : les trois
+  endpoints sont utiles. Taux de succès effectif du cache 24 h : toujours non mesuré en production.
 - Que l'endpoint Bifrost de plus-chat réponde effectivement aux deux nouveaux prompts de synthèse
   admin/santé, et la qualité du `summary` produit.
 - Comportement Postgres de la nouvelle transaction phase + log, et de l'upsert `OnConflict` sur

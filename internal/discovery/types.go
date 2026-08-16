@@ -13,6 +13,14 @@ type Theme struct {
 	ExcludeNames []string `json:"excludeNames,omitempty"`
 	QueryHints   []string `json:"queryHints,omitempty"`
 	Origin       string   `json:"origin,omitempty"` // template | added | override
+
+	// KeepUnnamed keeps OSM features that carry no name. Discovery drops them
+	// (an unnamed shop is not a suggestion), but a nuisance is a nuisance
+	// whether or not it is named: measured against the live API, 22 of the 60
+	// railway=rail ways around Toulouse Matabiau and *both* landuse=industrial
+	// polygons near a hotel have no name tag. Dropping them scored the category
+	// on zero items, i.e. a green "Aucun élément détecté" next to a railway.
+	KeepUnnamed bool `json:"keepUnnamed,omitempty"`
 }
 
 // ThemePrefs is travel-profile.js → themes (family personalization).
