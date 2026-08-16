@@ -31,6 +31,9 @@ func constructionRouter(t *testing.T) (*Handler, http.Handler) {
 	r.Use(middleware.UserIdentity)
 	r.Post("/trips/{tripId}/travel-profile/request", h.CreateProfileRequest)
 	r.Put("/trips/{tripId}/construction/phase", h.TransitionPhase)
+	r.Post("/trips/{tripId}/construction/qa", h.RunConstructionQA)
+	r.Get("/trips/{tripId}/construction/qa", h.GetConstructionQA)
+	r.Get("/trips/{tripId}/version", h.TripVersion)
 	r.Get("/leo/jobs/{jobId}/stream", h.LeoJobStream)
 	return h, r
 }
@@ -421,5 +424,132 @@ func TestTransitionPhase_ExplicitZeroAccepted(t *testing.T) {
 	}
 	if state.Phase != 0 {
 		t.Fatalf("phase=%d want 0", state.Phase)
+	}
+}
+
+func TestConstructionQA_GetMatchesPostEnvelopeAndTouchesTrip(t *testing.T) {
+	h, r := constructionRouter(t)
+	seedConstructionTrip(t, h)
+
+	verReq := httptest.NewRequest(http.MethodGet, "/trips/trip-constr/version", nil)
+	verRec := httptest.NewRecorder()
+	r.ServeHTTP(verRec, verReq)
+	if verRec.Code != http.StatusOK {
+		t.Fatalf("version before: %d %s", verRec.Code, verRec.Body.String())
+	}
+	var before map[string]any
+	json.Unmarshal(verRec.Body.Bytes(), &before)
+	v0, _ := before["version"].(float64)
+
+	time.Sleep(10 * time.Millisecond)
+
+	postReq := httptest.NewRequest(http.MethodPost, "/trips/trip-constr/construction/qa", strings.NewReader("{}"))
+	postReq.Header.Set("Content-Type", "application/json")
+	postRec := httptest.NewRecorder()
+	r.ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("POST qa: %d %s", postRec.Code, postRec.Body.String())
+	}
+	var posted map[string]any
+	json.Unmarshal(postRec.Body.Bytes(), &posted)
+	if _, ok := posted["phase"]; !ok {
+		t.Fatalf("POST missing phase: %s", postRec.Body.String())
+	}
+
+	verReq = httptest.NewRequest(http.MethodGet, "/trips/trip-constr/version", nil)
+	verRec = httptest.NewRecorder()
+	r.ServeHTTP(verRec, verReq)
+	var after map[string]any
+	json.Unmarshal(verRec.Body.Bytes(), &after)
+	v1, _ := after["version"].(float64)
+	if v1 <= v0 {
+		t.Fatalf("version did not bump after QA: before=%v after=%v", v0, v1)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/trips/trip-constr/construction/qa", nil)
+	getRec := httptest.NewRecorder()
+	r.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET qa: %d %s", getRec.Code, getRec.Body.String())
+	}
+	var got map[string]any
+	json.Unmarshal(getRec.Body.Bytes(), &got)
+	if got["cached"] != true {
+		t.Fatalf("cached=%v want true: %s", got["cached"], getRec.Body.String())
+	}
+	if got["phase"] != posted["phase"] {
+		t.Fatalf("GET phase=%v POST phase=%v", got["phase"], posted["phase"])
+	}
+	if _, ok := got["cachedAt"]; !ok {
+		t.Fatalf("GET missing cachedAt: %s", getRec.Body.String())
+	}
+	if _, ok := got["violations"]; !ok {
+		t.Fatalf("GET missing violations: %s", getRec.Body.String())
+	}
+
+	var row models.ConstructionCheck
+	if err := h.db.Where("trip_id = ? AND kind = ?", "trip-constr", "qa").First(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.Data == "" || row.Data[0] != '{' {
+		t.Fatalf("stored QA must be an object, got %q", row.Data)
+	}
+}
+
+func TestConstructionQA_GetEmptyCache(t *testing.T) {
+	h, r := constructionRouter(t)
+	seedConstructionTrip(t, h)
+
+	req := httptest.NewRequest(http.MethodGet, "/trips/trip-constr/construction/qa", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET qa: %d %s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &got)
+	if got["cached"] != false {
+		t.Fatalf("cached=%v want false: %s", got["cached"], rec.Body.String())
+	}
+	if got["phase"] != float64(0) {
+		t.Fatalf("phase=%v want 0", got["phase"])
+	}
+	if got["count"] != float64(0) {
+		t.Fatalf("count=%v want 0", got["count"])
+	}
+}
+
+func TestConstructionQA_GetLegacyArrayFallsBackToCurrentPhase(t *testing.T) {
+	h, r := constructionRouter(t)
+	seedConstructionTrip(t, h)
+
+	legacy := `[{"code":"day_gap","severity":"red","message":"gap","dayNum":2}]`
+	if err := h.db.Create(&models.ConstructionCheck{
+		TripID: "trip-constr", Kind: "qa", Data: legacy,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	data := `{"construction":{"phase":4}}`
+	if err := h.db.Model(&models.Trip{}).Where("id = ?", "trip-constr").Update("data", data).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/trips/trip-constr/construction/qa", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET qa: %d %s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &got)
+	if got["cached"] != true {
+		t.Fatalf("cached=%v", got["cached"])
+	}
+	if got["phase"] != float64(4) {
+		t.Fatalf("phase=%v want 4 (legacy array fallback)", got["phase"])
+	}
+	vs, _ := got["violations"].([]any)
+	if len(vs) != 1 {
+		t.Fatalf("violations=%v", got["violations"])
 	}
 }

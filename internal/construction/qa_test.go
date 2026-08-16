@@ -627,3 +627,27 @@ func TestRunQA_TransportNotBooked_MissingBlock(t *testing.T) {
 		}
 	}
 }
+
+func TestParseStoredQA_ArrayAndObject(t *testing.T) {
+	vs := []QAViolation{{Code: "day_gap", Severity: "red", Message: "gap", DayNum: 2}}
+	wrapped := QAResultJSON(vs, 3)
+	got, phase, ok := ParseStoredQA(wrapped)
+	if !ok || phase != 3 || len(got) != 1 || got[0].Code != "day_gap" {
+		t.Fatalf("wrapped: got=%+v phase=%d ok=%v json=%s", got, phase, ok, wrapped)
+	}
+
+	got, phase, ok = ParseStoredQA(`[{"code":"day_gap","severity":"red","dayNum":2}]`)
+	if ok || phase != 0 || len(got) != 1 || got[0].Code != "day_gap" {
+		t.Fatalf("legacy array: got=%+v phase=%d ok=%v", got, phase, ok)
+	}
+
+	empty, phase, ok := ParseStoredQA("[]")
+	if ok || phase != 0 || empty == nil || len(empty) != 0 {
+		t.Fatalf("empty array: %+v phase=%d ok=%v", empty, phase, ok)
+	}
+
+	got, phase, ok = ParseStoredQA(`{"violations":[],"phase":1}`)
+	if !ok || phase != 1 || got == nil || len(got) != 0 {
+		t.Fatalf("empty object: %+v phase=%d ok=%v", got, phase, ok)
+	}
+}

@@ -20,7 +20,7 @@ Légende : ✅ **corrigé** · 🟡 **partiellement corrigé** · ⏸️ **diff�
 | # | Constat | Statut | Fichiers touchés |
 |---|---|---|---|
 | 1-4 | Enveloppes de réponse QA / admin-check / health-check + panneaux « tout va bien » | ✅ (côté contrat) | Les enveloppes backend (`{violations,phase,count}`, `{verdict,countries,items}`, `{results}`) ont été retenues comme **autorité** et n'ont pas changé ; c'est le frontend qui s'y aligne. Le contrat est désormais gelé par des fixtures : `internal/handlers/testdata/contract/*.json`, `internal/handlers/contract_fixtures_test.go` |
-| 5 | Endpoints stub qui répondent 202 sans rien écrire | 🟡 | `internal/handlers/construction.go` : `RetainDiscoveryItem`, `PinNuisanceToSeed`, `CreateProfileRequest` répondent **501** `{"error":"not_implemented","detail":"…"}`, ne démarrent plus de job Léo et n'insèrent plus de ligne `construction_profile_requests` bloquée en `running`. Honnête, mais **la fonctionnalité n'est pas implémentée** (voir ⏸️ « write-back Léo » plus bas). Tests : `construction_test.go`, `construction_http_test.go` |
+| 5 | Endpoints stub qui répondent 202 sans rien écrire | ✅ | Retain / pin : **200** `{activity\|lastQa, seedPush?}` (seedgit, DB SoT). Profil : **202** `{jobId}` (job Léo `construction:profile-edit`) ou **503** `missing_hermes_key`. Plus de 501 `not_implemented`. Tests : `construction_test.go`, `construction_http_test.go`, `writeback_test.go` |
 | 8 | `?force=1` non réservé aux admins | ✅ | `internal/handlers/construction.go` : 403 `{"error":"admin_required"}` si `!(config.IsAdmin(user) || isRequestAdmin(r))`, avant tout appel au service. Tests : `TestTransitionPhase_Force_NonAdminForbidden`, `TestTransitionPhase_Force_AdminSucceeds` |
 | 9 | Nuisances : un échec Overpass devient un verdict vert 🟢 | ✅ | `internal/nuisance/scoring.go` (`LevelIndetermine`, `CategoryResult.Unavailable`, `UnavailableCategory`, précédence `ELEVE > INDETERMINE > MODERE > FAIBLE`, emoji ⚪), `internal/nuisance/service.go` (`CheckResult.Incomplete`, `FailedCategories`). Une catégorie en échec n'est plus scorée à zéro item |
 | 10 | Aucun cache dans le chemin nuisances, concurrence 4 | 🟡 | `internal/nuisance/cache.go` (nouveau) : cache TTL 24 h réutilisant `models.DiscoveryCache` / table `construction_discovery` avec clé de scope `nuisance:<lat>,<lon>` (4 décimales) ; écriture **uniquement** en cas de succès (pas de cache négatif). Concurrence 4 → 2 (`internal/nuisance/service.go`). Prouvé par des `Querier` bouchonnés ; le comportement réel sous rate-limiting Overpass reste non vérifié |
@@ -98,12 +98,7 @@ ne l'exigeait) : `DetectCountries` et `extractNationalities` trient désormais l
 
 ### Genuinement non implémenté
 
-- **Write-back Léo** pour `retain-discovery-item`, `pin-nuisance-to-seed` et
-  `travel-profile/request` : les trois endpoints répondent 501 et portent un `TODO(hermes)` nommant
-  précisément ce qu'il faut brancher. L'encadrement du texte utilisateur par `<user_request>` n'est
-  plus un simple commentaire : `leo.WrapUserRequest` existe et est testé
-  (`TestWrapUserRequest`), et le `TODO` désigne ce helper comme passage obligé.
-  `models.ConstructionProfileRequest` et sa migration sont conservés pour ce branchement.
+- ~~**Write-back Léo**~~ : retain / pin = seedgit **200** ; profil = job Léo **202** / **503**. Plus de 501.
 - **Loader de config ops** `TRIPKIT_CONSTRUCTION_*` / `ops/construction.json` (lot 0.3) : phases,
   seuils QA et paramètres nuisances restent compilés en dur.
 - **Synthèse nuisances** : `Synthesize` est branché mais `Recommendation`/`Alternatives` restent
@@ -138,8 +133,8 @@ d'acceptation) et **`construction/TASKS.md`** :
    réellement la règle, et `["*"]` pour une règle universelle. À documenter comme tel.
 4. **Loader de config ops différé** (lot 0.3) : acter que les phases et seuils sont en dur dans cette
    livraison et que la synthèse construction emprunte la config Bifrost de plus-chat.
-5. **`retain` / `pin-nuisance` / `profile-edit` répondent 501** : le write-back Léo n'est pas câblé ;
-   les critères d'acceptation correspondants ne peuvent pas être cochés.
+5. **`retain` / `pin-nuisance` / `profile-edit` sont branchés** : retain et pin répondent **200**
+   (seedgit) ; le profil démarre un job Léo (**202**, ou **503** sans Hermes).
 6. **Le modèle de phases est borné, pas ordonné** : `construction/SPEC.md` §5 définit les phases 1 à 4
    plus Live. Le code accepte 0 (« pas encore démarrée ») à 5 et refuse le reste en `400` ; l'ordre
    n'est **pas** contraint (retours arrière et Ph3/Ph4 parallèles assumés par la spec).
@@ -242,4 +237,4 @@ et reprend le lot utile de #63 :
 | INDETERMINE déjà dans #61 | ✅ | Cache Overpass conservé ; `partial` alias de `incomplete` pour le gate. Précédence **ELEVE > INDETERMINE > MODERE > FAIBLE** (contrat FE), pas « yellow beats unknown » de #63 |
 | Emoji INDETERMINE | ✅ | ⚪ (fixture FE), pas ❓ |
 
-Write-back Léo (retain / pin / profile-edit) : toujours 501.
+Write-back : retain / pin = seedgit **200** ; profil = job Léo **202** / **503**. Plus de 501.

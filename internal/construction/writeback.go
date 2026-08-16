@@ -332,8 +332,7 @@ func nuisanceRank(level string) int {
 
 func buildLastQa(qaRow *models.ConstructionCheck, nuisanceRows []pinNuisanceRow) map[string]any {
 	if qaRow != nil {
-		var violations []QAViolation
-		_ = json.Unmarshal([]byte(qaRow.Data), &violations)
+		violations, _, _ := ParseStoredQA(qaRow.Data)
 		var blockers []string
 		verdict := "PASS"
 		hasYellow := false

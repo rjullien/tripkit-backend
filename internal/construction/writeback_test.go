@@ -209,3 +209,30 @@ func TestSanitizeActivityID(t *testing.T) {
 		}
 	}
 }
+
+func TestPinNuisance_ReadsWrappedQA(t *testing.T) {
+	db := setupWritebackDB(t)
+	data := `{"hotels":{"montreal":{"name":"H"}}}`
+	trip := models.Trip{ID: "trip-pin-wrap", Name: "Wrap", Data: &data}
+	if err := db.Create(&trip).Error; err != nil {
+		t.Fatal(err)
+	}
+	wrapped := QAResultJSON([]QAViolation{{Code: "day_gap", Severity: "red", DayNum: 2}}, 3)
+	if err := db.Create(&models.ConstructionCheck{
+		TripID: "trip-pin-wrap", Kind: "qa", Data: wrapped,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{DB: db}
+	got, code, err := svc.PinNuisance("trip-pin-wrap", "rene")
+	if err != nil || code != 200 {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	if got.LastQa["verdict"] != "FAIL" {
+		t.Fatalf("lastQa=%v", got.LastQa)
+	}
+	blockers, _ := got.LastQa["blockers"].([]string)
+	if len(blockers) != 1 || blockers[0] != "day_gap:2" {
+		t.Fatalf("blockers=%v", got.LastQa["blockers"])
+	}
+}

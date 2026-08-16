@@ -179,14 +179,7 @@ func (h *Handler) RunConstructionQA(w http.ResponseWriter, r *http.Request) {
 		profile = tp
 	}
 
-	// Get current phase
-	phase := 0
-	if h.construction != nil {
-		state, _, _ := h.construction.GetConstruction(tripID)
-		if state != nil {
-			phase = state.Phase
-		}
-	}
+	phase := h.constructionPhase(tripID)
 
 	// Run QA
 	violations := construction.RunQA(tripData, profile, phase)
@@ -195,7 +188,7 @@ func (h *Handler) RunConstructionQA(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Store result (upsert: delete old per trip+kind, then insert new).
-	resultJSON := construction.QAResultJSON(violations)
+	resultJSON := construction.QAResultJSON(violations, phase)
 	h.db.Where("trip_id = ? AND kind = ?", tripID, "qa").Delete(&models.ConstructionCheck{})
 	check := models.ConstructionCheck{
 		TripID: tripID,
@@ -203,6 +196,7 @@ func (h *Handler) RunConstructionQA(w http.ResponseWriter, r *http.Request) {
 		Data:   resultJSON,
 	}
 	h.db.Create(&check)
+	h.touchTrip(tripID)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"violations": violations,
@@ -227,17 +221,30 @@ func (h *Handler) GetConstructionQA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var violations []construction.QAViolation
-	if err := json.Unmarshal([]byte(check.Data), &violations); err != nil {
-		violations = []construction.QAViolation{}
+	violations, storedPhase, phaseOK := construction.ParseStoredQA(check.Data)
+	phase := storedPhase
+	if !phaseOK {
+		phase = h.constructionPhase(tripID)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"violations": violations,
+		"phase":      phase,
 		"count":      len(violations),
 		"cached":     true,
 		"cachedAt":   check.CreatedAt,
 	})
+}
+
+func (h *Handler) constructionPhase(tripID string) int {
+	if h == nil || h.construction == nil {
+		return 0
+	}
+	state, _, err := h.construction.GetConstruction(tripID)
+	if err != nil || state == nil {
+		return 0
+	}
+	return state.Phase
 }
 
 // validProfileTargets is the set of allowed targets for profile edit requests.
