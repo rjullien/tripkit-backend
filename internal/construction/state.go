@@ -30,6 +30,7 @@ type ConstructionState struct {
 	TransportModes []string           `json:"transportModes,omitempty"`
 	Dates          *ConstructionDates `json:"dates,omitempty"`
 	LastQA         *QASummary         `json:"lastQA,omitempty"`
+	SeedPush       *SeedPushResult    `json:"seedPush,omitempty"`
 }
 
 // tripDataEnvelope is the top-level trip.Data JSON structure (only the fields
@@ -86,8 +87,11 @@ func WriteState(db *gorm.DB, tripID string, state *ConstructionState) error {
 		raw = make(map[string]json.RawMessage)
 	}
 
-	// Marshal the construction state and insert it.
-	cBytes, err := json.Marshal(state)
+	// Marshal the construction state and insert it. seedPush is a response
+	// envelope, never part of trip.Data.
+	persist := *state
+	persist.SeedPush = nil
+	cBytes, err := json.Marshal(&persist)
 	if err != nil {
 		return err
 	}

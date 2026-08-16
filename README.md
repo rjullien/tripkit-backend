@@ -44,7 +44,7 @@ API REST en Go pour TripKit — gestion de voyages, jours, hébergements, listes
 | `TRIPKIT_CORS_ORIGINS` | No | `*` | Origines CORS autorisées, séparées par `,` |
 | `TRIPKIT_NO_CACHE` | No | — | Non vide = désactive le cache météo |
 | `APP_VERSION` | No | `dev` | Version renvoyée par `/health` |
-| `TRIPKIT_GITHUB_TOKEN` | Prod (publish) | — | Fine-grained PAT / App token, Contents:read on **`rjullien/tripkit`** (trust file) + seed repos (`github-token` in Infisical → Secret `tripkit-secrets`) |
+| `TRIPKIT_GITHUB_TOKEN` | Prod (publish + seedgit) | — | Fine-grained PAT / App token. **Contents:read** on `rjullien/tripkit` (trust file) + seed repos. **Contents:write** on `rjullien/tripkit-seeds*` for typed seed patches (phase transitions). Infisical `/tripkit` → `github-token` → Secret `tripkit-secrets` |
 | `TRIPKIT_PUBLISH_SOURCES` | Dev / emergency | — | Optional JSON override. Prod = fetch `rjullien/tripkit/ops/publish-sources.json` via PAT, copy to disk; GH down → last cache → dogfood. Not trip allowlist (`publish-manifest.json`). |
 | `TRIPKIT_PUBLISH_SOURCES_CACHE` | No | `$TMPDIR/tripkit-publish-sources.json` | Disk copy of last good trust JSON |
 | `TRIPKIT_PUBLISH_SOURCES_TTL` | No | `2m` | How often to re-fetch trust JSON from GitHub |
@@ -76,6 +76,20 @@ Secret : `TRIPKIT_BIFROST_API_KEY`. Override d'urgence :
 
 Toujours compilés en dur (lot 5.3 / seuils QA) : plage de phases
 (`internal/construction/phase.go`), catégories nuisances et cache Overpass.
+
+**Push git des champs typés (`internal/seedgit`).** Un `PUT /construction/phase`
+réussit d'abord en base (SoT), puis tente d'écrire `trip.construction.phase`
+dans le fichier seed du repo famille (Contents API, SHA optimiste). Avant le
+PUT GitHub : parse JS → réécriture chirurgicale du seul entier `phase` →
+re-parse + `StructuralValidate` / `BuildCanonical` → diff JSON allowlist
+(`trip.construction.phase` seulement). Un parse cassé, un diff hors allowlist
+ou un conflit SHA **n'écrase pas** le fichier. L'échec git n'annule pas la
+transition : la réponse 200 porte `seedPush: {ok:false, error}`. Pin / retain /
+profil restent en 501 (Léo) jusqu'à un prochain patch typé.
+
+Un 403 GitHub sur ce chemin veut dire que le PAT n'a pas **Contents:write**
+sur `rjullien/tripkit-seeds*` — Contents:read suffit au Publish, pas au
+write-back de phase.
 
 **Point de mesure des nuisances.** Un hôtel avec une adresse (`hotels[].addr`
 ou `lat`/`lon`) est analysé **à ce bâtiment**, qu'il soit `candidate`,

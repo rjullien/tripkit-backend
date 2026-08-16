@@ -16,8 +16,9 @@ const maxArchiveBytes = 40 << 20 // 40 MiB
 
 // GitHubClient fetches repo zipballs with a fine-grained PAT or GitHub App token.
 type GitHubClient struct {
-	Token  string
-	Client *http.Client
+	Token   string
+	Client  *http.Client
+	BaseURL string // tests; empty = https://api.github.com
 }
 
 // NewGitHubClientFromEnv uses TRIPKIT_GITHUB_TOKEN (optional).
@@ -133,10 +134,14 @@ func formatGitHubHTTPError(op, repo string, status int, body []byte) error {
 			op, repo, snippet,
 		)
 	case http.StatusForbidden:
+		perm := "Contents:read"
+		if op == "contents-write" {
+			perm = "Contents:write"
+		}
 		return fmt.Errorf(
-			"github %s %s: 403 Forbidden — le PAT n'a pas Contents:read sur ce repo "+
-				"(fine-grained: ajouter rjullien/tripkit-seeds*). %s",
-			op, repo, snippet,
+			"github %s %s: 403 Forbidden — le PAT n'a pas %s sur ce repo "+
+				"(fine-grained: %s sur rjullien/tripkit-seeds* ; Infisical /tripkit → github-token). %s",
+			op, repo, perm, perm, snippet,
 		)
 	case http.StatusNotFound:
 		return fmt.Errorf(

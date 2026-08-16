@@ -26,6 +26,7 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/pluschat"
 	"github.com/rjullien/tripkit-backend/internal/polarsteps"
 	"github.com/rjullien/tripkit-backend/internal/publish"
+	"github.com/rjullien/tripkit-backend/internal/seedgit"
 )
 
 func main() {
@@ -49,7 +50,8 @@ func main() {
 	}
 	log.Printf("publish registry: origin=%s sources=%d", regOrigin, reg.Len())
 	h.SetPublishRegistry(reg)
-	h.SetPublishManifestResolver(publish.NewManifestResolverFromEnv())
+	manifest := publish.NewManifestResolverFromEnv()
+	h.SetPublishManifestResolver(manifest)
 	publish.StartRegistryRefresh(reg, sourcesLoader)
 
 	briefLoader := dailybrief.NewLoaderFromEnv()
@@ -108,7 +110,14 @@ func main() {
 			consCfg.Enabled, consCfg.BifrostBaseURL)
 	}
 
-	h.SetConstruction(&construction.Service{DB: db})
+	h.SetConstruction(&construction.Service{
+		DB: db,
+		SeedGit: &seedgit.Service{
+			Registry: reg,
+			Manifest: manifest,
+			Files:    seedgit.GitHubFiles{Client: publish.NewGitHubClientFromEnv()},
+		},
+	})
 
 	discOverpass := discovery.NewClient(discCfg.Overpass)
 

@@ -12,7 +12,8 @@ import (
 
 // Service provides construction state operations.
 type Service struct {
-	DB *gorm.DB
+	DB      *gorm.DB
+	SeedGit SeedGit
 }
 
 // GetConstruction reads the current construction state for a trip.
@@ -110,6 +111,18 @@ func (s *Service) TransitionPhase(tripID string, target int, force bool, user st
 		return tx.Create(&logEntry).Error
 	}); err != nil {
 		return nil, http.StatusInternalServerError, err
+	}
+
+	// Seed repo update is best-effort: the DB is the source of truth. A git
+	// failure must not roll back the phase or turn a 200 into an error.
+	if s.SeedGit != nil {
+		push, err := s.SeedGit.PushPhase(tripID, target, user)
+		if err != nil && push == nil {
+			push = &SeedPushResult{OK: false, Error: err.Error()}
+		}
+		if push != nil {
+			state.SeedPush = push
+		}
 	}
 
 	return state, http.StatusOK, nil

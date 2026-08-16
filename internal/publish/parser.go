@@ -23,7 +23,7 @@ func ParseJSObject(code string) (json.RawMessage, string, error) {
 	if start < 0 {
 		return nil, name, fmt.Errorf("object start not found for %s", name)
 	}
-	obj, err := extractBalanced(rest[start:])
+	obj, err := ExtractBalanced(rest[start:])
 	if err != nil {
 		return nil, name, err
 	}
@@ -34,9 +34,10 @@ func ParseJSObject(code string) (json.RawMessage, string, error) {
 	return json.RawMessage(jsonish), name, nil
 }
 
-func extractBalanced(s string) (string, error) {
-	if s == "" || s[0] != '{' {
-		return "", fmt.Errorf("expected '{'")
+// ExtractBalanced returns the leading balanced `{…}` or `[…]` slice of s.
+func ExtractBalanced(s string) (string, error) {
+	if s == "" || (s[0] != '{' && s[0] != '[') {
+		return "", fmt.Errorf("expected '{' or '['")
 	}
 	depth := 0
 	inStr := false
