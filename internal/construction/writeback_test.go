@@ -236,3 +236,26 @@ func TestPinNuisance_ReadsWrappedQA(t *testing.T) {
 		t.Fatalf("blockers=%v", got.LastQa["blockers"])
 	}
 }
+
+func TestPinNuisance_ReadsLegacyQAArray(t *testing.T) {
+	db := setupWritebackDB(t)
+	data := `{"hotels":{"montreal":{"name":"H"}}}`
+	trip := models.Trip{ID: "trip-pin-legacy", Name: "Legacy", Data: &data}
+	if err := db.Create(&trip).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ConstructionCheck{
+		TripID: "trip-pin-legacy", Kind: "qa",
+		Data: `[{"code":"day_gap","severity":"red","dayNum":2}]`,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{DB: db}
+	got, code, err := svc.PinNuisance("trip-pin-legacy", "rene")
+	if err != nil || code != 200 {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	if got.LastQa["verdict"] != "FAIL" {
+		t.Fatalf("lastQa=%v (legacy array must still pin)", got.LastQa)
+	}
+}
