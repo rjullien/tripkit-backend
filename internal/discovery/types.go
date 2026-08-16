@@ -35,6 +35,8 @@ type Scope struct {
 	DayNum     int    `json:"dayNum,omitempty"`
 	LocationID string `json:"locationId,omitempty"`
 	DateISO    string `json:"dateISO,omitempty"`
+	// Corridor is [fromLocId, toLocId] — search along the drive, not around a point.
+	Corridor []string `json:"corridor,omitempty"`
 }
 
 // Item is one search hit (candidate, not a seed decision).

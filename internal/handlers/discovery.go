@@ -77,8 +77,16 @@ func (h *Handler) DiscoverySearch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Invalid request body", "code": "bad_request"})
 		return
 	}
-	if body.Scope.DayNum == 0 && strings.TrimSpace(body.Scope.LocationID) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "scope.dayNum required", "code": "bad_request"})
+	if len(body.Scope.Corridor) == 2 {
+		from := strings.TrimSpace(body.Scope.Corridor[0])
+		to := strings.TrimSpace(body.Scope.Corridor[1])
+		if from == "" || to == "" || from == to {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "scope.corridor needs two different location ids", "code": "bad_request"})
+			return
+		}
+		body.Scope.Corridor = []string{from, to}
+	} else if body.Scope.DayNum == 0 && strings.TrimSpace(body.Scope.LocationID) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "scope.dayNum or scope.corridor required", "code": "bad_request"})
 		return
 	}
 
@@ -121,17 +129,34 @@ func (h *Handler) DiscoveryResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tripID := chi.URLParam(r, "tripId")
-	dayNum, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("dayNum")))
-	loc := strings.TrimSpace(r.URL.Query().Get("locationId"))
-	if dayNum == 0 && loc == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "dayNum required", "code": "bad_request"})
+	q := r.URL.Query()
+	dayNum, _ := strconv.Atoi(strings.TrimSpace(q.Get("dayNum")))
+	loc := strings.TrimSpace(q.Get("locationId"))
+	fromLoc := strings.TrimSpace(q.Get("fromLoc"))
+	toLoc := strings.TrimSpace(q.Get("toLoc"))
+	dateISO := strings.TrimSpace(q.Get("dateISO"))
+	if fromLoc == "" || toLoc == "" {
+		if raw := strings.TrimSpace(q.Get("corridor")); raw != "" {
+			parts := strings.Split(raw, ",")
+			if len(parts) == 2 {
+				fromLoc = strings.TrimSpace(parts[0])
+				toLoc = strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	if fromLoc == "" && toLoc == "" && dayNum == 0 && loc == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "dayNum or fromLoc+toLoc required", "code": "bad_request"})
 		return
 	}
 	var themeIDs []string
-	if raw := strings.TrimSpace(r.URL.Query().Get("themes")); raw != "" {
+	if raw := strings.TrimSpace(q.Get("themes")); raw != "" {
 		themeIDs = strings.Split(raw, ",")
 	}
-	res, err := h.discovery.Results(tripID, discovery.Scope{DayNum: dayNum, LocationID: loc}, themeIDs)
+	sc := discovery.Scope{DayNum: dayNum, LocationID: loc, DateISO: dateISO}
+	if fromLoc != "" && toLoc != "" {
+		sc.Corridor = []string{fromLoc, toLoc}
+	}
+	res, err := h.discovery.Results(tripID, sc, themeIDs)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error(), "code": "not_found"})
 		return

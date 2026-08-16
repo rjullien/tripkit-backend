@@ -208,7 +208,11 @@ func dateForDay(startISO string, dayNum int) string {
 
 // Search runs geo themes around the day's location, then editorial themes via Léo.
 // Overpass / Léo failures are soft: the theme contributes zero items, the rest continue.
+// When scope.corridor is [fromLoc, toLoc], it searches along that drive instead.
 func (s *Service) Search(ctx context.Context, tripID string, sc Scope, themeIDs []string, progress ProgressFunc) (*Result, error) {
+	if _, _, ok := corridorPair(sc); ok {
+		return s.searchCorridor(ctx, tripID, sc, themeIDs, progress)
+	}
 	lat, lon, place, dateISO, err := s.ResolvePoint(tripID, sc)
 	if err != nil {
 		return nil, err
@@ -369,6 +373,9 @@ func pickThemes(all []Theme, ids []string) []Theme {
 
 // Results reads the cache only (no Overpass).
 func (s *Service) Results(tripID string, sc Scope, themeIDs []string) (*Result, error) {
+	if from, to, ok := corridorPair(sc); ok {
+		return s.corridorCached(tripID, sc, from, to, themeIDs)
+	}
 	lat, lon, place, dateISO, err := s.ResolvePoint(tripID, sc)
 	if err != nil {
 		return nil, err
@@ -387,5 +394,157 @@ func (s *Service) Results(tripID string, sc Scope, themeIDs []string) (*Result, 
 	res.Place = place
 	res.Lat = lat
 	res.Lon = lon
+	return res, nil
+}
+
+func (s *Service) tripDataMap(tripID string) (map[string]any, error) {
+	var trip models.Trip
+	if err := s.DB.First(&trip, "id = ?", tripID).Error; err != nil {
+		return nil, err
+	}
+	if trip.Data == nil || *trip.Data == "" {
+		return map[string]any{}, nil
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(*trip.Data), &data); err != nil {
+		return map[string]any{}, nil
+	}
+	return data, nil
+}
+
+func coordsForLoc(tripData map[string]any, locID string) (float64, float64, bool) {
+	locs, _ := tripData["locations"].(map[string]any)
+	if locs == nil {
+		return 0, 0, false
+	}
+	loc, _ := locs[locID].(map[string]any)
+	if loc == nil {
+		return 0, 0, false
+	}
+	return asFloatPair(loc["lat"], loc["lon"])
+}
+
+func locDisplayName(tripData map[string]any, locID string) string {
+	locs, _ := tripData["locations"].(map[string]any)
+	if loc, _ := locs[locID].(map[string]any); loc != nil {
+		if n, _ := loc["name"].(string); strings.TrimSpace(n) != "" {
+			return strings.TrimSpace(n)
+		}
+		if n, _ := loc["label"].(string); strings.TrimSpace(n) != "" {
+			return strings.TrimSpace(n)
+		}
+	}
+	return strings.ReplaceAll(locID, "-", " ")
+}
+
+func (s *Service) searchCorridor(ctx context.Context, tripID string, sc Scope, themeIDs []string, progress ProgressFunc) (*Result, error) {
+	fromID, toID, ok := corridorPair(sc)
+	if !ok {
+		return nil, fmt.Errorf("corridor requires two different location ids")
+	}
+	tripData, err := s.tripDataMap(tripID)
+	if err != nil {
+		return nil, err
+	}
+	fromLat, fromLon, okFrom := coordsForLoc(tripData, fromID)
+	toLat, toLon, okTo := coordsForLoc(tripData, toID)
+	if !okFrom || !okTo {
+		return nil, fmt.Errorf("no coordinates for corridor %s → %s", fromID, toID)
+	}
+	fromName := locDisplayName(tripData, fromID)
+	toName := locDisplayName(tripData, toID)
+	place := fromName + " → " + toName
+
+	effective, err := s.ThemesForTrip(tripID)
+	if err != nil {
+		return nil, err
+	}
+	wanted := pickThemes(effective, themeIDs)
+	key := scopeKey(sc)
+
+	res := &Result{
+		Scope:   sc,
+		Place:   place,
+		Lat:     fromLat,
+		Lon:     fromLon,
+		ByTheme: map[string][]Item{},
+	}
+
+	var corridorThemes []Theme
+	allCached := true
+	for _, theme := range wanted {
+		if theme.Engine != engineGeo || !theme.Corridor {
+			continue
+		}
+		corridorThemes = append(corridorThemes, theme)
+		res.Themes = append(res.Themes, theme.ID)
+		ck := s.cacheThemeKey(theme.ID)
+		if items, cached := s.loadCache(tripID, key, ck, geoTTLHours*time.Hour); cached {
+			res.ByTheme[theme.ID] = items
+			res.Items = append(res.Items, items...)
+			if progress != nil {
+				progress(theme.ID, theme.Label, items, true)
+			}
+		} else {
+			allCached = false
+		}
+	}
+
+	if len(corridorThemes) == 0 {
+		return res, nil
+	}
+	if allCached {
+		res.Items = rankByDetour(res.Items)
+		return res, nil
+	}
+
+	got, err := s.CorridorSearch(ctx, fromLat, fromLon, toLat, toLon, corridorThemes, nil)
+	if err != nil {
+		return res, err
+	}
+	res.Items = nil
+	res.ByTheme = map[string][]Item{}
+	if got != nil {
+		for _, theme := range corridorThemes {
+			items := got.ByTheme[theme.ID]
+			if items == nil {
+				items = []Item{}
+			}
+			s.saveCache(tripID, key, s.cacheThemeKey(theme.ID), items)
+			res.ByTheme[theme.ID] = items
+			res.Items = append(res.Items, items...)
+			if progress != nil {
+				progress(theme.ID, theme.Label, items, false)
+			}
+		}
+	}
+	res.Items = rankByDetour(res.Items)
+	return res, nil
+}
+
+func (s *Service) corridorCached(tripID string, sc Scope, fromID, toID string, themeIDs []string) (*Result, error) {
+	tripData, err := s.tripDataMap(tripID)
+	if err != nil {
+		return nil, err
+	}
+	fromLat, fromLon, okFrom := coordsForLoc(tripData, fromID)
+	if !okFrom {
+		return nil, fmt.Errorf("no coordinates for corridor %s → %s", fromID, toID)
+	}
+	if len(themeIDs) == 0 {
+		themes, err := s.ThemesForTrip(tripID)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range themes {
+			if t.Engine == engineGeo && t.Corridor {
+				themeIDs = append(themeIDs, t.ID)
+			}
+		}
+	}
+	res := s.cachedResults(tripID, sc, themeIDs)
+	res.Place = locDisplayName(tripData, fromID) + " → " + locDisplayName(tripData, toID)
+	res.Lat = fromLat
+	res.Lon = fromLon
 	return res, nil
 }
