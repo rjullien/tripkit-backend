@@ -3,7 +3,8 @@
 // It exists for one reason: a hotel in the seed carries an address
 // (hotels[].addr), never a lat/lon — the data model puts geo exclusively in
 // locations{} (tripkit-frontend/DATA-MODEL.md, "No geo in days"). Analysing the
-// nuisances *around a booked hotel* therefore needs the address resolved.
+// nuisances *around a hotel* (candidate, to_book or booked) therefore needs
+// the address resolved.
 package geocode
 
 import (

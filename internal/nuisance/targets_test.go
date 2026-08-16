@@ -87,12 +87,14 @@ func findTarget(tgs []target, id string) (target, bool) {
 	return target{}, false
 }
 
-// The rule: a booked hotel is analysed at ITS OWN address, not at the centre of
-// its city. Analysing the stop gave every hotel of a city the same verdict.
-func TestResolveTargets_BookedHotelUsesItsOwnAddress(t *testing.T) {
+// The construction rule: a hotel with an address is analysed at THAT building,
+// whether it is booked, to_book or still a candidate. Analysing the stop gave
+// every hotel of a city the same verdict — useless when comparing alternatives.
+func TestResolveTargets_HotelWithAddressUsesItsOwnBuilding(t *testing.T) {
 	db := tripWith(t, matabiauSeed())
 	g := &stubGeocoder{points: map[string]geocode.Point{
 		"64 Boulevard Pierre Sémard, 31000 Toulouse": {Lat: 43.6112, Lon: 1.4536, DisplayName: "64 Bd Pierre Semard, Toulouse"},
+		"1 Place du Capitole, 31000 Toulouse":        {Lat: 43.6043, Lon: 1.4437, DisplayName: "Place du Capitole, Toulouse"},
 	}}
 	svc := &Service{DB: db, Geocoder: g}
 
@@ -121,27 +123,51 @@ func TestResolveTargets_BookedHotelUsesItsOwnAddress(t *testing.T) {
 		t.Errorf("note=%q, want none when the hotel address was used", booked.note)
 	}
 
-	// A hotel that is not booked stays on the stop, and says so.
+	// Construction: a candidate with an address is a potential hotel, not the city centre.
 	cand, ok := findTarget(tgs, "hotel-candidat")
 	if !ok {
 		t.Fatal("candidate hotel missing from targets")
 	}
-	if cand.source != SourceStep {
-		t.Errorf("source=%q, want %q for a non-booked hotel", cand.source, SourceStep)
+	if cand.source != SourceHotel {
+		t.Errorf("candidate source=%q, want %q (construction checks alternatives)", cand.source, SourceHotel)
 	}
-	if cand.lat != 43.6045 || cand.lon != 1.4440 {
-		t.Errorf("point=%f,%f, want the stop", cand.lat, cand.lon)
+	if cand.lat != 43.6043 || cand.lon != 1.4437 {
+		t.Errorf("candidate point=%f,%f, want its own geocoded address", cand.lat, cand.lon)
 	}
-	if cand.note == "" {
-		t.Error("a non-booked hotel analysed at the stop must say so")
+	if cand.note != "" {
+		t.Errorf("candidate note=%q, want none when its address was used", cand.note)
 	}
-	if g.calls != 1 {
-		t.Errorf("geocoder calls=%d, want 1 (only the booked hotel)", g.calls)
+	if g.calls != 2 {
+		t.Errorf("geocoder calls=%d, want 2 (booked + candidate)", g.calls)
 	}
 
 	// Two hotels in one city = two distinct targets, no overwrite.
 	if len(tgs) != 2 {
 		t.Errorf("targets=%d, want 2 (one per hotel, the stop is claimed)", len(tgs))
+	}
+}
+
+func TestResolveTargets_ToBookWithAddressUsesHotel(t *testing.T) {
+	seed := matabiauSeed()
+	h := seed["hotels"].(map[string]any)["hotel-candidat"].(map[string]any)
+	h["bookingStatus"] = "to_book"
+	delete(h, "status")
+
+	db := tripWith(t, seed)
+	g := &stubGeocoder{points: map[string]geocode.Point{
+		"1 Place du Capitole, 31000 Toulouse": {Lat: 43.6043, Lon: 1.4437},
+	}}
+	svc := &Service{DB: db, Geocoder: g}
+
+	tgs, err := svc.resolveTargets(context.Background(), "test-trip", []string{"hotel-candidat"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tgs) != 1 {
+		t.Fatalf("targets=%d, want 1", len(tgs))
+	}
+	if tgs[0].source != SourceHotel || tgs[0].lat != 43.6043 {
+		t.Errorf("to_book target=%+v, want the hotel address", tgs[0])
 	}
 }
 
@@ -170,9 +196,9 @@ func TestResolveTargets_HotelLatLonSkipsGeocoding(t *testing.T) {
 	}
 }
 
-// A booked hotel whose address cannot be resolved must NOT quietly become its
-// city: the fallback is allowed, staying silent about it is not.
-func TestResolveTargets_UnresolvableAddressFallsBackAndSaysSo(t *testing.T) {
+// A hotel whose address cannot be resolved must NOT quietly become its
+// city: we demand hotels[].addr instead of scoring the stop.
+func TestResolveTargets_UnresolvableAddressDemandsIt(t *testing.T) {
 	cases := []struct {
 		name     string
 		geocoder geocode.Geocoder
@@ -195,24 +221,64 @@ func TestResolveTargets_UnresolvableAddressFallsBackAndSaysSo(t *testing.T) {
 				t.Fatalf("targets=%d, want 1", len(tgs))
 			}
 			tg := tgs[0]
-			if tg.source != SourceStep {
-				t.Errorf("source=%q, want the stop fallback", tg.source)
+			if tg.source != SourceMissing {
+				t.Errorf("source=%q, want %q (do not score the city)", tg.source, SourceMissing)
 			}
-			if tg.lat != 43.6045 || tg.lon != 1.4440 {
-				t.Errorf("point=%f,%f, want the stop", tg.lat, tg.lon)
+			if tg.lat != 0 || tg.lon != 0 {
+				t.Errorf("point=%f,%f, want none: no building to measure", tg.lat, tg.lon)
 			}
 			if tg.note == "" {
-				t.Fatal("want a note explaining the hotel address was not used")
+				t.Fatal("want a note asking for hotels[].addr")
 			}
 			if !strings.Contains(tg.note, tc.wantNote) {
 				t.Errorf("note=%q, want it to mention %q", tg.note, tc.wantNote)
+			}
+			if !strings.Contains(tg.note, "hotels[].addr") {
+				t.Errorf("note=%q, want it to demand hotels[].addr", tg.note)
 			}
 		})
 	}
 }
 
-// A booked hotel with no address in the seed: same honesty requirement.
-func TestResolveTargets_BookedWithoutAddress(t *testing.T) {
+// No addr in the seed: search the name + city and SHOW the hit so the user
+// can object if Nominatim picked the wrong building.
+func TestResolveTargets_NoAddrSearchesByNameAndShowsIt(t *testing.T) {
+	seed := matabiauSeed()
+	delete(seed["hotels"].(map[string]any)["hotel-matabiau"].(map[string]any), "addr")
+
+	db := tripWith(t, seed)
+	g := &stubGeocoder{points: map[string]geocode.Point{
+		"Hôtel Matabiau, Toulouse": {Lat: 43.6112, Lon: 1.4536, DisplayName: "Hôtel Matabiau, 64 Bd Pierre Semard, Toulouse"},
+	}}
+	svc := &Service{DB: db, Geocoder: g}
+
+	tgs, err := svc.resolveTargets(context.Background(), "test-trip", []string{"hotel-matabiau"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tgs) != 1 {
+		t.Fatalf("targets=%d, want 1", len(tgs))
+	}
+	tg := tgs[0]
+	if tg.source != SourceGuessed {
+		t.Errorf("source=%q, want %q", tg.source, SourceGuessed)
+	}
+	if tg.lat != 43.6112 || tg.lon != 1.4536 {
+		t.Errorf("point=%f,%f, want the name-search hit", tg.lat, tg.lon)
+	}
+	if !strings.Contains(tg.addr, "Hôtel Matabiau") {
+		t.Errorf("addr=%q, want the Nominatim label shown so the user can object", tg.addr)
+	}
+	if !strings.Contains(tg.note, "point proposé") {
+		t.Errorf("note=%q, want it to say this is a proposal", tg.note)
+	}
+	if g.calls != 1 {
+		t.Errorf("geocoder calls=%d, want 1 (name + city)", g.calls)
+	}
+}
+
+// No addr and the name search is empty: demand the address, do not score the city.
+func TestResolveTargets_HotelWithoutAddressDemandsIt(t *testing.T) {
 	seed := matabiauSeed()
 	delete(seed["hotels"].(map[string]any)["hotel-matabiau"].(map[string]any), "addr")
 
@@ -224,11 +290,17 @@ func TestResolveTargets_BookedWithoutAddress(t *testing.T) {
 	if len(tgs) != 1 {
 		t.Fatalf("targets=%d", len(tgs))
 	}
-	if tgs[0].source != SourceStep || tgs[0].note == "" {
-		t.Errorf("target=%+v, want a step fallback with a note", tgs[0])
+	if tgs[0].source != SourceMissing {
+		t.Errorf("source=%q, want %q", tgs[0].source, SourceMissing)
 	}
-	if g.calls != 0 {
-		t.Errorf("geocoder calls=%d, want 0 without an address", g.calls)
+	if tgs[0].note == "" || !strings.Contains(tgs[0].note, "hotels[].addr") {
+		t.Errorf("note=%q, want a demand for hotels[].addr", tgs[0].note)
+	}
+	if tgs[0].lat != 0 || tgs[0].lon != 0 {
+		t.Errorf("point=%f,%f, want none", tgs[0].lat, tgs[0].lon)
+	}
+	if g.calls != 1 {
+		t.Errorf("geocoder calls=%d, want 1 (name search)", g.calls)
 	}
 }
 

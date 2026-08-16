@@ -123,7 +123,7 @@ func (s *Service) loadGeocodeCache(tripID, addr string) (geocode.Point, bool) {
 }
 
 // saveGeocodeCache stores a SUCCESSFUL resolution only. Caching a failure would
-// pin a booked hotel to its city centre for a month.
+// pin a hotel (candidate or booked) to its city centre for a month.
 func (s *Service) saveGeocodeCache(tripID, addr string, pt geocode.Point) {
 	if s == nil || s.DB == nil || (pt.Lat == 0 && pt.Lon == 0) {
 		return

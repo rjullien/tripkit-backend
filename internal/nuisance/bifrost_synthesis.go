@@ -29,7 +29,7 @@ type LocationResults struct {
 	LocationID       string           `json:"locationId"`
 	LocationName     string           `json:"locationName"`
 	HotelID          string           `json:"hotelId,omitempty"`
-	AddressSource    string           `json:"addressSource,omitempty"` // hotel | step
+	AddressSource    string           `json:"addressSource,omitempty"` // hotel | guessed | missing | step
 	AddressUsed      string           `json:"addressUsed,omitempty"`
 	AddressNote      string           `json:"addressNote,omitempty"`
 	Verdict          string           `json:"verdict"`

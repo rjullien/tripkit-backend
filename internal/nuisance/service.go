@@ -56,8 +56,9 @@ type Service struct {
 	Overpass discovery.Querier
 	Bifrost  bifrost.Completer
 	Hub      *leo.Hub
-	// Geocoder resolves a booked hotel's address. Nil means the analysis stays
-	// on the trip stop and says so, rather than pretending.
+	// Geocoder resolves a hotel's address (candidate, to_book or booked).
+	// Nil means the analysis stays on the trip stop and says so, rather
+	// than pretending.
 	Geocoder geocode.Geocoder
 	// Now is an optional clock override used by the cache TTL (tests only).
 	Now func() time.Time
@@ -91,7 +92,7 @@ type CheckResult struct {
 	LocationID       string           `json:"locationId"`
 	LocationName     string           `json:"locationName"`
 	HotelID          string           `json:"hotelId,omitempty"`
-	AddressSource    string           `json:"addressSource,omitempty"` // hotel | step
+	AddressSource    string           `json:"addressSource,omitempty"` // hotel | guessed | missing | step
 	AddressUsed      string           `json:"addressUsed,omitempty"`
 	AddressNote      string           `json:"addressNote,omitempty"`
 	Verdict          string           `json:"verdict"`
@@ -120,8 +121,9 @@ func (s *Service) runCheck(ctx context.Context, req CheckRequest, emit leo.EmitF
 		Tool: map[string]any{"tripId": req.TripID},
 	})
 
-	// Resolve WHAT to analyse: a booked hotel is analysed at its own address,
-	// anything else at the trip stop (see resolveTargets).
+	// Resolve WHAT to analyse: a hotel with an address is measured at that
+	// building; without one we search the name and show the hit, or we
+	// demand hotels[].addr (see resolveTargets).
 	locations, err := s.resolveTargets(ctx, req.TripID, req.LocationIDs, req.All)
 	if err != nil {
 		return err
@@ -274,7 +276,7 @@ func (s *Service) persist(tripID string, lr LocationResults, syn SynthesisResult
 		AnalyzedAt:       s.now(),
 	}
 	data, _ := json.Marshal(checkResult)
-	// Keyed by target, not by location: two booked hotels in the same city are
+	// Keyed by target, not by location: two hotels in the same city are
 	// two distinct verdicts and must not overwrite each other.
 	s.storeResult(tripID, firstNonEmpty(lr.targetID, lr.LocationID), string(data))
 }
@@ -311,6 +313,11 @@ func (s *Service) analyzeLocation(ctx context.Context, tripID string, loc target
 		targetID:      loc.id,
 	}
 
+	// No building to measure: do not query Overpass at the city centre.
+	if loc.source == SourceMissing {
+		return missingAddressResults(loc)
+	}
+
 	for i, cat := range Categories {
 		done := i + 1
 		// Categories are never skipped, even out of budget: a missing category
@@ -345,6 +352,36 @@ func (s *Service) analyzeLocation(ctx context.Context, tripID string, loc target
 
 	lr.Verdict = GlobalVerdict(lr.Categories)
 	lr.Partial = HasUnknown(lr.Categories)
+	return lr
+}
+
+// missingAddressResults is the honest output when a hotel has no usable
+// point: every category INDETERMINE, no Overpass call, a note that asks
+// for hotels[].addr. Scoring the city instead would read as "this hotel
+// is quiet".
+func missingAddressResults(loc target) LocationResults {
+	lr := LocationResults{
+		LocationID:    firstNonEmpty(loc.locationID, loc.id),
+		LocationName:  loc.name,
+		HotelID:       loc.hotelID,
+		AddressSource: SourceMissing,
+		AddressUsed:   loc.addr,
+		AddressNote:   firstNonEmpty(loc.note, "hôtel sans adresse : ajoutez hotels[].addr"),
+		targetID:      loc.id,
+		Partial:       true,
+	}
+	detail := "Adresse de l'hôtel manquante : le bâtiment n'a pas été localisé."
+	for _, cat := range Categories {
+		lr.Categories = append(lr.Categories, CategoryResult{
+			Category:    cat.ID,
+			Emoji:       cat.Emoji,
+			Level:       LevelIndetermine,
+			Detail:      detail,
+			Unavailable: true,
+		})
+		lr.FailedCategories = append(lr.FailedCategories, cat.ID)
+	}
+	lr.Verdict = LevelIndetermine
 	return lr
 }
 

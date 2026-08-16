@@ -77,20 +77,20 @@ Secret : `TRIPKIT_BIFROST_API_KEY`. Override d'urgence :
 Toujours compilés en dur (lot 5.3 / seuils QA) : plage de phases
 (`internal/construction/phase.go`), catégories nuisances et cache Overpass.
 
-**Point de mesure des nuisances.** Un hôtel **`booked`** est analysé à **sa
-propre adresse**, pas au centre de sa ville. Comme un hôtel de seed porte une
-adresse (`hotels[].addr`) et jamais de coordonnées (`DATA-MODEL.md` : « no geo in
-days, geo only in `locations{}` »), l'adresse est géocodée via Nominatim
-(`internal/geocode`, 1 req/s imposé côté client, cache 30 j). Un `lat`/`lon`
-posé directement sur l'hôtel court-circuite le géocodage. Précédence du statut
-identique à la QA : `bookingStatus` > `status` > (`bookingRef` ⇒ `booked`).
+**Point de mesure des nuisances.** Un hôtel avec une adresse (`hotels[].addr`
+ou `lat`/`lon`) est analysé **à ce bâtiment**, qu'il soit `candidate`,
+`to_book` ou `booked` — en Construction on compare des alternatives *avant*
+de réserver (SPEC §6, TASKS 5.5). Comme un hôtel de seed n'a en général
+aucune coordonnée (`DATA-MODEL.md` : « no geo in days, geo only in
+`locations{}` »), l'adresse est géocodée via Nominatim (`internal/geocode`,
+1 req/s imposé côté client, cache 30 j). Un `lat`/`lon` posé directement
+sur l'hôtel court-circuite le géocodage.
 
-Tout le reste (hôtel non réservé, adresse introuvable, géocodeur indisponible)
-retombe sur le point d'étape **et le dit** : `addressSource` (`hotel`|`step`),
-`addressUsed` et `addressNote` voyagent dans le résultat, le FE les affiche. Un
-verdict dont on ignore le point de mesure ne vaut rien. Les résultats sont
-stockés par cible (id d'hôtel quand un hôtel porte le point), donc deux hôtels
-d'une même ville ont enfin deux verdicts distincts.
+Sans adresse : recherche Nominatim sur « nom, ville », résultat affiché
+comme `addressSource: guessed` (l'utilisateur peut dire que ce n'est pas
+le bon bâtiment). Si rien ne sort : `addressSource: missing`, pas
+d'analyse Overpass au centre-ville, le résultat **réclame**
+`hotels[].addr`. Nom + adresse n'impliquent pas `booked`.
 
 **Overpass (Discovery + nuisances).** Réglé dans `ops/discovery-themes.json`,
 clé `overpass` : `baseUrl`, `mirrors` (défaut : `overpass.kumi.systems` puis
