@@ -272,14 +272,31 @@ func TestPrepareMessages_AllowedModeStillResolves(t *testing.T) {
 	}
 }
 
-func TestClientSelectableModes_ExcludesProfileEdit(t *testing.T) {
-	for _, m := range ClientSelectableModes() {
+func TestClientSelectableModesFrom_DropsProfileEditAndUnknown(t *testing.T) {
+	got := ClientSelectableModesFrom([]string{
+		"construction:ideation",
+		"construction:profile-edit",
+		"construction:unknown",
+		"construction:route",
+	})
+	if len(got) != 2 {
+		t.Fatalf("got %v", got)
+	}
+	joined := strings.Join(got, ",")
+	if !strings.Contains(joined, "construction:ideation") || !strings.Contains(joined, "construction:route") {
+		t.Fatalf("got %v", got)
+	}
+	for _, m := range got {
 		if m == string(ModeProfileEdit) {
-			t.Fatal("construction:profile-edit must not be client-selectable")
+			t.Fatal("profile-edit must stay server-only")
 		}
 	}
-	if len(ClientSelectableModes()) != 3 {
-		t.Fatalf("expected the 3 dialogue modes, got %v", ClientSelectableModes())
+}
+
+func TestClientSelectableModesFrom_EmptyFallsBack(t *testing.T) {
+	got := ClientSelectableModesFrom(nil)
+	if len(got) != 3 {
+		t.Fatalf("fallback want 3, got %v", got)
 	}
 }
 

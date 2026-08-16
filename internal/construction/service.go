@@ -14,6 +14,8 @@ import (
 type Service struct {
 	DB      *gorm.DB
 	SeedGit SeedGit
+	// Ops, when set, is re-read on each QA / phase transition (TTL 2 min).
+	Ops *Loader
 }
 
 // GetConstruction reads the current construction state for a trip.
@@ -64,7 +66,7 @@ func (s *Service) TransitionPhase(tripID string, target int, force bool, user st
 	if tp, ok := tripData["travelProfile"].(map[string]any); ok {
 		profile = tp
 	}
-	violations := RunQA(tripData, profile, target)
+	violations := RunQAWith(tripData, profile, s.QAOpts(target))
 
 	// SPEC §8: an untreated red nuisance verdict blocks Ph3 → Ph4.
 	violations = append(violations, NuisanceBlockers(LoadNuisanceVerdicts(s.DB, tripID), target)...)
@@ -144,4 +146,15 @@ func (s *Service) loadTripData(tripID string) map[string]any {
 		return make(map[string]any)
 	}
 	return data
+}
+
+func (s *Service) QAOpts(phase int) QAOpts {
+	opts := QAOpts{Phase: phase, Now: time.Now(), DriveHardLimitMinutes: defaultDriveHardLimitMinutes}
+	if s != nil && s.Ops != nil {
+		cfg := s.Ops.Get()
+		if cfg.QA.DriveHardLimitMinutes > 0 {
+			opts.DriveHardLimitMinutes = cfg.QA.DriveHardLimitMinutes
+		}
+	}
+	return opts
 }

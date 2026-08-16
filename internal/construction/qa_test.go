@@ -2,6 +2,7 @@ package construction
 
 import (
 	"testing"
+	"time"
 )
 
 // ── Helper to build synthetic trip data ─────────────────────────────────────
@@ -649,5 +650,103 @@ func TestParseStoredQA_ArrayAndObject(t *testing.T) {
 	got, phase, ok = ParseStoredQA(`{"violations":[],"phase":1}`)
 	if !ok || phase != 1 || got == nil || len(got) != 0 {
 		t.Fatalf("empty object: %+v phase=%d ok=%v", got, phase, ok)
+	}
+}
+
+func TestRunQA_AdminActionRequired_YellowThenRedAtJ30(t *testing.T) {
+	tripData := map[string]any{
+		"startDate": "2026-09-15",
+		"locations": map[string]any{"mtl": map[string]any{"country": "CA"}},
+		"people":    map[string]any{"dinah": map[string]any{"name": "Dinah", "nationalities": []any{"FR"}}},
+		"days":      []any{map[string]any{"dayNum": float64(1), "date": "2026-09-15"}},
+	}
+	far := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	got := RunQAWith(tripData, makeProfile("6h", 2, 0), QAOpts{Phase: 2, Now: far})
+	var found *QAViolation
+	for i := range got {
+		if got[i].Code == "admin_action_required" {
+			found = &got[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected admin_action_required, got %+v", got)
+	}
+	if found.Severity != "yellow" {
+		t.Errorf("45+ days out: expected yellow, got %q", found.Severity)
+	}
+
+	near := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	got = RunQAWith(tripData, makeProfile("6h", 2, 0), QAOpts{Phase: 2, Now: near})
+	found = nil
+	for i := range got {
+		if got[i].Code == "admin_action_required" {
+			found = &got[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("expected admin_action_required within J-30")
+	}
+	if found.Severity != "red" {
+		t.Errorf("J-14: expected red, got %q", found.Severity)
+	}
+}
+
+func TestRunQA_NoPlanB_FerryWithoutAlternative(t *testing.T) {
+	days := []map[string]any{
+		{
+			"dayNum":  float64(1),
+			"date":    "2026-06-15",
+			"booking": map[string]any{"type": "ferry"},
+		},
+	}
+	tripData := makeTripData(days, []map[string]any{{"dayNum": float64(1), "bookingStatus": "booked"}}, "2026-06-15", nil)
+	got := RunQA(tripData, makeProfile("6h", 2, 0), 2)
+	var found *QAViolation
+	for i := range got {
+		if got[i].Code == "no_plan_b" {
+			found = &got[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected no_plan_b, got %+v", got)
+	}
+	if found.Severity != "yellow" {
+		t.Errorf("expected yellow, got %q", found.Severity)
+	}
+
+	days[0]["planB"] = map[string]any{"label": "drive around"}
+	tripData = makeTripData(days, []map[string]any{{"dayNum": float64(1), "bookingStatus": "booked"}}, "2026-06-15", nil)
+	for _, v := range RunQA(tripData, makeProfile("6h", 2, 0), 2) {
+		if v.Code == "no_plan_b" {
+			t.Fatalf("plan B present: did not expect no_plan_b, got %+v", v)
+		}
+	}
+}
+
+func TestRunQA_DriveHardLimitFromOps(t *testing.T) {
+	days := []map[string]any{
+		{"dayNum": float64(1), "date": "2026-06-15", "drive": map[string]any{"durationMin": float64(500), "source": "google"}},
+	}
+	tripData := makeTripData(days, nil, "2026-06-15", nil)
+	// Family allows 10h; ops hard limit 480 min must still fire.
+	got := RunQAWith(tripData, makeProfile("10h", 2, 0), QAOpts{Phase: 2, DriveHardLimitMinutes: 480})
+	found := false
+	for _, v := range got {
+		if v.Code == "drive_too_long" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("500min > 480 hard limit (profile 10h): expected drive_too_long, got %+v", got)
+	}
+
+	got = RunQAWith(tripData, makeProfile("10h", 2, 0), QAOpts{Phase: 2, DriveHardLimitMinutes: 600})
+	for _, v := range got {
+		if v.Code == "drive_too_long" {
+			t.Fatalf("500min < 600: did not expect drive_too_long")
+		}
 	}
 }

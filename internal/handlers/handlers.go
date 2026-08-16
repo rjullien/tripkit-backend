@@ -40,6 +40,7 @@ type Handler struct {
 	polarsteps      *polarsteps.Service
 	discovery       *discovery.Service
 	construction    *construction.Service
+	constructionOps *construction.Loader
 	nuisance        *nuisance.Service
 	formalities     *formalities.Service
 	leoOps          *leo.OpsLoader
@@ -90,6 +91,12 @@ func (h *Handler) SetPublishManifestResolver(r *publish.ManifestResolver) {
 // SetConstruction attaches the construction state service.
 func (h *Handler) SetConstruction(svc *construction.Service) {
 	h.construction = svc
+}
+
+// SetConstructionOps attaches the ops/construction.json loader so Get() (TTL 2 min)
+// is called on each QA, admin/health completer, and Léo mode allowlist.
+func (h *Handler) SetConstructionOps(loader *construction.Loader) {
+	h.constructionOps = loader
 }
 
 // SetNuisance attaches the nuisance analysis service.

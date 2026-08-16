@@ -133,6 +133,11 @@ func minDistToCorridorKm(pLat, pLon float64, points []Point) float64 {
 func (s *Service) CorridorSearch(ctx context.Context, fromLat, fromLon, toLat, toLon float64, themes []Theme, progress ProgressFunc) (*Result, error) {
 	cfg := s.cfg()
 	sampleKm := defaultSampleKm
+	if s != nil && s.CorridorSampleKm != nil {
+		if km := s.CorridorSampleKm(); km > 0 {
+			sampleKm = km
+		}
+	}
 
 	conc := cfg.Overpass.Concurrency
 	if conc <= 0 {

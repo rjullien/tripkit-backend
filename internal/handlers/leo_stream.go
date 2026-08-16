@@ -48,7 +48,7 @@ func (h *Handler) LeoChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	admin := isRequestAdmin(r) || config.IsAdmin(user)
-	pctx := leoPromptContext(h.publishReg, user, admin, req.TripID)
+	pctx := h.leoPromptContext(user, admin, req.TripID)
 
 	// If an allowed construction mode is requested, load trip context from DB.
 	// The allowlist lives in pctx (leoPromptContext), never in the request.

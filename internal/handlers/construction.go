@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -182,7 +183,11 @@ func (h *Handler) RunConstructionQA(w http.ResponseWriter, r *http.Request) {
 	phase := h.constructionPhase(tripID)
 
 	// Run QA
-	violations := construction.RunQA(tripData, profile, phase)
+	opts := construction.QAOpts{Phase: phase, Now: time.Now()}
+	if h.construction != nil {
+		opts = h.construction.QAOpts(phase)
+	}
+	violations := construction.RunQAWith(tripData, profile, opts)
 	if violations == nil {
 		violations = []construction.QAViolation{}
 	}
