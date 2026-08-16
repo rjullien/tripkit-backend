@@ -50,16 +50,11 @@ func ApplyCanonical(db *gorm.DB, p CanonicalPayload, ownerLogins []string) (Appl
 		}
 		result.Created = created
 
-		// Seed without trip.construction must not wipe a phase written via
-		// PUT /construction/phase. Quebec (and any inited trip) keeps its state
-		// across a publish that only updates days/hotels.
-		if !created && p.TripData["construction"] == nil && existing.Data != nil && *existing.Data != "" {
-			var prev map[string]any
-			if json.Unmarshal([]byte(*existing.Data), &prev) == nil {
-				if c, ok := prev["construction"]; ok && c != nil {
-					p.TripData["construction"] = c
-				}
-			}
+		// Runtime construction (PUT /construction/phase, lastQA) must survive
+		// publish. Québec's seed ships construction.phase=5 (Live); blindly
+		// applying that blob used to rewind a phase the user had just set.
+		if !created && existing.Data != nil && *existing.Data != "" {
+			p.TripData["construction"] = mergeRuntimeConstruction(*existing.Data, p.TripData["construction"])
 		}
 
 		dataBytes, err := json.Marshal(p.TripData)
@@ -331,6 +326,35 @@ func mergeMembers(fromSeed, owners []string) []string {
 		}
 		seen[u] = true
 		out = append(out, u)
+	}
+	return out
+}
+
+// mergeRuntimeConstruction keeps the phase / lastQA written via the Construction
+// API when a seed also carries a construction blob (Québec ships phase 5).
+// Dates and other seed fields still overlay so a republish can update the window.
+func mergeRuntimeConstruction(existingJSON string, seed any) any {
+	var prev map[string]any
+	if existingJSON != "" {
+		_ = json.Unmarshal([]byte(existingJSON), &prev)
+	}
+	prevC, _ := prev["construction"].(map[string]any)
+	seedC, _ := seed.(map[string]any)
+	if prevC == nil {
+		return seed
+	}
+	if seedC == nil {
+		return prevC
+	}
+	out := make(map[string]any, len(prevC)+len(seedC))
+	for k, v := range prevC {
+		out[k] = v
+	}
+	for k, v := range seedC {
+		if k == "phase" || k == "lastQA" {
+			continue
+		}
+		out[k] = v
 	}
 	return out
 }
