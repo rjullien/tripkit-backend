@@ -17,4 +17,6 @@ type SeedPushResult struct {
 // nil means tests / no GitHub, and the HTTP body omits seedPush.
 type SeedGit interface {
 	PushPhase(tripID string, phase int, user string) (*SeedPushResult, error)
+	PushActivity(tripID string, activity map[string]any, user string) (*SeedPushResult, error)
+	PushPin(tripID string, lastQa map[string]any, hotelNuisance map[string]map[string]any, user string) (*SeedPushResult, error)
 }

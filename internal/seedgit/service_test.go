@@ -159,3 +159,55 @@ func TestPushPhase_UnknownTrip(t *testing.T) {
 		t.Fatalf("res=%+v", res)
 	}
 }
+
+func TestPushActivity_HappyPath(t *testing.T) {
+	files := &memFiles{files: map[string]memFile{
+		"rjullien/tripkit-seeds|test-2026.js": {content: miniSeed, sha: "abc"},
+	}}
+	svc := &Service{Registry: testRegistry(), Files: files}
+	act := map[string]any{"id": "osm:node:1", "name": "Musée", "bookingStatus": "candidate"}
+	res, err := svc.PushActivity("test-2026", act, "rene")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil || !res.OK {
+		t.Fatalf("res=%+v", res)
+	}
+	if files.puts != 1 {
+		t.Fatalf("puts=%d", files.puts)
+	}
+	got := files.files["rjullien/tripkit-seeds|test-2026.js"].content
+	seed, err := publish.ParseSeedFile(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seed.Activities["osm:node:1"].(map[string]any)["name"] != "Musée" {
+		t.Fatalf("activities=%v", seed.Activities)
+	}
+}
+
+func TestPushPin_HappyPath(t *testing.T) {
+	files := &memFiles{files: map[string]memFile{
+		"rjullien/tripkit-seeds|test-2026.js": {content: miniSeedWithHotels, sha: "abc"},
+	}}
+	svc := &Service{Registry: testRegistry(), Files: files}
+	res, err := svc.PushPin("test-2026",
+		map[string]any{"at": "2026-08-16T10:00:00Z", "verdict": "PASS", "blockers": []any{}},
+		map[string]map[string]any{"montreal": {"verdict": "FAIBLE", "at": "2026-08-16T10:00:00Z"}},
+		"rene")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil || !res.OK {
+		t.Fatalf("res=%+v", res)
+	}
+	got := files.files["rjullien/tripkit-seeds|test-2026.js"].content
+	seed, err := publish.ParseSeedFile(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := seed.Trip["construction"].(map[string]any)
+	if c["lastQa"].(map[string]any)["verdict"] != "PASS" {
+		t.Fatalf("lastQa=%v", c["lastQa"])
+	}
+}

@@ -1,16 +1,19 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rjullien/tripkit-backend/internal/construction"
 	"github.com/rjullien/tripkit-backend/internal/database"
+	"github.com/rjullien/tripkit-backend/internal/leo"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
 	"github.com/rjullien/tripkit-backend/internal/models"
 )
@@ -43,12 +46,21 @@ func seedConstructionTrip(t *testing.T, h *Handler) {
 	}
 }
 
-// A valid body passes validation but the profile-edit write path is not wired:
-// the endpoint must answer 501, start no job and persist no row (it used to
-// leave rows stuck at status "running" forever -- review finding 5).
-func TestCreateProfileRequest_NotImplemented(t *testing.T) {
+// A valid body starts a real Léo job in construction:profile-edit. User text
+// travels through WrapUserRequest; a 202 is returned only when a job runs.
+func TestCreateProfileRequest_StartsJob(t *testing.T) {
 	h, r := constructionRouter(t)
 	seedConstructionTrip(t, h)
+
+	var sawMode leo.Mode
+	var sawText string
+	h.leoRun = func(ctx context.Context, pctx leo.PromptContext, req leo.ChatRequest, emit leo.EmitFunc) error {
+		sawMode = leo.ResolveMode(req.Mode, pctx.AllowedModes)
+		if len(req.Messages) > 0 {
+			sawText = req.Messages[0].Content
+		}
+		return emit("done", leo.StreamEvent{Reply: "ok"})
+	}
 
 	body := `{"target":"travelStyle","text":"Nous preferons un rythme lent avec des pauses"}`
 	req := httptest.NewRequest(http.MethodPost, "/trips/trip-constr/travel-profile/request", strings.NewReader(body))
@@ -57,25 +69,70 @@ func TestCreateProfileRequest_NotImplemented(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("expected 501, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	var resp map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("json decode: %v", err)
 	}
-	if resp["error"] != "not_implemented" {
-		t.Fatalf("expected error=not_implemented, got: %s", rec.Body.String())
-	}
-	if detail, ok := resp["detail"].(string); !ok || detail == "" {
-		t.Fatalf("expected a non-empty detail, got: %s", rec.Body.String())
-	}
-	if _, ok := resp["jobId"]; ok {
-		t.Fatalf("expected no jobId (no job must be started), got: %s", rec.Body.String())
+	jobID, _ := resp["jobId"].(string)
+	if jobID == "" {
+		t.Fatalf("expected jobId, got: %s", rec.Body.String())
 	}
 
-	// No row must be created.
+	deadline := time.Now().Add(2 * time.Second)
+	var row models.ConstructionProfileRequest
+	for time.Now().Before(deadline) {
+		if err := h.db.Where("trip_id = ?", "trip-constr").First(&row).Error; err == nil && row.Status == "done" && row.JobID != "" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if row.ID == "" {
+		t.Fatal("expected a construction_profile_requests row")
+	}
+	if row.Status != "done" {
+		t.Fatalf("status=%q want done", row.Status)
+	}
+	if row.JobID != jobID {
+		t.Fatalf("row.jobId=%q want %q", row.JobID, jobID)
+	}
+	if row.Target != "travelStyle" {
+		t.Fatalf("target=%q", row.Target)
+	}
+	if sawMode != leo.ModeProfileEdit {
+		t.Fatalf("mode=%q want %s", sawMode, leo.ModeProfileEdit)
+	}
+	if !strings.Contains(sawText, leo.UserRequestOpen) || !strings.Contains(sawText, "rythme lent") {
+		t.Fatalf("user text not wrapped: %q", sawText)
+	}
+	if !strings.Contains(sawText, "travel-profile.js") || !strings.Contains(sawText, "Cible : travelStyle") {
+		t.Fatalf("prompt missing repo/file/target: %q", sawText)
+	}
+}
+
+func TestCreateProfileRequest_NoHermes_503(t *testing.T) {
+	h, r := constructionRouter(t)
+	seedConstructionTrip(t, h)
+	t.Setenv("TRIPKIT_HERMES_API_KEY", "")
+
+	body := `{"target":"travelStyle","text":"Nous preferons un rythme lent"}`
+	req := httptest.NewRequest(http.MethodPost, "/trips/trip-constr/travel-profile/request", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Remote-User", "rene")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp["code"] != "missing_hermes_key" {
+		t.Fatalf("code=%v body=%s", resp["code"], rec.Body.String())
+	}
 	var count int64
 	h.db.Model(&models.ConstructionProfileRequest{}).Where("trip_id = ?", "trip-constr").Count(&count)
 	if count != 0 {
@@ -114,6 +171,7 @@ func TestCreateProfileRequest_MissingText(t *testing.T) {
 }
 
 func TestCreateProfileRequest_NoAuth(t *testing.T) {
+	t.Setenv("TRIPKIT_HERMES_API_KEY", "")
 	h, r := constructionRouter(t)
 	seedConstructionTrip(t, h)
 
@@ -131,15 +189,18 @@ func TestCreateProfileRequest_NoAuth(t *testing.T) {
 	r.ServeHTTP(rec, req)
 
 	// With UserIdentity, anonymous is a valid user string (not empty), so the
-	// request reaches the (unwired) write path and gets the same 501.
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("expected 501 (anonymous passes handler check), got %d: %s", rec.Code, rec.Body.String())
+	// request reaches the write path. Without Hermes it is 503, not 401.
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 (anonymous passes handler check), got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
 func TestCreateProfileRequest_AllTargets(t *testing.T) {
 	h, r := constructionRouter(t)
 	seedConstructionTrip(t, h)
+	h.leoRun = func(ctx context.Context, pctx leo.PromptContext, req leo.ChatRequest, emit leo.EmitFunc) error {
+		return emit("done", leo.StreamEvent{Reply: "ok"})
+	}
 
 	targets := []string{"travelStyle", "budgetRules", "interests", "mealPattern", "lessons"}
 	for _, target := range targets {
@@ -150,8 +211,8 @@ func TestCreateProfileRequest_AllTargets(t *testing.T) {
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusNotImplemented {
-			t.Fatalf("target %q: expected 501, got %d: %s", target, rec.Code, rec.Body.String())
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("target %q: expected 202, got %d: %s", target, rec.Code, rec.Body.String())
 		}
 	}
 }

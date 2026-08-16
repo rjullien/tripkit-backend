@@ -213,9 +213,8 @@ const (
 // Any delimiter already present in the text is neutralized first: without that,
 // a user could close the block early and append their own directives, which is
 // the whole attack the delimiters exist to prevent. Every construction write path
-// that sends user text to an LLM must go through this helper — the profile-edit
-// endpoint answers 501 for now (handlers.CreateProfileRequest), and this is the
-// piece that must not have to be reinvented when the write-back is wired.
+// that sends user text to an LLM must go through this helper — CreateProfileRequest
+// composes the Léo job through this function.
 //
 // Matching is case-insensitive and tolerates any whitespace inside the tag: a
 // model reads `</USER_REQUEST>`, `</ user_request >` and `</user_request\n>` as

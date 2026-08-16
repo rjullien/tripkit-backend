@@ -20,6 +20,7 @@ type SeedFile struct {
 	Ferry       any                       `json:"ferry"`
 	Ferries     any                       `json:"ferries"`
 	Events      any                       `json:"events"`
+	Activities  map[string]any            `json:"activities"`
 }
 
 // Person is a subset of people.js used for ACL + trip.data.people.
@@ -183,6 +184,7 @@ func BuildCanonical(seed SeedFile, people map[string]Person, family, sourceID, g
 		"briefSendTime": seed.Trip["briefSendTime"],
 		"polarsteps":    seed.Trip["polarsteps"],
 		"construction":  seed.Trip["construction"],
+		"activities":    orEmptyMap(seed.Activities),
 	}
 
 	// Hotels block also stored in trip.data (FE expects it).
