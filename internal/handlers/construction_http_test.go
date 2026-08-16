@@ -85,16 +85,19 @@ func TestCreateProfileRequest_StartsJob(t *testing.T) {
 		t.Fatalf("expected jobId, got: %s", rec.Body.String())
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
-	var row models.ConstructionProfileRequest
-	for time.Now().Before(deadline) {
-		if err := h.db.Where("trip_id = ?", "trip-constr").First(&row).Error; err == nil && row.Status == "done" && row.JobID != "" {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	job := h.leoJobs.Get(jobID)
+	if job == nil {
+		t.Fatal("job not registered")
 	}
-	if row.ID == "" {
-		t.Fatal("expected a construction_profile_requests row")
+	select {
+	case <-job.Done():
+	case <-time.After(10 * time.Second):
+		t.Fatal("profile-edit job did not finish")
+	}
+
+	var row models.ConstructionProfileRequest
+	if err := h.db.Where("trip_id = ?", "trip-constr").First(&row).Error; err != nil {
+		t.Fatalf("expected a construction_profile_requests row: %v", err)
 	}
 	if row.Status != "done" {
 		t.Fatalf("status=%q want done", row.Status)
