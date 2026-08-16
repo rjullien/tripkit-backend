@@ -495,3 +495,92 @@ func TestGetConstruction_DefaultPhaseZero(t *testing.T) {
 		t.Errorf("Phase=%d want 0", state.Phase)
 	}
 }
+
+type stubSeedGit struct {
+	res *SeedPushResult
+	err error
+	n   int
+}
+
+func (s *stubSeedGit) PushPhase(tripID string, phase int, user string) (*SeedPushResult, error) {
+	s.n++
+	return s.res, s.err
+}
+
+func TestTransitionPhase_SeedGitFailureStill200(t *testing.T) {
+	db := setupStateTestDB(t)
+	trip := models.Trip{ID: "trip-seedgit-fail", Name: "SeedGit Fail"}
+	if err := db.Create(&trip).Error; err != nil {
+		t.Fatalf("create trip: %v", err)
+	}
+
+	stub := &stubSeedGit{res: &SeedPushResult{OK: false, Error: "SHA conflict"}}
+	svc := &Service{DB: db, SeedGit: stub}
+	state, code, err := svc.TransitionPhase("trip-seedgit-fail", 1, false, "rene")
+	if err != nil {
+		t.Fatalf("TransitionPhase error: %v", err)
+	}
+	if code != 200 || state.Phase != 1 {
+		t.Fatalf("code=%d phase=%d", code, state.Phase)
+	}
+	if stub.n != 1 {
+		t.Fatalf("PushPhase calls=%d", stub.n)
+	}
+	if state.SeedPush == nil || state.SeedPush.OK || state.SeedPush.Error != "SHA conflict" {
+		t.Fatalf("seedPush=%+v", state.SeedPush)
+	}
+
+	persisted, err := ReadState(db, "trip-seedgit-fail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Phase != 1 {
+		t.Fatalf("persisted phase=%d", persisted.Phase)
+	}
+	if persisted.SeedPush != nil {
+		t.Fatalf("seedPush must not be persisted: %+v", persisted.SeedPush)
+	}
+}
+
+func TestTransitionPhase_SeedGitSuccessAttached(t *testing.T) {
+	db := setupStateTestDB(t)
+	trip := models.Trip{ID: "trip-seedgit-ok", Name: "SeedGit OK"}
+	if err := db.Create(&trip).Error; err != nil {
+		t.Fatalf("create trip: %v", err)
+	}
+
+	stub := &stubSeedGit{res: &SeedPushResult{OK: true, Repo: "rjullien/tripkit-seeds", Path: "quebec-2026.js", SHA: "deadbeef"}}
+	svc := &Service{DB: db, SeedGit: stub}
+	state, code, err := svc.TransitionPhase("trip-seedgit-ok", 2, true, "rene")
+	if err != nil || code != 200 {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	if state.SeedPush == nil || !state.SeedPush.OK || state.SeedPush.SHA != "deadbeef" {
+		t.Fatalf("seedPush=%+v", state.SeedPush)
+	}
+}
+
+func TestWriteState_StripsSeedPush(t *testing.T) {
+	db := setupStateTestDB(t)
+	trip := models.Trip{ID: "trip-strip-push", Name: "Strip"}
+	if err := db.Create(&trip).Error; err != nil {
+		t.Fatalf("create trip: %v", err)
+	}
+	err := WriteState(db, "trip-strip-push", &ConstructionState{
+		Phase:    2,
+		SeedPush: &SeedPushResult{OK: true, SHA: "should-not-land"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadState(db, "trip-strip-push")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Phase != 2 {
+		t.Fatalf("phase=%d", got.Phase)
+	}
+	if got.SeedPush != nil {
+		t.Fatalf("seedPush persisted: %+v", got.SeedPush)
+	}
+}
