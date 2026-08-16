@@ -19,9 +19,45 @@ const (
 	defaultRef         = "main"
 	defaultTTL         = 2 * time.Minute
 	defaultOverpassURL = "https://overpass-api.de/api/interpreter"
-	defaultTimeoutSec  = 25
-	defaultConcurrency = 4
+
+	// Overpass timeouts. defaultTimeoutSec is the QL budget announced to the
+	// server: raised from 25s because a 25s ceiling turned every busy moment on
+	// the public instance into "Donnée indisponible". maxTimeoutSec is the hard
+	// ceiling for a configured value — beyond ~300s overpass-api.de answers 504
+	// anyway, and holding a slot that long makes the rate limiting worse.
+	defaultTimeoutSec = 90
+	maxTimeoutSec     = 180
+	// httpTimeoutMargin keeps our HTTP deadline above the server's QL budget so
+	// a server-side timeout arrives as a readable remark instead of a client
+	// deadline. Sized for a slow mirror: kumi.systems has been measured taking
+	// ~20s just to start answering.
+	httpTimeoutMargin = 15 * time.Second
+
+	// Retry budget. Attempts rotate over primary + mirrors, so the default of 3
+	// gives each configured endpoint one shot.
+	defaultAttempts     = 3
+	maxAttempts         = 6
+	defaultRetryBase    = 2 * time.Second
+	maxRetryDelay       = 20 * time.Second
+	maxRetryAfter       = 60 * time.Second
+	endpointSwitchDelay = 500 * time.Millisecond
+
+	// defaultConcurrency is deliberately 2, not 4: the public Overpass API
+	// allots roughly two slots per IP, and the whole backend shares one egress
+	// IP. Fanning out wider is what produced the 429s that the nuisance check
+	// then reported as unavailable data.
+	defaultConcurrency = 2
 )
+
+// defaultMirrors are the fallback Overpass endpoints, tried in order when the
+// primary fails. Both were checked to be planet-wide, not regional extracts:
+// the same query in Manhattan returns the same 77 elements as the main
+// instance. overpass.osm.ch is deliberately absent — it only holds Switzerland
+// and would answer "0 element" everywhere else, i.e. a false green verdict.
+var defaultMirrors = []string{
+	"https://overpass.kumi.systems/api/interpreter",
+	"https://overpass.openstreetmap.fr/api/interpreter",
+}
 
 // Config is ops/discovery-themes.json (catalogue + Overpass runtime).
 type Config struct {
@@ -31,11 +67,17 @@ type Config struct {
 	Origin   string         `json:"-"`
 }
 
-// OverpassConfig is the public Overpass endpoint (dedicated instance later).
+// OverpassConfig is the Overpass runtime: primary endpoint, fallback mirrors and
+// the retry budget. Everything here is tunable from ops/discovery-themes.json
+// without a redeploy, which is the point — a dedicated instance later only
+// changes baseUrl.
 type OverpassConfig struct {
-	BaseURL     string `json:"baseUrl"`
-	TimeoutSec  int    `json:"timeoutSec"`
-	Concurrency int    `json:"concurrency"`
+	BaseURL        string   `json:"baseUrl"`
+	Mirrors        []string `json:"mirrors,omitempty"`
+	TimeoutSec     int      `json:"timeoutSec"`
+	Concurrency    int      `json:"concurrency"`
+	MaxAttempts    int      `json:"maxAttempts,omitempty"`
+	RetryBackoffMs int      `json:"retryBackoffMs,omitempty"`
 }
 
 // DefaultConfig is compiled-in dogfood (must match ops/discovery-themes.json).
@@ -44,8 +86,10 @@ func DefaultConfig() Config {
 		Version: 2,
 		Overpass: OverpassConfig{
 			BaseURL:     defaultOverpassURL,
+			Mirrors:     append([]string(nil), defaultMirrors...),
 			TimeoutSec:  defaultTimeoutSec,
 			Concurrency: defaultConcurrency,
+			MaxAttempts: defaultAttempts,
 		},
 		Themes: []Theme{
 			{ID: "magasinage", Label: "Magasinage", Emoji: "🛍️", Engine: engineGeo, Corridor: true, RadiusKm: 15,
@@ -224,11 +268,30 @@ func parseConfigJSON(raw []byte) (Config, error) {
 		c.Overpass.BaseURL = defaultOverpassURL
 	}
 	c.Overpass.BaseURL = strings.TrimRight(strings.TrimSpace(c.Overpass.BaseURL), "/")
+	// Mirrors are opt-out, not opt-in: a config written before mirrors existed
+	// still gets the fallbacks. An explicit ["none"] disables them.
+	if len(c.Overpass.Mirrors) == 0 {
+		c.Overpass.Mirrors = append([]string(nil), defaultMirrors...)
+	}
+	c.Overpass.Mirrors = normalizeEndpoints(c.Overpass.Mirrors)
+	if len(c.Overpass.Mirrors) == 1 && strings.EqualFold(c.Overpass.Mirrors[0], "none") {
+		c.Overpass.Mirrors = nil
+	}
 	if c.Overpass.TimeoutSec <= 0 {
 		c.Overpass.TimeoutSec = defaultTimeoutSec
 	}
+	if c.Overpass.TimeoutSec > maxTimeoutSec {
+		log.Printf("discovery: overpass.timeoutSec=%d clamped to %d", c.Overpass.TimeoutSec, maxTimeoutSec)
+		c.Overpass.TimeoutSec = maxTimeoutSec
+	}
 	if c.Overpass.Concurrency <= 0 {
 		c.Overpass.Concurrency = defaultConcurrency
+	}
+	if c.Overpass.MaxAttempts <= 0 {
+		c.Overpass.MaxAttempts = defaultAttempts
+	}
+	if c.Overpass.MaxAttempts > maxAttempts {
+		c.Overpass.MaxAttempts = maxAttempts
 	}
 	return c, nil
 }
