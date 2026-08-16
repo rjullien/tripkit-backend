@@ -237,6 +237,57 @@ func TestApplyCanonical_PreservesConstructionWhenSeedOmits(t *testing.T) {
 	}
 }
 
+func TestApplyCanonical_SeedPhaseDoesNotRewindRuntimePhase(t *testing.T) {
+	db, err := database.InitMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := `{"construction":{"phase":2,"dates":{"startDate":"2026-08-14","days":19}},"homeTz":"Europe/Paris"}`
+	start, end := "2026-08-14", "2026-09-01"
+	if err := db.Create(&models.Trip{
+		ID: "quebec-2026", Name: "Boucle",
+		StartDate: &start, EndDate: &end, Data: &data,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	payload := publish.CanonicalPayload{
+		TripID: "quebec-2026",
+		Name:   "Boucle",
+		TripData: map[string]any{
+			"homeTz": "Europe/Paris",
+			"construction": map[string]any{
+				"phase": 5,
+				"dates": map[string]any{"startDate": "2026-08-14", "days": 20},
+			},
+		},
+		Days: []map[string]any{{"day": 1, "title": "A"}},
+	}
+	if _, err := publish.ApplyCanonical(db, payload, []string{"rene"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var trip models.Trip
+	if err := db.First(&trip, "id = ?", "quebec-2026").Error; err != nil {
+		t.Fatal(err)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(*trip.Data), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := envelope["construction"].(map[string]any)
+	if c == nil {
+		t.Fatal("construction missing")
+	}
+	phase, _ := c["phase"].(float64)
+	if int(phase) != 2 {
+		t.Fatalf("phase=%v, want 2 (runtime), seed had 5", c["phase"])
+	}
+	dates, _ := c["dates"].(map[string]any)
+	days, _ := dates["days"].(float64)
+	if int(days) != 20 {
+		t.Fatalf("dates.days=%v, want 20 from seed", dates["days"])
+	}
+}
+
 func TestBuildCanonical_PersistsConstruction(t *testing.T) {
 	code := `var SEED_TEST = {
   "trip": {
