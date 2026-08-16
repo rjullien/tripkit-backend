@@ -55,7 +55,10 @@ type Service struct {
 	DB       *gorm.DB
 	Overpass discovery.Querier
 	Bifrost  bifrost.Completer
-	Hub      *leo.Hub
+	// BifrostFn, when set, is called at synthesis time so ops model changes
+	// take effect within the construction loader TTL.
+	BifrostFn func() bifrost.Completer
+	Hub       *leo.Hub
 	// Geocoder resolves a hotel's address (candidate, to_book or booked).
 	// Nil means the analysis stays on the trip stop and says so, rather
 	// than pretending.
@@ -71,6 +74,16 @@ type Service struct {
 	// service, whichever job it belongs to.
 	paceMu    sync.Mutex
 	lastQuery time.Time
+}
+
+func (s *Service) bifrost() bifrost.Completer {
+	if s != nil && s.BifrostFn != nil {
+		return s.BifrostFn()
+	}
+	if s == nil {
+		return nil
+	}
+	return s.Bifrost
 }
 
 // ProgressFunc reports progress for SSE streaming.
@@ -187,10 +200,11 @@ func (s *Service) runCheck(ctx context.Context, req CheckRequest, emit leo.EmitF
 	// Single grouped Bifrost call for synthesis.
 	// Soft-fail: if Bifrost is not configured, Synthesize returns empty recommendations
 	// and the check still completes with scoring data (no crash).
-	if s.Bifrost == nil {
+	c := s.bifrost()
+	if c == nil {
 		log.Printf("nuisance: Bifrost completer not configured, skipping synthesis (scores only)")
 	}
-	synthesis, _ := Synthesize(s.Bifrost, allResults)
+	synthesis, _ := Synthesize(c, allResults)
 
 	// Second pass: rewrite each stored result with its recommendation.
 	for i := range allResults {

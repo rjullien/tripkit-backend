@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/rjullien/tripkit-backend/internal/formalities"
 )
 
 // QAViolation represents a single rule violation found during QA.
@@ -30,7 +32,7 @@ type qaProfile struct {
 // defaultProfile returns sensible defaults when no travel profile is provided.
 func defaultProfile() qaProfile {
 	return qaProfile{
-		MaxDrivingMinutes: 360, // 6h
+		MaxDrivingMinutes: 360, // 6h family default; ops driveHardLimitMinutes caps this
 		MajorSitesPerDay:  2,
 		BudgetAccomMax:    0, // 0 = not checked
 		BudgetRestMax:     0,
@@ -137,11 +139,31 @@ func extractIsRoutier(tripData map[string]any) bool {
 	return false
 }
 
+// QAOpts tunes RunQA with ops thresholds and a clock (J-30 for admin_action_required).
+type QAOpts struct {
+	Phase                 int
+	DriveHardLimitMinutes int
+	Now                   time.Time
+}
+
 // RunQA runs all QA rules against the trip data and returns violations.
 // calendar_mismatch runs FIRST and short-circuits if triggered.
 func RunQA(tripData map[string]any, profile map[string]any, phase int) []QAViolation {
+	return RunQAWith(tripData, profile, QAOpts{Phase: phase})
+}
+
+// RunQAWith is RunQA plus ops-driven thresholds (driveHardLimitMinutes) and a clock.
+func RunQAWith(tripData map[string]any, profile map[string]any, opts QAOpts) []QAViolation {
+	if opts.Now.IsZero() {
+		opts.Now = time.Now()
+	}
+	if opts.DriveHardLimitMinutes <= 0 {
+		opts.DriveHardLimitMinutes = defaultDriveHardLimitMinutes
+	}
+
 	p := extractProfile(profile)
 	p.IsRoutier = extractIsRoutier(tripData)
+	applyDriveHardLimit(&p, opts.DriveHardLimitMinutes)
 
 	days := extractDays(tripData)
 	hotels := extractHotels(tripData)
@@ -151,7 +173,7 @@ func RunQA(tripData map[string]any, profile map[string]any, phase int) []QAViola
 		return []QAViolation{*v}
 	}
 
-	// Remaining rules
+	phase := opts.Phase
 	var violations []QAViolation
 
 	violations = append(violations, checkDriveTooLong(days, p, phase)...)
@@ -164,8 +186,21 @@ func RunQA(tripData map[string]any, profile map[string]any, phase int) []QAViola
 	violations = append(violations, checkCarNotBooked(days, p, phase)...)
 	violations = append(violations, checkTooManyMajorSites(days, p, phase)...)
 	violations = append(violations, checkBudgetExceeded(days, hotels, p, phase)...)
+	violations = append(violations, checkAdminActionRequired(tripData, opts.Now)...)
+	violations = append(violations, checkNoPlanB(days)...)
 
 	return violations
+}
+
+// applyDriveHardLimit caps the family preference at the ops hard ceiling.
+// If the profile did not set a driving limit (zero), the ops value is the limit.
+func applyDriveHardLimit(p *qaProfile, hard int) {
+	if hard <= 0 {
+		return
+	}
+	if p.MaxDrivingMinutes <= 0 || p.MaxDrivingMinutes > hard {
+		p.MaxDrivingMinutes = hard
+	}
 }
 
 // ── Day/Hotel extraction from tripData ──────────────────────────────────────
@@ -179,6 +214,9 @@ type qaDay struct {
 	Transport    *qaTransport
 	MajorSites   int
 	HasCarBooked bool
+	BookingType  string
+	HasPlanB     bool
+	Risky        bool
 }
 
 type qaDrive struct {
@@ -287,6 +325,22 @@ func extractDays(tripData map[string]any) []qaDay {
 		// Car booking status
 		if v, ok := dm["carBooked"].(bool); ok {
 			day.HasCarBooked = v
+		}
+
+		if b, ok := dm["booking"].(map[string]any); ok {
+			if v, ok := b["type"].(string); ok {
+				day.BookingType = strings.ToLower(strings.TrimSpace(v))
+			}
+		}
+		day.HasPlanB = hasPlanB(dm["planB"])
+		if v, ok := dm["risk"].(bool); ok && v {
+			day.Risky = true
+		}
+		if v, ok := dm["risky"].(bool); ok && v {
+			day.Risky = true
+		}
+		if v, ok := dm["needsPlanB"].(bool); ok && v {
+			day.Risky = true
 		}
 
 		days = append(days, day)
@@ -631,6 +685,113 @@ func checkBudgetExceeded(days []qaDay, hotels []qaHotel, p qaProfile, phase int)
 		}
 	}
 	return out
+}
+
+func hasPlanB(v any) bool {
+	switch t := v.(type) {
+	case nil:
+		return false
+	case string:
+		return strings.TrimSpace(t) != ""
+	case map[string]any:
+		return len(t) > 0
+	default:
+		return v != nil
+	}
+}
+
+var riskyBookingTypes = map[string]bool{
+	"ferry":      true,
+	"boat":       true,
+	"traversier": true,
+	"bateau":     true,
+}
+
+func isRiskySegment(day qaDay) bool {
+	if day.Risky {
+		return true
+	}
+	if riskyBookingTypes[day.BookingType] {
+		return true
+	}
+	if day.Transport != nil && riskyBookingTypes[strings.ToLower(strings.TrimSpace(day.Transport.Mode))] {
+		return true
+	}
+	return false
+}
+
+// checkNoPlanB flags a ferry/boat (or explicitly risky) day with no plan B.
+func checkNoPlanB(days []qaDay) []QAViolation {
+	var out []QAViolation
+	for _, day := range days {
+		if !isRiskySegment(day) || day.HasPlanB {
+			continue
+		}
+		kind := day.BookingType
+		if kind == "" && day.Transport != nil {
+			kind = day.Transport.Mode
+		}
+		if kind == "" {
+			kind = "risk"
+		}
+		out = append(out, QAViolation{
+			Code:     "no_plan_b",
+			Severity: "yellow",
+			Message:  fmt.Sprintf("Day %d risky %s segment has no plan B", day.Num, kind),
+			DayNum:   day.Num,
+			Detail:   fmt.Sprintf("bookingType=%s", kind),
+		})
+	}
+	return out
+}
+
+// checkAdminActionRequired fires when the deterministic admin engine still
+// lists an action_required formality. Yellow until J-30, then red.
+func checkAdminActionRequired(tripData map[string]any, now time.Time) []QAViolation {
+	items := formalities.PendingAdminActions(tripData)
+	if len(items) == 0 {
+		return nil
+	}
+	sev := "yellow"
+	if daysUntilStart(tripData, now) <= 30 {
+		sev = "red"
+	}
+	var out []QAViolation
+	for _, item := range items {
+		out = append(out, QAViolation{
+			Code:     "admin_action_required",
+			Severity: sev,
+			Message:  fmt.Sprintf("Formality %s still required for %s", item.Type, item.Country),
+			Detail:   item.Label,
+		})
+	}
+	return out
+}
+
+func daysUntilStart(tripData map[string]any, now time.Time) int {
+	startDateStr := ""
+	if constr, ok := tripData["construction"].(map[string]any); ok {
+		if dates, ok := constr["dates"].(map[string]any); ok {
+			if sd, ok := dates["startDate"].(string); ok {
+				startDateStr = sd
+			}
+		}
+	}
+	if startDateStr == "" {
+		if sd, ok := tripData["startDate"].(string); ok {
+			startDateStr = sd
+		}
+	}
+	if startDateStr == "" {
+		return 999
+	}
+	start, err := time.Parse("2006-01-02", startDateStr)
+	if err != nil {
+		return 999
+	}
+	nowDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	startDay := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC)
+	return int(startDay.Sub(nowDay).Hours() / 24)
 }
 
 // ── QA result serialization helper ──────────────────────────────────────────

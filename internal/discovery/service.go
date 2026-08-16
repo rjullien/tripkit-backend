@@ -23,6 +23,8 @@ type Service struct {
 	Overpass  Querier
 	Editorial EditorialSearcher
 	Now       func() time.Time
+	// CorridorSampleKm, when set, overrides defaultSampleKm (ops qa.corridorSampleKm).
+	CorridorSampleKm func() float64
 }
 
 func (s *Service) now() time.Time {

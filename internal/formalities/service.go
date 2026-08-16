@@ -20,14 +20,44 @@ type Service struct {
 	Completer bifrost.Completer
 	// HealthCompleter is used by HealthCheck. Falls back to Completer when nil.
 	HealthCompleter bifrost.Completer
+	// CompleterFn / HealthCompleterFn, when set, are called per request so
+	// ops/construction.json model changes take effect within the loader TTL.
+	CompleterFn       func() bifrost.Completer
+	HealthCompleterFn func() bifrost.Completer
+	// RulesOverride returns formalities.overrides from ops (may be empty).
+	RulesOverride func() map[string]json.RawMessage
 }
 
 // healthCompleter returns the completer to use for health formatting.
 func (s *Service) healthCompleter() bifrost.Completer {
+	if s == nil {
+		return nil
+	}
+	if s.HealthCompleterFn != nil {
+		return s.HealthCompleterFn()
+	}
 	if s.HealthCompleter != nil {
 		return s.HealthCompleter
 	}
+	return s.adminCompleter()
+}
+
+func (s *Service) adminCompleter() bifrost.Completer {
+	if s == nil {
+		return nil
+	}
+	if s.CompleterFn != nil {
+		return s.CompleterFn()
+	}
 	return s.Completer
+}
+
+func (s *Service) adminRules() []AdminRule {
+	var overrides map[string]json.RawMessage
+	if s != nil && s.RulesOverride != nil {
+		overrides = s.RulesOverride()
+	}
+	return ApplyAdminOverrides(baseAdminRules, overrides)
 }
 
 // AdminCheck runs the full admin-check pipeline for a trip:
@@ -66,7 +96,7 @@ func (s *Service) AdminCheck(tripID string) (*AdminCheckResult, error) {
 		if len(t.Nationalities) == 0 {
 			items = []AdminCheckItem{unknownNationalityItem(t)}
 		} else {
-			items = MatchAdminRules(countries, t.Nationalities)
+			items = MatchAdminRulesWith(countries, t.Nationalities, s.adminRules())
 		}
 
 		var travelerStatuses []string
@@ -90,8 +120,8 @@ func (s *Service) AdminCheck(tripID string) (*AdminCheckResult, error) {
 		Travelers: checklists,
 		Items:     unionItems(checklists),
 	}
-	if s.Completer != nil {
-		if summary, err := FormatAdminResults(s.Completer, result); err == nil {
+	if c := s.adminCompleter(); c != nil {
+		if summary, err := FormatAdminResults(c, result); err == nil {
 			result.Summary = summary
 		}
 	}

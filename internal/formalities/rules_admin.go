@@ -106,12 +106,17 @@ var baseAdminRules = []AdminRule{
 // CRITICAL: a person with a nationality matching the destination country does NOT need
 // entry documents for that country (e.g., FR+US bi-national does NOT need ESTA for US).
 func MatchAdminRules(countries []string, nationalities []string) []AdminCheckItem {
+	return MatchAdminRulesWith(countries, nationalities, baseAdminRules)
+}
+
+// MatchAdminRulesWith is MatchAdminRules against an explicit ruleset (ops overlay).
+func MatchAdminRulesWith(countries []string, nationalities []string, rules []AdminRule) []AdminCheckItem {
 	var items []AdminCheckItem
 
 	countrySet := toSet(countries)
 	natSet := toSet(nationalities)
 
-	for _, rule := range baseAdminRules {
+	for _, rule := range rules {
 		// Check if this rule's country (or a Schengen member) is in our destination list.
 		matchedCountry := ""
 		if rule.Country == "SCHENGEN" {

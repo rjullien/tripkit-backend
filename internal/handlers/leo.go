@@ -47,7 +47,7 @@ func (h *Handler) LeoChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	admin := isRequestAdmin(r) || config.IsAdmin(user)
-	resp, err := h.leoConfig().Chat(leoPromptContext(h.publishReg, user, admin, req.TripID), req)
+	resp, err := h.leoConfig().Chat(h.leoPromptContext(user, admin, req.TripID), req)
 	if err != nil {
 		msg := err.Error()
 		status := http.StatusBadGateway
@@ -84,15 +84,35 @@ func (h *Handler) LeoChat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (h *Handler) leoAllowedModes() []string {
+	if h != nil && h.constructionOps != nil {
+		return leo.ClientSelectableModesFrom(h.constructionOps.Get().LeoModes)
+	}
+	return leo.ClientSelectableModes()
+}
+
 // leoPromptContext builds the server-side identity/scope for the Hermes system prompt.
 func leoPromptContext(reg *publish.Registry, username string, isAdmin bool, tripID string) leo.PromptContext {
+	return leoPromptContextWithModes(reg, username, isAdmin, tripID, leo.ClientSelectableModes())
+}
+
+func (h *Handler) leoPromptContext(username string, isAdmin bool, tripID string) leo.PromptContext {
+	reg := (*publish.Registry)(nil)
+	if h != nil {
+		reg = h.publishReg
+	}
+	return leoPromptContextWithModes(reg, username, isAdmin, tripID, h.leoAllowedModes())
+}
+
+func leoPromptContextWithModes(reg *publish.Registry, username string, isAdmin bool, tripID string, allowed []string) leo.PromptContext {
+	if len(allowed) == 0 {
+		allowed = leo.ClientSelectableModes()
+	}
 	ctx := leo.PromptContext{
-		Username: username,
-		IsAdmin:  isAdmin,
-		TripID:   strings.TrimSpace(tripID),
-		// Gate the client-supplied mode: construction dialogue modes only.
-		// construction:profile-edit is server-side only and stays out of reach.
-		AllowedModes: leo.ClientSelectableModes(),
+		Username:     username,
+		IsAdmin:      isAdmin,
+		TripID:       strings.TrimSpace(tripID),
+		AllowedModes: allowed,
 	}
 	if reg == nil {
 		// Same dogfood defaults as publish when registry was not attached.

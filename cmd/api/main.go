@@ -2,6 +2,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -74,10 +75,21 @@ func main() {
 	discLoader := discovery.NewLoaderFromEnv()
 	discCfg := discLoader.Bootstrap()
 	log.Printf("discovery config: origin=%s themes=%d overpass=%s", discCfg.Origin, len(discCfg.Themes), discCfg.Overpass.BaseURL)
+
+	constructionOps := construction.NewLoaderFromEnv()
+	consCfg := constructionOps.Bootstrap()
+	log.Printf("construction ops: origin=%s enabled=%t bifrost=%s models=[admin=%s health=%s nuisance=%s]",
+		consCfg.Origin, consCfg.Enabled, consCfg.BifrostBaseURL,
+		consCfg.ModelFor("adminCheck"), consCfg.ModelFor("healthCheck"), consCfg.ModelFor("nuisance"))
+	h.SetConstructionOps(constructionOps)
+
 	h.SetDiscovery(&discovery.Service{
 		DB:        db,
 		Loader:    discLoader,
 		Editorial: discovery.NewLeoEditorialFromEnv(),
+		CorridorSampleKm: func() float64 {
+			return constructionOps.Get().QA.CorridorSampleKm
+		},
 	})
 
 	leoOps := leo.NewOpsLoaderFromEnv()
@@ -85,25 +97,19 @@ func main() {
 	log.Printf("leo ops: origin=%s default=%s models=%d", leoCfg.Origin, leoCfg.DefaultModel, len(leoCfg.Models))
 	h.SetLeoOps(leoOps)
 
-	// Construction ops config (SoT: ops/construction.json) — Bifrost endpoint
-	// and per-check models for admin-check, health-check and nuisance.
-	constructionOps := construction.NewLoaderFromEnv()
-	consCfg := constructionOps.Bootstrap()
-	log.Printf("construction ops: origin=%s enabled=%t bifrost=%s models=[admin=%s health=%s nuisance=%s]",
-		consCfg.Origin, consCfg.Enabled, consCfg.BifrostBaseURL,
-		consCfg.ModelFor("adminCheck"), consCfg.ModelFor("healthCheck"), consCfg.ModelFor("nuisance"))
-
-	// One Bifrost completer per check. nil when disabled/unconfigured: checks
-	// then return deterministic results only (no silent LLM failure).
+	// One Bifrost completer per check, rebuilt from Loader.Get() so a commit
+	// to ops/construction.json takes effect within the 2 min TTL (not only
+	// at the next pod restart).
 	newCompleter := func(feature string) bifrost.Completer {
-		if !consCfg.Ready() {
+		cfg := constructionOps.Get()
+		if !cfg.Ready() {
 			return nil
 		}
-		model := consCfg.ModelFor(feature)
+		model := cfg.ModelFor(feature)
 		if model == "" {
 			return nil
 		}
-		return bifrost.NewClient(consCfg.BifrostBaseURL, consCfg.BifrostAPIKey, model).AsCompleter()
+		return bifrost.NewClient(cfg.BifrostBaseURL, cfg.BifrostAPIKey, model).AsCompleter()
 	}
 	if !consCfg.Ready() {
 		log.Printf("construction ops: LLM formatting disabled (enabled=%t bifrostBaseUrl=%q) — checks return deterministic results only",
@@ -111,7 +117,8 @@ func main() {
 	}
 
 	h.SetConstruction(&construction.Service{
-		DB: db,
+		DB:  db,
+		Ops: constructionOps,
 		SeedGit: &seedgit.Service{
 			Registry: reg,
 			Manifest: manifest,
@@ -130,17 +137,18 @@ func main() {
 	log.Printf("nuisance: geocoder=%s (booked hotels analysed at their own address)", geocoder.BaseURL)
 
 	h.SetNuisance(&nuisance.Service{
-		DB:       db,
-		Overpass: discOverpass,
-		Geocoder: geocoder,
-		Bifrost:  newCompleter("nuisance"),
-		Hub:      h.LeoHub(),
+		DB:        db,
+		Overpass:  discOverpass,
+		Geocoder:  geocoder,
+		BifrostFn: func() bifrost.Completer { return newCompleter("nuisance") },
+		Hub:       h.LeoHub(),
 	})
 
 	h.SetFormalities(&formalities.Service{
-		DB:              db,
-		Completer:       newCompleter("adminCheck"),
-		HealthCompleter: newCompleter("healthCheck"),
+		DB:                db,
+		CompleterFn:       func() bifrost.Completer { return newCompleter("adminCheck") },
+		HealthCompleterFn: func() bifrost.Completer { return newCompleter("healthCheck") },
+		RulesOverride:     func() map[string]json.RawMessage { return constructionOps.Get().Formalities.Overrides },
 	})
 
 	// In-process worker: auto-on when TRIPKIT_GITHUB_TOKEN is set; override via TRIPKIT_PUBLISH_WORKER.

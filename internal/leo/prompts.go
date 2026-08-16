@@ -46,6 +46,34 @@ func ClientSelectableModes() []string {
 	}
 }
 
+// ClientSelectableModesFrom filters ops/construction.json leoModes down to
+// client-selectable dialogue modes (profile-edit stays server-only). Unknown
+// names are ignored. An empty/invalid list falls back to ClientSelectableModes.
+func ClientSelectableModesFrom(ops []string) []string {
+	if len(ops) == 0 {
+		return ClientSelectableModes()
+	}
+	allowed := map[string]bool{
+		string(ModeIdeation):   true,
+		string(ModeRoute):      true,
+		string(ModeActivities): true,
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, raw := range ops {
+		m := strings.TrimSpace(raw)
+		if !allowed[m] || seen[m] {
+			continue
+		}
+		seen[m] = true
+		out = append(out, m)
+	}
+	if len(out) == 0 {
+		return ClientSelectableModes()
+	}
+	return out
+}
+
 // ResolveMode maps a client-requested mode to a known Mode constant.
 // Rules: empty or unknown input always returns ModeDefault (never an error).
 // If allowed is nil or empty, only ModeDefault is permitted.
