@@ -102,7 +102,7 @@ func TestAnalyzeLocation_OverpassDownIsNotGreen(t *testing.T) {
 	fq := &failingQuerier{}
 	svc := &Service{Overpass: fq, Sleep: noPace}
 
-	got := svc.analyzeLocation(context.Background(), "trip-1", location{
+	got := svc.analyzeLocation(context.Background(), "trip-1", target{
 		id: "hotel-1", name: "Hotel Test", lat: 45.5, lon: -73.6,
 	}, nil)
 

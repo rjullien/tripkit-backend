@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -435,5 +436,33 @@ func TestScoreCategorySecurity(t *testing.T) {
 	result := ScoreCategory(cat, nil, 35.0, -114.0)
 	if result.Level != LevelFaible {
 		t.Errorf("expected %s for security, got %s", LevelFaible, result.Level)
+	}
+}
+
+// A hotel without a usable address must not trigger Overpass at the city
+// centre: that is the false green. Every category stays INDETERMINE and
+// the note asks for hotels[].addr.
+func TestAnalyzeLocation_MissingAddressSkipsOverpass(t *testing.T) {
+	q := &mockQuerier{}
+	svc := &Service{Overpass: q, Sleep: noPace}
+	lr := svc.analyzeLocation(context.Background(), "test-trip", target{
+		id: "hotel-x", locationID: "toulouse", hotelID: "hotel-x",
+		name: "Hôtel X", source: SourceMissing,
+		note: "hôtel sans adresse : ajoutez hotels[].addr",
+	}, nil)
+	if q.callCount() != 0 {
+		t.Errorf("Overpass calls=%d, want 0", q.callCount())
+	}
+	if lr.Verdict != LevelIndetermine {
+		t.Errorf("verdict=%s, want INDETERMINE", lr.Verdict)
+	}
+	if lr.AddressSource != SourceMissing {
+		t.Errorf("source=%s, want missing", lr.AddressSource)
+	}
+	if !strings.Contains(lr.AddressNote, "hotels[].addr") {
+		t.Errorf("note=%q, want a demand for hotels[].addr", lr.AddressNote)
+	}
+	if len(lr.FailedCategories) == 0 {
+		t.Error("want every category marked failed so Incomplete is true")
 	}
 }

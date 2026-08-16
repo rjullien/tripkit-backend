@@ -57,6 +57,8 @@ API REST en Go pour TripKit — gestion de voyages, jours, hébergements, listes
 | `TRIPKIT_BIFROST_API_KEY` | If Bifrost requires auth | — | Bearer for Daily Brief format, Plus chat **and** construction synthesis (nuisance recommendations, admin/health summaries). Not Hermes. |
 | `TRIPKIT_DAILY_BRIEF_JSON` | Emergency | — | Raw override of `ops/daily-brief.json` |
 | `TRIPKIT_DAILY_BRIEF_CACHE` | No | `$TMPDIR/tripkit-daily-brief.json` | Disk cache for Daily Brief ops JSON |
+| `TRIPKIT_NOMINATIM_URL` | No | `https://nominatim.openstreetmap.org/search` | Géocodeur des adresses d'hôtel (nuisances). Pointer une instance dédiée évite la limite d'1 req/s du service public |
+| `TRIPKIT_NOMINATIM_EMAIL` | No | — | Contact demandé par la politique d'usage de Nominatim public |
 
 Daily Brief SoT (URLs + model + `adminPhone`): private `rjullien/tripkit/ops/daily-brief.json` via `TRIPKIT_GITHUB_TOKEN` (same pattern as Publish). GoWA only — no HA. Format via Bifrost — no Hermes. This public repo must not contain phone numbers, WhatsApp JIDs, or Tailscale MagicDNS hostnames — those stay in private ops/seeds.
 
@@ -74,6 +76,21 @@ Secret : `TRIPKIT_BIFROST_API_KEY`. Override d'urgence :
 
 Toujours compilés en dur (lot 5.3 / seuils QA) : plage de phases
 (`internal/construction/phase.go`), catégories nuisances et cache Overpass.
+
+**Point de mesure des nuisances.** Un hôtel avec une adresse (`hotels[].addr`
+ou `lat`/`lon`) est analysé **à ce bâtiment**, qu'il soit `candidate`,
+`to_book` ou `booked` — en Construction on compare des alternatives *avant*
+de réserver (SPEC §6, TASKS 5.5). Comme un hôtel de seed n'a en général
+aucune coordonnée (`DATA-MODEL.md` : « no geo in days, geo only in
+`locations{}` »), l'adresse est géocodée via Nominatim (`internal/geocode`,
+1 req/s imposé côté client, cache 30 j). Un `lat`/`lon` posé directement
+sur l'hôtel court-circuite le géocodage.
+
+Sans adresse : recherche Nominatim sur « nom, ville », résultat affiché
+comme `addressSource: guessed` (l'utilisateur peut dire que ce n'est pas
+le bon bâtiment). Si rien ne sort : `addressSource: missing`, pas
+d'analyse Overpass au centre-ville, le résultat **réclame**
+`hotels[].addr`. Nom + adresse n'impliquent pas `booked`.
 
 **Overpass (Discovery + nuisances).** Réglé dans `ops/discovery-themes.json`,
 clé `overpass` : `baseUrl`, `mirrors` (défaut : `overpass.kumi.systems` puis

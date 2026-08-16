@@ -18,6 +18,7 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/database"
 	"github.com/rjullien/tripkit-backend/internal/discovery"
 	"github.com/rjullien/tripkit-backend/internal/formalities"
+	"github.com/rjullien/tripkit-backend/internal/geocode"
 	"github.com/rjullien/tripkit-backend/internal/handlers"
 	"github.com/rjullien/tripkit-backend/internal/leo"
 	"github.com/rjullien/tripkit-backend/internal/middleware"
@@ -110,9 +111,19 @@ func main() {
 	h.SetConstruction(&construction.Service{DB: db})
 
 	discOverpass := discovery.NewClient(discCfg.Overpass)
+
+	// A booked hotel is analysed at its OWN address, and a seed hotel carries an
+	// address, never coordinates: the nuisance check needs a geocoder. Public
+	// Nominatim by default (1 req/s, enforced client-side); override the
+	// endpoint with TRIPKIT_NOMINATIM_URL and set TRIPKIT_NOMINATIM_EMAIL as the
+	// contact its usage policy asks for.
+	geocoder := geocode.NewClient(os.Getenv("TRIPKIT_NOMINATIM_URL"), os.Getenv("TRIPKIT_NOMINATIM_EMAIL"))
+	log.Printf("nuisance: geocoder=%s (booked hotels analysed at their own address)", geocoder.BaseURL)
+
 	h.SetNuisance(&nuisance.Service{
 		DB:       db,
 		Overpass: discOverpass,
+		Geocoder: geocoder,
 		Bifrost:  newCompleter("nuisance"),
 		Hub:      h.LeoHub(),
 	})
