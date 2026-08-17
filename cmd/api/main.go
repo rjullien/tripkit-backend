@@ -28,6 +28,7 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/polarsteps"
 	"github.com/rjullien/tripkit-backend/internal/publish"
 	"github.com/rjullien/tripkit-backend/internal/seedgit"
+	"github.com/rjullien/tripkit-backend/internal/weather"
 )
 
 func main() {
@@ -55,10 +56,15 @@ func main() {
 	h.SetPublishManifestResolver(manifest)
 	publish.StartRegistryRefresh(reg, sourcesLoader)
 
+	// Centralized weather service (routes US→NWS, CA→MSC, default→Open-Meteo).
+	weatherSvc := weather.New()
+	h.SetWeather(weatherSvc)
+	log.Printf("weather: centralized service ready (providers: nws, msc, open-meteo)")
+
 	briefLoader := dailybrief.NewLoaderFromEnv()
 	briefCfg := briefLoader.Bootstrap()
 	log.Printf("dailybrief config: origin=%s model=%s gowa=%s", briefCfg.Origin, briefCfg.BriefModel, briefCfg.GowaBaseURL)
-	briefSvc := &dailybrief.Service{DB: db, Loader: briefLoader}
+	briefSvc := &dailybrief.Service{DB: db, Loader: briefLoader, Weather: &weather.DailyBriefAdapter{Svc: weatherSvc}}
 	h.SetDailyBrief(briefSvc)
 	(&dailybrief.Worker{DB: db, Service: briefSvc}).Start()
 
@@ -300,6 +306,7 @@ func main() {
 
 		// Weather
 		r.Get("/trips/{tripId}/weather", h.GetWeather)
+		r.Get("/weather/forecast", h.GetWeatherForecast)
 
 		// Assets (map images, etc.)
 		r.Get("/trips/{tripId}/assets", h.ListAssets)

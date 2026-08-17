@@ -25,6 +25,7 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/pluschat"
 	"github.com/rjullien/tripkit-backend/internal/polarsteps"
 	"github.com/rjullien/tripkit-backend/internal/publish"
+	"github.com/rjullien/tripkit-backend/internal/weather"
 	"gorm.io/gorm"
 )
 
@@ -46,6 +47,7 @@ type Handler struct {
 	leoOps          *leo.OpsLoader
 	leoJobs         *leo.Hub
 	leoRun          func(ctx context.Context, pctx leo.PromptContext, req leo.ChatRequest, emit leo.EmitFunc) error
+	weather         *weather.Service
 }
 
 // New creates a new Handler with the given DB.
@@ -107,6 +109,11 @@ func (h *Handler) SetNuisance(svc *nuisance.Service) {
 // SetFormalities attaches the formalities (admin-check, health-check) service.
 func (h *Handler) SetFormalities(svc *formalities.Service) {
 	h.formalities = svc
+}
+
+// SetWeather attaches the centralized weather service.
+func (h *Handler) SetWeather(svc *weather.Service) {
+	h.weather = svc
 }
 
 // LeoHub returns the shared Leo job hub for use by services that need

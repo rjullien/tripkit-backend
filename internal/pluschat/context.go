@@ -53,7 +53,7 @@ type CalendarDay struct {
 }
 
 // BuildTripContext loads today + tomorrow (full day + all bookings + weather).
-func BuildTripContext(db *gorm.DB, tripID string, now time.Time) (*TripContext, error) {
+func BuildTripContext(db *gorm.DB, tripID string, now time.Time, wp dailybrief.WeatherProvider) (*TripContext, error) {
 	tripID = strings.TrimSpace(tripID)
 	if db == nil || tripID == "" {
 		return nil, fmt.Errorf("tripId required")
@@ -117,8 +117,8 @@ func BuildTripContext(db *gorm.DB, tripID string, now time.Time) (*TripContext, 
 			ctx.Calendar = buildCalendar(db, tripID, start, maxDay)
 			todayDN := dayNumberForDate(start, todayDate)
 			tomorrowDN := dayNumberForDate(start, tomorrowDate)
-			ctx.Today = buildDayFocus(db, trip, tripData, "today", todayDN, todayDate)
-			ctx.Tomorrow = buildDayFocus(db, trip, tripData, "tomorrow", tomorrowDN, tomorrowDate)
+			ctx.Today = buildDayFocus(db, trip, tripData, "today", todayDN, todayDate, wp)
+			ctx.Tomorrow = buildDayFocus(db, trip, tripData, "tomorrow", tomorrowDN, tomorrowDate, wp)
 		}
 	}
 
@@ -174,7 +174,7 @@ func buildCalendar(db *gorm.DB, tripID string, start time.Time, maxDay int) []Ca
 	return out
 }
 
-func buildDayFocus(db *gorm.DB, trip models.Trip, tripData map[string]any, role string, dayNumber int, dateStr string) *DayFocus {
+func buildDayFocus(db *gorm.DB, trip models.Trip, tripData map[string]any, role string, dayNumber int, dateStr string, wp dailybrief.WeatherProvider) *DayFocus {
 	focus := &DayFocus{
 		Role:      role,
 		DayNumber: dayNumber,
@@ -208,7 +208,8 @@ func buildDayFocus(db *gorm.DB, trip models.Trip, tripData map[string]any, role 
 		_ = json.Unmarshal([]byte(dayRow.Data), &dayData)
 	}
 	if lat, lon, ok := dailybrief.CoordsFromTripData(tripData, dayData); ok {
-		_ = dailybrief.EnrichDayOnDate(src, lat, lon, dateStr)
+		country, _ := tripData["country"].(string)
+		_ = dailybrief.EnrichDayOnDate(src, lat, lon, country, dateStr, wp)
 		focus.Weather = src.Weather
 		focus.DressCode = src.DressCode
 	}

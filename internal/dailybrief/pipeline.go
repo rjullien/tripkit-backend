@@ -14,8 +14,14 @@ import (
 
 // Service wires config + clients for generate / send.
 type Service struct {
-	DB     *gorm.DB
-	Loader *Loader
+	DB      *gorm.DB
+	Loader  *Loader
+	Weather WeatherProvider
+}
+
+// WeatherProvider is the interface the daily brief needs from the centralized weather service.
+type WeatherProvider interface {
+	GetDay(lat, lon float64, country, date string) (map[string]any, error)
 }
 
 type GenerateResult struct {
@@ -83,7 +89,8 @@ func (s *Service) GenerateOpts(tripID string, dayNumber int, opts ExtractOpts) (
 		_ = json.Unmarshal([]byte(day.Data), &dayData)
 	}
 	if lat, lon, ok := CoordsFromTripData(tripData, dayData); ok {
-		_ = EnrichDay(src, lat, lon)
+		country, _ := tripData["country"].(string)
+		_ = EnrichDay(src, lat, lon, country, s.Weather)
 	}
 	// Prep briefs (day -1 = J0-1, day 0 = J0): skip place news/wiki noise.
 	if !IsPrepDay(dayNumber) {

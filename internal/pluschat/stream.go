@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/rjullien/tripkit-backend/internal/dailybrief"
 	"gorm.io/gorm"
 )
 
@@ -36,11 +37,11 @@ type EmitFunc func(event string, data StreamEvent) error
 // StreamChat calls Bifrost with stream:true and emits TripKit SSE events.
 // Optional db loads today+tomorrow trip context into the system prompt.
 func (c Config) StreamChat(ctx context.Context, pctx PromptContext, req ChatRequest, emit EmitFunc) error {
-	return c.StreamChatDB(ctx, nil, pctx, req, emit)
+	return c.StreamChatDB(ctx, nil, pctx, req, emit, nil)
 }
 
 // StreamChatDB is StreamChat with a DB for TripContext injection.
-func (c Config) StreamChatDB(ctx context.Context, db *gorm.DB, pctx PromptContext, req ChatRequest, emit EmitFunc) error {
+func (c Config) StreamChatDB(ctx context.Context, db *gorm.DB, pctx PromptContext, req ChatRequest, emit EmitFunc, wp dailybrief.WeatherProvider) error {
 	if !c.Ready() {
 		return fmt.Errorf("plus chat not ready")
 	}
@@ -50,7 +51,7 @@ func (c Config) StreamChatDB(ctx context.Context, db *gorm.DB, pctx PromptContex
 			tripID = strings.TrimSpace(req.TripID)
 		}
 		if tripID != "" {
-			if tc, err := BuildTripContext(db, tripID, NowFn()); err == nil {
+			if tc, err := BuildTripContext(db, tripID, NowFn(), wp); err == nil {
 				pctx.Trip = tc
 				pctx.TripID = tripID
 			}
