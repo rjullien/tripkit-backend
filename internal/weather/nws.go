@@ -143,9 +143,6 @@ func (p *NWS) Fetch(req ForecastRequest) (*Forecast, error) {
 		if len(fc.Days) >= maxDays {
 			break
 		}
-		if req.Date != "" && iso != req.Date {
-			continue
-		}
 		dn := dailyMap[iso]
 		day := ForecastDay{
 			Date:     iso,

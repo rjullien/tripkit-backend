@@ -27,6 +27,10 @@ func (p *OpenMeteo) Fetch(req ForecastRequest) (*Forecast, error) {
 	if days <= 0 {
 		days = 7
 	}
+	if req.Date != "" {
+		// Full window so SelectDate can keep today when `date` is in the past.
+		days = 16
+	}
 	if days > 16 {
 		days = 16
 	}
@@ -83,11 +87,6 @@ func (p *OpenMeteo) Fetch(req ForecastRequest) (*Forecast, error) {
 	}
 
 	for i, date := range parsed.Daily.Time {
-		// If a specific date was requested, only return that day.
-		if req.Date != "" && date != req.Date {
-			continue
-		}
-
 		day := ForecastDay{
 			Date:     date,
 			Provider: p.Name(),

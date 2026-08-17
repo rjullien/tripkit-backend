@@ -139,9 +139,6 @@ func (p *MSC) Fetch(req ForecastRequest) (*Forecast, error) {
 		if len(fc.Days) >= days {
 			break
 		}
-		if req.Date != "" && iso != req.Date {
-			continue
-		}
 		dd := dailyMap[iso]
 		day := ForecastDay{
 			Date:     iso,
