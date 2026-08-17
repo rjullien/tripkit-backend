@@ -94,6 +94,7 @@ type CheckRequest struct {
 	TripID      string   `json:"tripId"`
 	LocationIDs []string `json:"locationIds"`
 	All         bool     `json:"all"`
+	Refresh     bool     `json:"refresh"` // only re-check INDETERMINE/incomplete/new locations
 }
 
 // CheckResult is the stored output for one analysed point.
@@ -116,6 +117,7 @@ type CheckResult struct {
 	Incomplete       bool             `json:"incomplete,omitempty"`
 	FailedCategories []string         `json:"failedCategories,omitempty"`
 	Partial          bool             `json:"partial,omitempty"`
+	Accepted         bool             `json:"accepted,omitempty"` // user acknowledged this verdict
 	AnalyzedAt       time.Time        `json:"analyzedAt"`
 }
 
@@ -543,6 +545,78 @@ func (s *Service) GetResult(tripID, id string) (*CheckResult, error) {
 		}
 	}
 	return nil, err
+}
+
+// AcceptResult marks a stored nuisance result as accepted by the user.
+// An accepted verdict no longer blocks the QA phase transition.
+func (s *Service) AcceptResult(tripID, locationID string) error {
+	result, err := s.GetResult(tripID, locationID)
+	if err != nil {
+		return fmt.Errorf("nuisance result not found for %s", locationID)
+	}
+	result.Accepted = true
+
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+
+	// Update the stored row. The target_id is the hotel id (or location id).
+	targetID := result.HotelID
+	if targetID == "" {
+		targetID = result.LocationID
+	}
+	return s.DB.Model(&models.ConstructionCheck{}).
+		Where("trip_id = ? AND kind = ? AND target_id = ?", tripID, "nuisance", targetID).
+		Update("data", string(raw)).Error
+}
+
+// RefreshTargets returns only the location IDs that need re-analysis:
+// - verdict INDETERMINE or incomplete
+// - locations with no existing result
+// - locations whose addr changed since last analysis
+func (s *Service) RefreshTargets(tripID string) ([]string, error) {
+	// Get all existing results
+	existing, err := s.GetResults(tripID)
+	if err != nil {
+		return nil, err
+	}
+	existingByID := map[string]*CheckResult{}
+	for i := range existing {
+		r := &existing[i]
+		key := r.HotelID
+		if key == "" {
+			key = r.LocationID
+		}
+		existingByID[key] = r
+	}
+
+	// Get all potential targets (using the same resolution as a full check)
+	ctx := context.Background()
+	targets, err := s.resolveTargets(ctx, tripID, nil, true)
+	if err != nil {
+		return nil, err
+	}
+
+	var needsRefresh []string
+	for _, tg := range targets {
+		r, has := existingByID[tg.id]
+		if !has {
+			// New location with no result
+			needsRefresh = append(needsRefresh, tg.id)
+			continue
+		}
+		if r.Verdict == "INDETERMINE" || r.Incomplete || r.Partial {
+			needsRefresh = append(needsRefresh, tg.id)
+			continue
+		}
+		// Check if address changed
+		if tg.addr != "" && r.AddressUsed != "" && tg.addr != r.AddressUsed {
+			needsRefresh = append(needsRefresh, tg.id)
+			continue
+		}
+	}
+	return needsRefresh, nil
 }
 
 func asFloat(v any) (float64, bool) {

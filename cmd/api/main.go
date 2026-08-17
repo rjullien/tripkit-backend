@@ -272,6 +272,7 @@ func main() {
 		r.Post("/trips/{tripId}/nuisance-check", h.RunNuisanceCheck)
 		r.Get("/trips/{tripId}/nuisance-check", h.GetNuisanceCheck)
 		r.Get("/trips/{tripId}/nuisance-check/{locationId}", h.GetNuisanceCheck)
+		r.Post("/trips/{tripId}/nuisance-check/{locationId}/accept", h.AcceptNuisanceCheck)
 		r.Post("/trips/{tripId}/nuisance-check/pin", h.PinNuisanceToSeed)
 
 		// Trips

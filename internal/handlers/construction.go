@@ -472,7 +472,7 @@ func (h *Handler) PinNuisanceToSeed(w http.ResponseWriter, r *http.Request) {
 
 // RunNuisanceCheck launches a nuisance analysis job for the given locations.
 // POST /trips/{tripId}/nuisance-check
-// Body: {"locationIds": ["loc1", "loc2"]} or {"all": true}
+// Body: {"locationIds": ["loc1", "loc2"]} or {"all": true} or {"refresh": true}
 func (h *Handler) RunNuisanceCheck(w http.ResponseWriter, r *http.Request) {
 	if h.nuisance == nil {
 		writeError(w, http.StatusServiceUnavailable, "Nuisance service not configured")
@@ -484,11 +484,33 @@ func (h *Handler) RunNuisanceCheck(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		LocationIDs []string `json:"locationIds"`
 		All         bool     `json:"all"`
+		Refresh     bool     `json:"refresh"`
 	}
 	if err := parseBody(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+
+	// Refresh mode: resolve which locations need re-checking, then run only those.
+	if body.Refresh {
+		ids, err := h.nuisance.RefreshTargets(tripID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to resolve refresh targets")
+			return
+		}
+		if len(ids) == 0 {
+			writeJSON(w, http.StatusOK, map[string]any{"jobId": "", "message": "Tous les résultats sont à jour."})
+			return
+		}
+		job := h.nuisance.StartCheck(user, nuisance.CheckRequest{
+			TripID:      tripID,
+			LocationIDs: ids,
+			Refresh:     true,
+		})
+		writeJSON(w, http.StatusAccepted, map[string]any{"jobId": job.ID})
+		return
+	}
+
 	if !body.All && len(body.LocationIDs) == 0 {
 		writeError(w, http.StatusBadRequest, "locationIds or all:true required")
 		return
@@ -501,6 +523,23 @@ func (h *Handler) RunNuisanceCheck(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, http.StatusAccepted, map[string]any{"jobId": job.ID})
+}
+
+// AcceptNuisanceCheck marks a nuisance verdict as accepted (user acknowledges the risk).
+// POST /trips/{tripId}/nuisance-check/{locationId}/accept
+func (h *Handler) AcceptNuisanceCheck(w http.ResponseWriter, r *http.Request) {
+	if h.nuisance == nil {
+		writeError(w, http.StatusServiceUnavailable, "Nuisance service not configured")
+		return
+	}
+	tripID := chi.URLParam(r, "tripId")
+	locationID := chi.URLParam(r, "locationId")
+
+	if err := h.nuisance.AcceptResult(tripID, locationID); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"accepted": true})
 }
 
 // GetNuisanceCheck returns stored nuisance check results.
