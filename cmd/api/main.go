@@ -69,7 +69,7 @@ func main() {
 	if dailybrief.WorkerEnabled() {
 		(&dailybrief.Worker{DB: db, Service: briefSvc}).Start()
 	} else {
-		log.Printf("dailybrief: auto worker off (TRIPKIT_DAILY_BRIEF_WORKER)")
+		log.Printf("dailybrief: auto worker off (TRIPKIT_DAILY_BRIEF_WORKER=0)")
 	}
 
 	plusLoader := pluschat.NewLoaderFromEnv()

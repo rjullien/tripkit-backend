@@ -262,6 +262,18 @@ func HasSentBrief(db *gorm.DB, tripID string, dayNumber int, localDate string) b
 	return n > 0
 }
 
+// HasFailedQABrief reports a same-day QA FAILED attempt (do not retry all day on catch-up).
+func HasFailedQABrief(db *gorm.DB, tripID string, dayNumber int, localDate string) bool {
+	if db == nil || tripID == "" || localDate == "" {
+		return false
+	}
+	var n int64
+	_ = db.Model(&models.DailyBriefSend{}).
+		Where("trip_id = ? AND day_number = ? AND local_date = ? AND qa_verdict = ?", tripID, dayNumber, localDate, string(QAFailed)).
+		Count(&n).Error
+	return n > 0
+}
+
 // GenerateAndSendOpts supports force + To override (admin test DM).
 func (s *Service) GenerateAndSendOpts(tripID string, dayNumber int, opt SendOptions) (*SendResult, error) {
 	// Resolve local date + cheap idempotence *before* LLM generate (send window retries every minute).
