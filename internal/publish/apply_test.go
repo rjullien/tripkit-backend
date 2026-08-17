@@ -383,3 +383,161 @@ func TestRegistry_CanPublish(t *testing.T) {
 		t.Fatal("disabled blocks even admin")
 	}
 }
+
+func TestApplyCanonical_WritesDailyBriefFlags(t *testing.T) {
+	db, err := database.InitMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, end := "2026-08-14", "2026-09-01"
+	payload := publish.CanonicalPayload{
+		TripID:    "brief-flags-2026",
+		Name:      "Boucle",
+		StartDate: &start,
+		EndDate:   &end,
+		TripData: map[string]any{
+			"dailyBrief":    true,
+			"briefSendTime": "07:00",
+			"whatsappGroup": "120363000000000001@g.us",
+			"homeTz":        "Europe/Paris",
+		},
+		Days: []map[string]any{{"day": 1, "title": "A"}},
+	}
+	if _, err := publish.ApplyCanonical(db, payload, []string{"rene"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var trip models.Trip
+	if err := db.First(&trip, "id = ?", "brief-flags-2026").Error; err != nil {
+		t.Fatal(err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(*trip.Data), &data); err != nil {
+		t.Fatal(err)
+	}
+	if data["dailyBrief"] != true || data["briefSendTime"] != "07:00" {
+		t.Fatalf("flags not persisted: %v", data)
+	}
+	if data["whatsappGroup"] != "120363000000000001@g.us" {
+		t.Fatal("whatsappGroup dropped")
+	}
+}
+
+func TestApplyCanonical_KeepsLiveDailyBriefWhenSeedOmits(t *testing.T) {
+	db, err := database.InitMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, end := "2026-08-14", "2026-09-01"
+	live := `{"dailyBrief":true,"briefSendTime":"07:00","whatsappGroup":"120363000000000001@g.us","homeTz":"Europe/Paris"}`
+	if err := db.Create(&models.Trip{
+		ID: "brief-keep-2026", Name: "Boucle",
+		StartDate: &start, EndDate: &end, Data: &live,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	payload := publish.CanonicalPayload{
+		TripID: "brief-keep-2026",
+		Name:   "Boucle",
+		TripData: map[string]any{
+			"homeTz": "Europe/Paris",
+		},
+		Days: []map[string]any{{"day": 1, "title": "A"}},
+	}
+	if _, err := publish.ApplyCanonical(db, payload, []string{"rene"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var trip models.Trip
+	if err := db.First(&trip, "id = ?", "brief-keep-2026").Error; err != nil {
+		t.Fatal(err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(*trip.Data), &data); err != nil {
+		t.Fatal(err)
+	}
+	if data["dailyBrief"] != true {
+		t.Fatalf("dailyBrief wiped by omit: %v", data)
+	}
+	if data["briefSendTime"] != "07:00" {
+		t.Fatalf("briefSendTime wiped: %v", data["briefSendTime"])
+	}
+	if data["whatsappGroup"] != "120363000000000001@g.us" {
+		t.Fatal("whatsappGroup wiped")
+	}
+}
+
+func TestApplyCanonical_SeedBriefSendTimeWins(t *testing.T) {
+	db, err := database.InitMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, end := "2026-08-14", "2026-09-01"
+	live := `{"dailyBrief":true,"briefSendTime":"08:45","whatsappGroup":"120363000000000001@g.us"}`
+	if err := db.Create(&models.Trip{
+		ID: "brief-override-2026", Name: "Boucle",
+		StartDate: &start, EndDate: &end, Data: &live,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	payload := publish.CanonicalPayload{
+		TripID: "brief-override-2026",
+		Name:   "Boucle",
+		TripData: map[string]any{
+			"dailyBrief":    true,
+			"briefSendTime": "07:00",
+			"whatsappGroup": "120363000000000001@g.us",
+		},
+		Days: []map[string]any{{"day": 1, "title": "A"}},
+	}
+	if _, err := publish.ApplyCanonical(db, payload, []string{"rene"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var trip models.Trip
+	if err := db.First(&trip, "id = ?", "brief-override-2026").Error; err != nil {
+		t.Fatal(err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(*trip.Data), &data); err != nil {
+		t.Fatal(err)
+	}
+	if data["briefSendTime"] != "07:00" {
+		t.Fatalf("seed 07:00 should win, got %v", data["briefSendTime"])
+	}
+}
+
+func TestApplyCanonical_SeedCanDisableDailyBrief(t *testing.T) {
+	db, err := database.InitMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, end := "2026-08-14", "2026-09-01"
+	live := `{"dailyBrief":true,"whatsappGroup":"120363000000000001@g.us"}`
+	if err := db.Create(&models.Trip{
+		ID: "brief-off-2026", Name: "Boucle",
+		StartDate: &start, EndDate: &end, Data: &live,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	payload := publish.CanonicalPayload{
+		TripID: "brief-off-2026",
+		Name:   "Boucle",
+		TripData: map[string]any{
+			"dailyBrief":    false,
+			"whatsappGroup": "120363000000000001@g.us",
+		},
+		Days: []map[string]any{{"day": 1, "title": "A"}},
+	}
+	if _, err := publish.ApplyCanonical(db, payload, []string{"rene"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var trip models.Trip
+	if err := db.First(&trip, "id = ?", "brief-off-2026").Error; err != nil {
+		t.Fatal(err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(*trip.Data), &data); err != nil {
+		t.Fatal(err)
+	}
+	if data["dailyBrief"] != false {
+		t.Fatalf("seed false must disable worker, got %v", data["dailyBrief"])
+	}
+}

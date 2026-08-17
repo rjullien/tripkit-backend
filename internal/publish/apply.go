@@ -54,7 +54,11 @@ func ApplyCanonical(db *gorm.DB, p CanonicalPayload, ownerLogins []string) (Appl
 		// publish. Québec's seed ships construction.phase=5 (Live); blindly
 		// applying that blob used to rewind a phase the user had just set.
 		if !created && existing.Data != nil && *existing.Data != "" {
+			if p.TripData == nil {
+				p.TripData = map[string]any{}
+			}
 			p.TripData["construction"] = mergeRuntimeConstruction(*existing.Data, p.TripData["construction"])
+			mergeRuntimeDailyBrief(p.TripData, *existing.Data)
 		}
 
 		dataBytes, err := json.Marshal(p.TripData)
@@ -328,6 +332,35 @@ func mergeMembers(fromSeed, owners []string) []string {
 		out = append(out, u)
 	}
 	return out
+}
+
+// mergeRuntimeDailyBrief keeps live auto-send flags when the incoming payload
+// omits them (nil / ""). Seed values always win when present — including
+// dailyBrief=false, which turns the worker off on purpose.
+func mergeRuntimeDailyBrief(dst map[string]any, existingJSON string) {
+	if dst == nil || existingJSON == "" {
+		return
+	}
+	var prev map[string]any
+	if err := json.Unmarshal([]byte(existingJSON), &prev); err != nil || prev == nil {
+		return
+	}
+	for _, k := range []string{"dailyBrief", "whatsappGroup", "briefSendTime", "homeTz"} {
+		if !dailyBriefFlagEmpty(dst[k]) {
+			continue
+		}
+		if v, ok := prev[k]; ok && !dailyBriefFlagEmpty(v) {
+			dst[k] = v
+		}
+	}
+}
+
+func dailyBriefFlagEmpty(v any) bool {
+	if v == nil {
+		return true
+	}
+	s, ok := v.(string)
+	return ok && strings.TrimSpace(s) == ""
 }
 
 // mergeRuntimeConstruction keeps the phase / lastQA written via the Construction

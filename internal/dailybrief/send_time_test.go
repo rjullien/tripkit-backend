@@ -12,6 +12,7 @@ func TestParseBriefSendTime(t *testing.T) {
 		h, m int
 		ok   bool
 	}{
+		{"07:00", 7, 0, true},
 		{"07:30", 7, 30, true},
 		{"7:30", 7, 30, true},
 		{"08:00", 8, 0, true},

@@ -59,6 +59,7 @@ API REST en Go pour TripKit — gestion de voyages, jours, hébergements, listes
 | `TRIPKIT_BIFROST_API_KEY` | If Bifrost requires auth | — | Bearer for Daily Brief format, Plus chat **and** construction synthesis (nuisance recommendations, admin/health summaries). Not Hermes. |
 | `TRIPKIT_DAILY_BRIEF_JSON` | Emergency | — | Raw override of `ops/daily-brief.json` |
 | `TRIPKIT_DAILY_BRIEF_CACHE` | No | `$TMPDIR/tripkit-daily-brief.json` | Disk cache for Daily Brief ops JSON |
+| `TRIPKIT_DAILY_BRIEF_WORKER` | No | **on** | `0` to disable the in-process morning WhatsApp auto-send. Default on. Same-day catch-up if the 15-min window is missed. |
 | `TRIPKIT_NOMINATIM_URL` | No | `https://nominatim.openstreetmap.org/search` | Géocodeur des adresses d'hôtel (nuisances). Pointer une instance dédiée évite la limite d'1 req/s du service public |
 | `TRIPKIT_NOMINATIM_EMAIL` | No | — | Contact demandé par la politique d'usage de Nominatim public |
 

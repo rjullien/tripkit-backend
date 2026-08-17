@@ -13,7 +13,7 @@ import (
 
 // ExtractOpts controls ExtractDay strictness (prod vs admin test).
 type ExtractOpts struct {
-	// RequireConfigured: dailyBrief+whatsappGroup required (default true for prod cron).
+	// RequireConfigured: dailyBrief+whatsappGroup required (default true for auto send).
 	RequireConfigured bool
 }
 

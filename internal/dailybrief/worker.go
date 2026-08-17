@@ -3,6 +3,7 @@ package dailybrief
 import (
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -16,19 +17,39 @@ import (
 const sendWindowMinutes = 15
 
 // Worker is an in-process minute ticker (no k8s CronJob).
-// For each enabled trip it evaluates "is it send time in THIS day's TZ?"
-// (trip.briefSendTime if set, else ops sendLocalHour/Minute)
-// so cross-timezone itineraries fire at local morning for that day.
+// Default on. For each enabled trip it evaluates "is it at/after send time
+// in THIS day's TZ?" and catch-up the same local day if the 15-min window was missed.
 type Worker struct {
 	DB      *gorm.DB
 	Service *Service
 	every   time.Duration
 	nowFn   func() time.Time // tests
+	// sendFn, when set, replaces Service.GenerateAndSend (unit tests: no Bifrost/LLM).
+	sendFn func(tripID string, dayNumber int) (*SendResult, error)
+}
+
+// WorkerEnabled reports whether the morning WhatsApp auto-send should run.
+// Default: on. Set TRIPKIT_DAILY_BRIEF_WORKER=0 to disable.
+func WorkerEnabled() bool {
+	raw := strings.TrimSpace(os.Getenv("TRIPKIT_DAILY_BRIEF_WORKER"))
+	if raw == "" {
+		return true
+	}
+	switch strings.ToLower(raw) {
+	case "0", "false", "off", "no":
+		return false
+	default:
+		return true
+	}
 }
 
 // Start launches the background loop (non-blocking).
 func (w *Worker) Start() {
 	if w == nil || w.DB == nil || w.Service == nil {
+		return
+	}
+	if !WorkerEnabled() {
+		log.Printf("dailybrief: auto worker disabled")
 		return
 	}
 	if w.every == 0 {
@@ -38,7 +59,8 @@ func (w *Worker) Start() {
 		w.nowFn = time.Now
 	}
 	go func() {
-		log.Printf("dailybrief: worker started (tick=%s, window=%dm, in-process — not k8s CronJob)", w.every, sendWindowMinutes)
+		log.Printf("dailybrief: worker started (tick=%s, same-day catch-up, in-process — not k8s CronJob)", w.every)
+		w.tick() // catch up immediately after restart; ticker waits `every` before first fire
 		t := time.NewTicker(w.every)
 		defer t.Stop()
 		for range t.C {
@@ -48,9 +70,18 @@ func (w *Worker) Start() {
 }
 
 func (w *Worker) tick() {
-	cfg := w.Service.cfg()
-	globalHour, globalMin := cfg.SendHourMinute()
-	nowUTC := w.nowFn().UTC()
+	if !WorkerEnabled() {
+		return
+	}
+	globalHour, globalMin := 8, 0
+	if w.Service != nil {
+		globalHour, globalMin = w.Service.cfg().SendHourMinute()
+	}
+	nowFn := w.nowFn
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	nowUTC := nowFn().UTC()
 
 	var trips []models.Trip
 	if err := w.DB.Find(&trips).Error; err != nil {
@@ -83,7 +114,7 @@ func (w *Worker) tick() {
 				loc = time.UTC
 			}
 			localNow := nowUTC.In(loc)
-			if !inSendWindow(localNow, wantHour, wantMin, sendWindowMinutes) {
+			if !dueForSend(localNow, wantHour, wantMin) {
 				continue
 			}
 			expectedDate := start.AddDate(0, 0, dayNumber-1)
@@ -96,9 +127,13 @@ func (w *Worker) tick() {
 			if HasSentBrief(w.DB, trip.ID, dayNumber, dateStr) {
 				continue
 			}
+			if HasFailedQABrief(w.DB, trip.ID, dayNumber, dateStr) {
+				log.Printf("dailybrief: skip %s day=%d qa_failed", trip.ID, dayNumber)
+				continue
+			}
 			log.Printf("dailybrief: due %s day=%d tz=%s target=%02d:%02d local=%s now=%s",
 				trip.ID, dayNumber, tzName, wantHour, wantMin, dateStr, localNow.Format("15:04"))
-			res, err := w.Service.GenerateAndSend(trip.ID, dayNumber, false)
+			res, err := w.send(trip.ID, dayNumber)
 			if err != nil {
 				log.Printf("dailybrief: fail %s day=%d tz=%s: %v", trip.ID, dayNumber, tzName, err)
 				continue
@@ -117,8 +152,27 @@ func (w *Worker) tick() {
 	}
 }
 
+func (w *Worker) send(tripID string, dayNumber int) (*SendResult, error) {
+	if w.sendFn != nil {
+		return w.sendFn(tripID, dayNumber)
+	}
+	if w.Service == nil {
+		return nil, fmt.Errorf("dailybrief: service not configured")
+	}
+	return w.Service.GenerateAndSend(tripID, dayNumber, false)
+}
+
+// dueForSend reports whether localNow is at or after wantHour:wantMin on this civil day.
+// Catch-up: a missed 15-min window still sends later the same local day.
+// Does not wrap past midnight (next-day 00:02 is before 08:45).
+func dueForSend(localNow time.Time, wantHour, wantMin int) bool {
+	nowM := localNow.Hour()*60 + localNow.Minute()
+	wantM := wantHour*60 + wantMin
+	return nowM >= wantM
+}
+
 // inSendWindow reports whether localNow falls in [wantHour:wantMin, +windowMins).
-// Does not wrap past midnight (morning briefs only; evening edge cases clip at 24:00).
+// Kept for tests; the worker uses dueForSend (same-day catch-up).
 func inSendWindow(localNow time.Time, wantHour, wantMin, windowMins int) bool {
 	if windowMins < 1 {
 		windowMins = 1
