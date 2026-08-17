@@ -15,10 +15,11 @@ import (
 // Idempotence is daily_brief_sends(sent=true); retries inside the window are cheap skips.
 const sendWindowMinutes = 15
 
-// Worker is an in-process minute ticker (no k8s CronJob).
+// Worker is an in-process minute ticker (no k8s CronJob, no OpenClaw cron).
 // For each enabled trip it evaluates "is it send time in THIS day's TZ?"
 // (trip.briefSendTime if set, else ops sendLocalHour/Minute)
 // so cross-timezone itineraries fire at local morning for that day.
+// The retired Hermes/OpenClaw daily-brief cron must not be re-added.
 type Worker struct {
 	DB      *gorm.DB
 	Service *Service
