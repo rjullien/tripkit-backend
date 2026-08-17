@@ -26,6 +26,8 @@ API REST en Go pour TripKit — gestion de voyages, jours, hébergements, listes
 | `GET/PUT` | `/api/trips/:id/hotels[/:num]` | Hotels CRUD (upsert) |
 | `GET/PUT/DELETE` | `/api/trips/:id/lists[/:lid]` | Lists CRUD |
 | `PATCH` | `/api/trips/:id/lists/:lid/sync` | Multi-device sync |
+| `GET` | `/api/trips/:id/weather?lat=X&lon=X` | Weather (country from trip) |
+| `GET` | `/api/weather/forecast?lat=X&lon=X&country=XX` | Weather (standalone, FE) |
 
 ## Environment Variables
 
@@ -169,6 +171,55 @@ Text-only journal draft. No photos, no Polarsteps API, **no GoWA**.
 History: every successful generate is a new `polarsteps_steps` row (several per day). Prompt + QA refuse repeats. Rows are **purged 5 days after `endDate`**.
 
 Config SoT: private `rjullien/tripkit/ops/polarsteps-caption.json`. Seed gate: `trip.polarsteps.enabled`. Optional `TRIPKIT_BIFROST_API_KEY` (same as Plus chat).
+
+### Weather Service (centralisé)
+
+Package `internal/weather/` — service unique avec routing par pays.
+
+| Provider | Country | Source | Résolution |
+|----------|---------|--------|-----------|
+| Open-Meteo | Default (EU, etc.) | GEM/ECMWF/ICON auto | ~9 km |
+| NWS | `US` | api.weather.gov (2-step) | Station-level |
+| MSC | `CA` | api.weather.gc.ca (ECCC) | ~2.5 km (HRDPS) |
+
+**Endpoints :**
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/trips/{tripId}/weather?lat=X&lon=X` | Prévisions 7j (country déduit du trip) |
+| `GET` | `/weather/forecast?lat=X&lon=X&country=CA&days=16&tz=America/Montreal` | Endpoint standalone (FE direct) |
+
+**Réponse normalisée :**
+```json
+{
+  "lat": 46.81, "lon": -71.21,
+  "timezone": "America/Toronto",
+  "fetchedAt": "2026-08-17T01:31:00Z",
+  "days": [{
+    "date": "2026-08-17",
+    "tempMin": 14, "tempMax": 26,
+    "weatherCode": 2, "conditions": "Peu nuageux",
+    "precipProbability": 10,
+    "windMaxKmh": 22, "uvMax": 6,
+    "sunrise": "05:48", "sunset": "20:12",
+    "provider": "msc"
+  }]
+}
+```
+
+**Architecture interne :**
+- `models.go` : types + `WeatherCodeText()` (WMO → français)
+- `openmeteo.go` / `nws.go` / `msc.go` : chaque provider implémente `Provider` interface
+- `service.go` : routing + cache 30 min in-memory + fallback auto (NWS/MSC fail → Open-Meteo)
+- `adapter.go` : bridge `weather.Service` → `dailybrief.WeatherProvider` interface (`map[string]any`)
+
+**Consommateurs :**
+- `handlers/weather.go` : les deux endpoints HTTP
+- `dailybrief/enrich.go` : enrichissement météo du brief (via `WeatherProvider` interface)
+- `pluschat/context.go` : météo today/tomorrow dans le prompt Plus (via `WeatherProvider`)
+- Frontend `route-view.js` + `weather.js` : appel HTTP au backend (plus de call direct Open-Meteo/NWS)
+
+Pas de variable d'env spécifique — le service est toujours actif. Les providers appellent les APIs publiques directement (pas de clé requise).
 
 ## Quick Start
 ```bash

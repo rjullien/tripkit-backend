@@ -180,6 +180,7 @@ CREATE TABLE hotels (
 | PUT | `/api/trips/:id/lists/:lid` | Upsert list | List object |
 | DELETE | `/api/trips/:id/lists/:lid` | Delete list | 204 |
 | PATCH | `/api/trips/:id/lists/:lid/sync` | Multi-device sync | Merged state |
+| GET | `/api/weather/forecast` | Standalone weather (FE direct) | See Weather section |
 
 ### Seed Response Structure
 
@@ -410,6 +411,52 @@ CREATE TABLE trip_accesses (
 |-------|---------|-------|
 | `family` | user1, user2, user3 | trip-a, trip-b |
 | `friends` | user4 | trip-a |
+
+---
+
+## Weather Service (`internal/weather/`)
+
+Centralized weather with country-based provider routing:
+
+```
+Frontend (route-view / weather.js)
+  │  GET /api/weather/forecast?lat=X&lon=X&country=CA&days=16
+  ▼
+┌─────────────────────────────────┐
+│  weather.Service (Go)            │
+│  ┌───────────────────────────┐  │
+│  │ Cache (30 min in-memory)  │  │
+│  └─────────┬─────────────────┘  │
+│            │ miss                │
+│  ┌─────────▼─────────────────┐  │
+│  │ providerFor(country)      │  │
+│  │   US → NWS (2-step)      │  │
+│  │   CA → MSC (weather.gc.ca)│  │
+│  │   *  → Open-Meteo        │  │
+│  └─────────┬─────────────────┘  │
+│            │ fallback on error   │
+│            ▼ Open-Meteo          │
+└─────────────────────────────────┘
+         │
+         ▼ Normalized ForecastDay[]
+  {date, tempMin, tempMax, weatherCode, conditions, precipProbability,
+   windMaxKmh, uvMax, sunrise, sunset, provider}
+```
+
+### Internal consumers
+- **Daily Brief** (`enrich.go`): weather for the day being generated → dress code
+- **Plus Chat** (`context.go`): today + tomorrow weather in system prompt
+- **Handler** (`weather.go`): HTTP endpoints for FE
+
+### Frontend flow (after centralization)
+1. `route-view.js`: per-coord parallel `GET /weather/forecast` → renders inline icons
+2. `weather.js` inline: single `GET /weather/forecast?date=X` → summary card
+3. `weather.js` modal: still calls Open-Meteo directly (hourly detail not in backend)
+
+### Fallback strategy
+- NWS or MSC fails → automatic fallback to Open-Meteo (same coords)
+- Backend unreachable (FE) → direct Open-Meteo (graceful degradation)
+- No coords → weather skipped silently (brief still generated)
 
 ---
 
