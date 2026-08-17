@@ -40,7 +40,7 @@ func tripWith(t *testing.T, data map[string]any) *gorm.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&models.Trip{}, &models.ConstructionCheck{}, &models.DiscoveryCache{}); err != nil {
+	if err := db.AutoMigrate(&models.Trip{}, &models.Day{}, &models.Hotel{}, &models.ConstructionCheck{}, &models.DiscoveryCache{}); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := json.Marshal(data)
@@ -403,5 +403,324 @@ func TestGeocodeCache_AvoidsASecondLookup(t *testing.T) {
 	}
 	if g.calls != 1 {
 		t.Errorf("geocoder calls=%d over 3 runs, want 1", g.calls)
+	}
+}
+
+
+// ── Fix #1: Pre-departure (day < 1) exclusion ──────────────────────────────
+
+// Day 0 (J-1) locations and hotels are excluded from the all=true scan.
+func TestResolveTargets_PreDepartureExcludedFromAll(t *testing.T) {
+	seed := map[string]any{
+		"locations": map[string]any{
+			"nice":     map[string]any{"name": "Nice", "lat": 43.7102, "lon": 7.2620},
+			"toulouse": map[string]any{"name": "Toulouse", "lat": 43.6045, "lon": 1.4440},
+		},
+		"days": []any{
+			map[string]any{"day": 0, "locationId": "nice", "hotelId": "hotel-nice"},
+			map[string]any{"day": 1, "locationId": "toulouse", "hotelId": "hotel-matabiau"},
+		},
+		"hotels": map[string]any{
+			"hotel-nice": map[string]any{
+				"name": "Hôtel Nice J-1",
+				"addr": "1 Promenade des Anglais, Nice",
+			},
+			"hotel-matabiau": map[string]any{
+				"name": "Hôtel Matabiau",
+				"addr": "64 Boulevard Pierre Sémard, 31000 Toulouse",
+			},
+		},
+	}
+	db := tripWith(t, seed)
+	g := &stubGeocoder{points: map[string]geocode.Point{
+		"64 Boulevard Pierre Sémard, 31000 Toulouse": {Lat: 43.6112, Lon: 1.4536},
+	}}
+	svc := &Service{DB: db, Geocoder: g}
+
+	tgs, err := svc.resolveTargets(context.Background(), "test-trip", nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Nice (day 0) must NOT appear.
+	if _, ok := findTarget(tgs, "hotel-nice"); ok {
+		t.Error("hotel-nice (day 0 / J-1) should be excluded from all=true")
+	}
+	if _, ok := findTarget(tgs, "nice"); ok {
+		t.Error("location nice (day 0 / J-1) should be excluded from all=true")
+	}
+
+	// Toulouse (day 1) must appear.
+	if _, ok := findTarget(tgs, "hotel-matabiau"); !ok {
+		t.Error("hotel-matabiau (day 1) should be included")
+	}
+}
+
+// When explicitly requested, a pre-departure location is still returned.
+func TestResolveTargets_PreDepartureIncludedWhenExplicit(t *testing.T) {
+	seed := map[string]any{
+		"locations": map[string]any{
+			"nice":     map[string]any{"name": "Nice", "lat": 43.7102, "lon": 7.2620},
+			"toulouse": map[string]any{"name": "Toulouse", "lat": 43.6045, "lon": 1.4440},
+		},
+		"days": []any{
+			map[string]any{"day": 0, "locationId": "nice", "hotelId": "hotel-nice"},
+			map[string]any{"day": 1, "locationId": "toulouse", "hotelId": "hotel-matabiau"},
+		},
+		"hotels": map[string]any{
+			"hotel-nice": map[string]any{
+				"name": "Hôtel Nice J-1",
+				"lat":  43.7102,
+				"lon":  7.2620,
+			},
+			"hotel-matabiau": map[string]any{
+				"name": "Hôtel Matabiau",
+				"addr": "64 Boulevard Pierre Sémard, 31000 Toulouse",
+			},
+		},
+	}
+	db := tripWith(t, seed)
+	svc := &Service{DB: db, Geocoder: &stubGeocoder{}}
+
+	// Explicit request for the J-1 hotel: should still work.
+	tgs, err := svc.resolveTargets(context.Background(), "test-trip", []string{"hotel-nice"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tgs) != 1 {
+		t.Fatalf("targets=%d, want 1 (explicit request overrides filter)", len(tgs))
+	}
+	if tgs[0].id != "hotel-nice" {
+		t.Errorf("target.id=%q, want hotel-nice", tgs[0].id)
+	}
+}
+
+// A location that appears on BOTH day 0 and day 3 is NOT excluded.
+func TestResolveTargets_SharedLocationNotExcluded(t *testing.T) {
+	seed := map[string]any{
+		"locations": map[string]any{
+			"montreal": map[string]any{"name": "Montréal", "lat": 45.5017, "lon": -73.5673},
+		},
+		"days": []any{
+			map[string]any{"day": 0, "locationId": "montreal"},
+			map[string]any{"day": 17, "locationId": "montreal", "hotelId": "hotel-mtl"},
+		},
+		"hotels": map[string]any{
+			"hotel-mtl": map[string]any{
+				"name": "Hôtel Montréal",
+				"lat":  45.5017,
+				"lon":  -73.5673,
+			},
+		},
+	}
+	db := tripWith(t, seed)
+	svc := &Service{DB: db, Geocoder: &stubGeocoder{}}
+
+	tgs, err := svc.resolveTargets(context.Background(), "test-trip", nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := findTarget(tgs, "hotel-mtl"); !ok {
+		t.Error("hotel on both day 0 and day 17 should NOT be excluded")
+	}
+}
+
+// ── Fix #2: Hotel addr enrichment from DB Hotels table ──────────────────────
+
+// When trip.Data.hotels lacks addr but the Hotels DB table has it, the addr
+// is enriched before geocoding.
+func TestResolveTargets_EnrichesAddrFromHotelsTable(t *testing.T) {
+	// trip.Data has the hotel without addr
+	seed := map[string]any{
+		"locations": map[string]any{
+			"toulouse": map[string]any{"name": "Toulouse", "lat": 43.6045, "lon": 1.4440},
+		},
+		"days": []any{
+			map[string]any{"day": 1, "locationId": "toulouse", "hotelId": "hotel-matabiau"},
+		},
+		"hotels": map[string]any{
+			"hotel-matabiau": map[string]any{
+				"name": "Hôtel Matabiau",
+				// addr intentionally missing from trip.Data
+			},
+		},
+	}
+	db := tripWith(t, seed)
+
+	// But the Hotels DB table has the full data with addr
+	hotelData := `{"hotelId":"hotel-matabiau","name":"Hôtel Matabiau","addr":"64 Boulevard Pierre Sémard, 31000 Toulouse","dayNums":[1]}`
+	if err := db.Create(&models.Hotel{TripID: "test-trip", DayNum: 1, Data: hotelData}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	g := &stubGeocoder{points: map[string]geocode.Point{
+		"64 Boulevard Pierre Sémard, 31000 Toulouse": {Lat: 43.6112, Lon: 1.4536},
+	}}
+	svc := &Service{DB: db, Geocoder: g}
+
+	tgs, err := svc.resolveTargets(context.Background(), "test-trip", nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tg, ok := findTarget(tgs, "hotel-matabiau")
+	if !ok {
+		t.Fatalf("hotel-matabiau missing from targets: %+v", tgs)
+	}
+	// Should have used the addr from the Hotels table.
+	if tg.source != SourceHotel {
+		t.Errorf("source=%q, want %q (addr enriched from Hotels table)", tg.source, SourceHotel)
+	}
+	if tg.lat != 43.6112 {
+		t.Errorf("lat=%f, want 43.6112 (geocoded from enriched addr)", tg.lat)
+	}
+}
+
+// When trip.Data.hotels has no entry at all but the Hotels DB table does,
+// the hotel is still discovered and analysed.
+func TestResolveTargets_HotelOnlyInDBTable(t *testing.T) {
+	seed := map[string]any{
+		"locations": map[string]any{
+			"toulouse": map[string]any{"name": "Toulouse", "lat": 43.6045, "lon": 1.4440},
+		},
+		"days": []any{
+			map[string]any{"day": 1, "locationId": "toulouse", "hotelId": "hotel-missing"},
+		},
+		"hotels": map[string]any{
+			// hotel-missing is NOT in trip.Data.hotels
+		},
+	}
+	db := tripWith(t, seed)
+
+	// But it IS in the Hotels DB table
+	hotelData := `{"hotelId":"hotel-missing","name":"Hôtel Fantôme","addr":"10 Rue Test, Toulouse","dayNums":[1]}`
+	if err := db.Create(&models.Hotel{TripID: "test-trip", DayNum: 1, Data: hotelData}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	g := &stubGeocoder{points: map[string]geocode.Point{
+		"10 Rue Test, Toulouse": {Lat: 43.600, Lon: 1.440},
+	}}
+	svc := &Service{DB: db, Geocoder: g}
+
+	tgs, err := svc.resolveTargets(context.Background(), "test-trip", nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tg, ok := findTarget(tgs, "hotel-missing")
+	if !ok {
+		t.Fatalf("hotel-missing should be discovered from DB table: %+v", tgs)
+	}
+	if tg.source != SourceHotel {
+		t.Errorf("source=%q, want %q", tg.source, SourceHotel)
+	}
+	if tg.addr == "" {
+		t.Error("addr should be filled from DB table")
+	}
+}
+
+// ── Fix #1: DB days used when trip.Data has no days ─────────────────────────
+
+// When trip.Data has no "days" key (publish path), the Days DB table is used
+// for ordering, linking, and pre-departure filtering.
+func TestResolveTargets_UsesDBDaysWhenTripDataHasNone(t *testing.T) {
+	// trip.Data has no "days" key — like the publish path
+	seed := map[string]any{
+		"locations": map[string]any{
+			"nice":     map[string]any{"name": "Nice", "lat": 43.7102, "lon": 7.2620},
+			"toulouse": map[string]any{"name": "Toulouse", "lat": 43.6045, "lon": 1.4440},
+		},
+		"hotels": map[string]any{
+			"hotel-nice": map[string]any{
+				"name": "Hôtel Nice J-1",
+				"lat":  43.7102,
+				"lon":  7.2620,
+			},
+			"hotel-matabiau": map[string]any{
+				"name": "Hôtel Matabiau",
+				"addr": "64 Boulevard Pierre Sémard, 31000 Toulouse",
+			},
+		},
+		// No "days" key!
+	}
+	db := tripWith(t, seed)
+
+	// Insert days into the DB table (like the publish path does)
+	day0 := `{"day":0,"locationId":"nice","hotelId":"hotel-nice"}`
+	day1 := `{"day":1,"locationId":"toulouse","hotelId":"hotel-matabiau"}`
+	if err := db.Create(&models.Day{TripID: "test-trip", DayNum: 0, Data: day0}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.Day{TripID: "test-trip", DayNum: 1, Data: day1}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	g := &stubGeocoder{points: map[string]geocode.Point{
+		"64 Boulevard Pierre Sémard, 31000 Toulouse": {Lat: 43.6112, Lon: 1.4536},
+	}}
+	svc := &Service{DB: db, Geocoder: g}
+
+	tgs, err := svc.resolveTargets(context.Background(), "test-trip", nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Nice (day 0) excluded.
+	if _, ok := findTarget(tgs, "hotel-nice"); ok {
+		t.Error("hotel-nice (day 0) should be excluded from all=true when days are from DB")
+	}
+	if _, ok := findTarget(tgs, "nice"); ok {
+		t.Error("location nice (day 0) should be excluded when days are from DB")
+	}
+
+	// Toulouse (day 1) included with correct location link.
+	tg, ok := findTarget(tgs, "hotel-matabiau")
+	if !ok {
+		t.Fatalf("hotel-matabiau (day 1) should be included: %+v", tgs)
+	}
+	if tg.locationID != "toulouse" {
+		t.Errorf("locationID=%q, want toulouse (linked via DB days)", tg.locationID)
+	}
+}
+
+// ── preDepartureOnly unit test ──────────────────────────────────────────────
+
+func TestPreDepartureOnly(t *testing.T) {
+	daySlice := []map[string]any{
+		{"day": float64(0), "locationId": "nice", "hotelId": "hotel-nice"},
+		{"day": float64(0), "locationId": "nice"},
+		{"day": float64(1), "locationId": "toulouse", "hotelId": "hotel-toulouse"},
+		{"day": float64(2), "locationId": "montreal", "hotelId": "hotel-montreal"},
+	}
+	locOnly, hotelOnly := preDepartureOnly(daySlice)
+
+	if !locOnly["nice"] {
+		t.Error("nice should be pre-departure-only (only on day 0)")
+	}
+	if !hotelOnly["hotel-nice"] {
+		t.Error("hotel-nice should be pre-departure-only")
+	}
+	if locOnly["toulouse"] {
+		t.Error("toulouse should NOT be pre-departure-only (on day 1)")
+	}
+	if hotelOnly["hotel-toulouse"] {
+		t.Error("hotel-toulouse should NOT be pre-departure-only")
+	}
+	if locOnly["montreal"] {
+		t.Error("montreal should NOT be pre-departure-only")
+	}
+}
+
+func TestPreDepartureOnly_SharedLocation(t *testing.T) {
+	daySlice := []map[string]any{
+		{"day": float64(0), "locationId": "montreal"},
+		{"day": float64(17), "locationId": "montreal", "hotelId": "hotel-roberval"},
+	}
+	locOnly, hotelOnly := preDepartureOnly(daySlice)
+
+	if locOnly["montreal"] {
+		t.Error("montreal on day 0 AND day 17 should NOT be pre-departure-only")
+	}
+	if hotelOnly["hotel-roberval"] {
+		t.Error("hotel-roberval on day 17 should NOT be pre-departure-only")
 	}
 }
