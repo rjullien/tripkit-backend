@@ -66,7 +66,11 @@ func main() {
 	log.Printf("dailybrief config: origin=%s model=%s gowa=%s", briefCfg.Origin, briefCfg.BriefModel, briefCfg.GowaBaseURL)
 	briefSvc := &dailybrief.Service{DB: db, Loader: briefLoader, Weather: &weather.DailyBriefAdapter{Svc: weatherSvc}}
 	h.SetDailyBrief(briefSvc)
-	(&dailybrief.Worker{DB: db, Service: briefSvc}).Start()
+	if dailybrief.WorkerEnabled() {
+		(&dailybrief.Worker{DB: db, Service: briefSvc}).Start()
+	} else {
+		log.Printf("dailybrief: auto worker off (TRIPKIT_DAILY_BRIEF_WORKER)")
+	}
 
 	plusLoader := pluschat.NewLoaderFromEnv()
 	plusCfg := plusLoader.Bootstrap()

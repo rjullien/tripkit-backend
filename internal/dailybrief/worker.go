@@ -3,6 +3,7 @@ package dailybrief
 import (
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -15,11 +16,11 @@ import (
 // Idempotence is daily_brief_sends(sent=true); retries inside the window are cheap skips.
 const sendWindowMinutes = 15
 
-// Worker is an in-process minute ticker (no k8s CronJob, no OpenClaw cron).
+// Worker is an in-process minute ticker (no k8s CronJob).
+// Auto-send is retired (WorkerEnabled default false). Admin POST /brief/send remains.
 // For each enabled trip it evaluates "is it send time in THIS day's TZ?"
 // (trip.briefSendTime if set, else ops sendLocalHour/Minute)
 // so cross-timezone itineraries fire at local morning for that day.
-// The retired Hermes/OpenClaw daily-brief cron must not be re-added.
 type Worker struct {
 	DB      *gorm.DB
 	Service *Service
@@ -27,9 +28,25 @@ type Worker struct {
 	nowFn   func() time.Time // tests
 }
 
+// WorkerEnabled reports whether the morning WhatsApp auto-send should run.
+// Default: off. Set TRIPKIT_DAILY_BRIEF_WORKER=1 only for explicit ops/tests.
+func WorkerEnabled() bool {
+	raw := strings.TrimSpace(os.Getenv("TRIPKIT_DAILY_BRIEF_WORKER"))
+	switch strings.ToLower(raw) {
+	case "1", "true", "on", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
 // Start launches the background loop (non-blocking).
 func (w *Worker) Start() {
 	if w == nil || w.DB == nil || w.Service == nil {
+		return
+	}
+	if !WorkerEnabled() {
+		log.Printf("dailybrief: auto worker disabled")
 		return
 	}
 	if w.every == 0 {
@@ -49,6 +66,9 @@ func (w *Worker) Start() {
 }
 
 func (w *Worker) tick() {
+	if !WorkerEnabled() {
+		return
+	}
 	cfg := w.Service.cfg()
 	globalHour, globalMin := cfg.SendHourMinute()
 	nowUTC := w.nowFn().UTC()

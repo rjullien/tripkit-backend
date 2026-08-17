@@ -10,23 +10,54 @@ import (
 	"github.com/rjullien/tripkit-backend/internal/models"
 )
 
-// The morning WhatsApp brief is an in-process ticker in cmd/api, not a
-// Kubernetes CronJob and not an OpenClaw/Hermes cron. This test locks that
-// wiring so the retired agent cron cannot be "replaced" by moving the
-// scheduler out of the API process.
-func TestAPIStartsInProcessDailyBriefWorker(t *testing.T) {
+func TestWorkerEnabled_DefaultOff(t *testing.T) {
+	t.Setenv("TRIPKIT_DAILY_BRIEF_WORKER", "")
+	if WorkerEnabled() {
+		t.Fatal("auto WhatsApp worker must stay off by default")
+	}
+	t.Setenv("TRIPKIT_DAILY_BRIEF_WORKER", "0")
+	if WorkerEnabled() {
+		t.Fatal("0 must keep the auto worker off")
+	}
+	t.Setenv("TRIPKIT_DAILY_BRIEF_WORKER", "false")
+	if WorkerEnabled() {
+		t.Fatal("false must keep the auto worker off")
+	}
+	t.Setenv("TRIPKIT_DAILY_BRIEF_WORKER", "1")
+	if !WorkerEnabled() {
+		t.Fatal("1 is the explicit ops escape hatch")
+	}
+}
+
+func TestAPIDoesNotStartDailyBriefWorkerUnlessEnabled(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join("..", "..", "cmd", "api", "main.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(src)
-	want := `(&dailybrief.Worker{DB: db, Service: briefSvc}).Start()`
-	if !strings.Contains(s, want) {
-		t.Fatalf("daily brief must start as in-process Worker in cmd/api; do not move it to a k8s/OpenClaw cron")
+	if !strings.Contains(s, "dailybrief.WorkerEnabled()") {
+		t.Fatal("cmd/api must gate the auto worker on WorkerEnabled()")
 	}
-	if strings.Contains(s, "kind: CronJob") {
-		t.Fatal("cmd/api must not embed a CronJob for daily brief")
+	if !strings.Contains(s, `(&dailybrief.Worker{DB: db, Service: briefSvc}).Start()`) {
+		t.Fatal("Start() must remain behind the WorkerEnabled gate, not a k8s CronJob")
 	}
+	idxGate := strings.Index(s, "dailybrief.WorkerEnabled()")
+	idxStart := strings.Index(s, `(&dailybrief.Worker{DB: db, Service: briefSvc}).Start()`)
+	if idxGate < 0 || idxStart < 0 || idxStart < idxGate {
+		t.Fatal("Worker.Start must be inside the WorkerEnabled gate")
+	}
+}
+
+func TestStart_DisabledDoesNotPanicOnNilService(t *testing.T) {
+	t.Setenv("TRIPKIT_DAILY_BRIEF_WORKER", "")
+	w := &Worker{DB: nil, Service: nil}
+	w.Start() // must no-op; auto-send must not restart
+}
+
+func TestTick_DisabledDoesNotTouchService(t *testing.T) {
+	t.Setenv("TRIPKIT_DAILY_BRIEF_WORKER", "0")
+	w := &Worker{Service: nil, nowFn: time.Now}
+	w.tick() // would panic on w.Service.cfg() if the auto-send restarted
 }
 
 func TestTripFlags_WorkerSkipsUnlessEnabledAndGroup(t *testing.T) {
@@ -56,8 +87,6 @@ func TestTripFlags_WorkerSkipsUnlessEnabledAndGroup(t *testing.T) {
 }
 
 func TestInSendWindow_NoCatchUpAfterWindow(t *testing.T) {
-	// Québec briefSendTime 08:45, 15 min window. After 09:00 the worker must
-	// not fire — no OpenClaw-style late catch-up that would "repartir".
 	loc := time.UTC
 	at := func(h, m int) time.Time {
 		return time.Date(2026, 8, 17, h, m, 0, 0, loc)
