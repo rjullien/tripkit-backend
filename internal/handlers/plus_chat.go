@@ -131,7 +131,7 @@ func (h *Handler) PlusChatStream(w http.ResponseWriter, r *http.Request) {
 		Username: user,
 		TripID:   strings.TrimSpace(req.TripID),
 	}
-	err := cfg.StreamChatDB(ctx, h.db, pctx, req, emit)
+	err := cfg.StreamChatDB(ctx, h.db, pctx, req, emit, h.weatherProvider())
 	if err != nil {
 		msg := err.Error()
 		code := "plus_chat_failed"

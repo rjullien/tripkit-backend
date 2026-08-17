@@ -53,7 +53,7 @@ func TestBuildTripContext_TodayTomorrowHotel(t *testing.T) {
 	loc, _ := time.LoadLocation("America/Toronto")
 	now := time.Date(2026, 8, 13, 10, 0, 0, 0, loc) // day 0 today, day 1 tomorrow
 
-	ctx, err := BuildTripContext(db, "quebec-2026", now)
+	ctx, err := BuildTripContext(db, "quebec-2026", now, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
