@@ -40,6 +40,13 @@ func New() *Service {
 // GetForecast returns a multi-day forecast using the best provider for the given country.
 // Country is ISO 2-letter (e.g. "US", "CA", "FR"). Empty defaults to Open-Meteo.
 func (s *Service) GetForecast(req ForecastRequest) (*Forecast, error) {
+	// A specific date needs the full window so we can match it, or keep
+	// "today" when the date falls in the past (TZ / UTC-today mismatch).
+	// The PWA used to send days=1&date=… which dropped the current day.
+	if req.Date != "" {
+		req.Days = 16
+	}
+
 	key := s.cacheKey(req)
 
 	// Check cache.
@@ -63,6 +70,10 @@ func (s *Service) GetForecast(req ForecastRequest) (*Forecast, error) {
 		} else {
 			return nil, err
 		}
+	}
+
+	if fc != nil {
+		fc.Days = SelectDate(fc.Days, req.Date)
 	}
 
 	// Cache the result.
