@@ -90,4 +90,11 @@ func TestTripFlags_WorkerSkipsUnlessEnabledAndGroup(t *testing.T) {
 	if !en || g == "" {
 		t.Fatalf("enabled trip must have group, got enabled=%v group=%q", en, g)
 	}
+
+	// Live Québec 2026-08-17: itinerary-only trip.data (no dailyBrief / group).
+	stripped := `{"carRental":{},"culture":null,"events":null,"ferry":null,"flights":null,"hotels":{},"locations":{},"mapHtml":"quebec-map.html","mapImage":null,"meteoHtml":"quebec-meteo.html","phases":[],"restaurants":{},"routeUrl":"","travelers":[],"users":{}}`
+	en, g = TripFlags(models.Trip{Data: &stripped})
+	if en || g != "" {
+		t.Fatalf("stripped payload must disable worker, got enabled=%v group=%q", en, g)
+	}
 }

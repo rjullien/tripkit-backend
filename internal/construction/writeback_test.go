@@ -259,3 +259,37 @@ func TestPinNuisance_ReadsLegacyQAArray(t *testing.T) {
 		t.Fatalf("lastQa=%v (legacy array must still pin)", got.LastQa)
 	}
 }
+
+func TestRetainActivity_KeepsDailyBriefFlags(t *testing.T) {
+	db := setupWritebackDB(t)
+	data := `{"dailyBrief":true,"briefSendTime":"07:00","whatsappGroup":"120363000000000001@g.us","homeTz":"Europe/Paris","people":[{"name":"Alice"}]}`
+	trip := models.Trip{ID: "trip-brief-keep", Name: "Keep", Data: &data}
+	if err := db.Create(&trip).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{DB: db}
+	act, err := BuildCandidateActivity("osm:node:9", "Café", "cafes", 46.8, -71.2, 0.4, "", "osm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, code, err := svc.RetainActivity("trip-brief-keep", "rene", act); err != nil || code != http.StatusOK {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	var after models.Trip
+	if err := db.First(&after, "id = ?", "trip-brief-keep").Error; err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(*after.Data), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw["dailyBrief"] != true {
+		t.Fatalf("dailyBrief dropped: %v", raw["dailyBrief"])
+	}
+	if raw["briefSendTime"] != "07:00" {
+		t.Fatalf("briefSendTime dropped: %v", raw["briefSendTime"])
+	}
+	if raw["whatsappGroup"] != "120363000000000001@g.us" {
+		t.Fatal("whatsappGroup dropped")
+	}
+}

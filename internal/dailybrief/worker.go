@@ -24,6 +24,8 @@ type Worker struct {
 	Service *Service
 	every   time.Duration
 	nowFn   func() time.Time // tests
+	// sendFn, when set, replaces Service.GenerateAndSend (unit tests: no Bifrost/LLM).
+	sendFn func(tripID string, dayNumber int) (*SendResult, error)
 }
 
 // WorkerEnabled reports whether the morning WhatsApp auto-send should run.
@@ -71,9 +73,15 @@ func (w *Worker) tick() {
 	if !WorkerEnabled() {
 		return
 	}
-	cfg := w.Service.cfg()
-	globalHour, globalMin := cfg.SendHourMinute()
-	nowUTC := w.nowFn().UTC()
+	globalHour, globalMin := 8, 0
+	if w.Service != nil {
+		globalHour, globalMin = w.Service.cfg().SendHourMinute()
+	}
+	nowFn := w.nowFn
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	nowUTC := nowFn().UTC()
 
 	var trips []models.Trip
 	if err := w.DB.Find(&trips).Error; err != nil {
@@ -125,7 +133,7 @@ func (w *Worker) tick() {
 			}
 			log.Printf("dailybrief: due %s day=%d tz=%s target=%02d:%02d local=%s now=%s",
 				trip.ID, dayNumber, tzName, wantHour, wantMin, dateStr, localNow.Format("15:04"))
-			res, err := w.Service.GenerateAndSend(trip.ID, dayNumber, false)
+			res, err := w.send(trip.ID, dayNumber)
 			if err != nil {
 				log.Printf("dailybrief: fail %s day=%d tz=%s: %v", trip.ID, dayNumber, tzName, err)
 				continue
@@ -142,6 +150,16 @@ func (w *Worker) tick() {
 			}
 		}
 	}
+}
+
+func (w *Worker) send(tripID string, dayNumber int) (*SendResult, error) {
+	if w.sendFn != nil {
+		return w.sendFn(tripID, dayNumber)
+	}
+	if w.Service == nil {
+		return nil, fmt.Errorf("dailybrief: service not configured")
+	}
+	return w.Service.GenerateAndSend(tripID, dayNumber, false)
 }
 
 // dueForSend reports whether localNow is at or after wantHour:wantMin on this civil day.
