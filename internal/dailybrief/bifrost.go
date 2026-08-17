@@ -77,6 +77,7 @@ SECTIONS OPTIONNELLES (si présentes dans les données) :
 - Autres tips[] (photo, plan B, timing, food, transport, budget, famille, sécurité) : 0 à 5, seulement ceux fournis, une ligne chacun
 - Ne crée PAS de tip « famille / parc / enfants » si hasKids=false
 - Ne force PAS de tip route si travelDay=false
+- Si routeOrder.paragraph est fourni : copie ce paragraphe TEL QUEL (🗺️ *Ordre des étapes*). Ne recalcule pas les km, ne change pas « optimal / pas optimal ». Place-le après le programme / horaires, avant ⭐ *À savoir*.
 - Si prep.mode=depart : ajoute une section courte ✅ *Dernier check listes* (progression + 3–5 priorityOpen / lastCheck). Mentionne prep.visibilityNote en une ligne (tu ne vois pas les valises perso / coches locales).`
 
 const correctSystemPrompt = formatSystemPrompt + `
@@ -249,20 +250,20 @@ func (c *BifrostClient) CurateActualites(data *DayBriefData, candidates []Actual
 		return nil, nil
 	}
 	ctx := map[string]any{
-		"placeName":           data.PlaceName,
-		"locationId":          data.LocationID,
-		"weekday":             data.Weekday,
-		"date":                data.Date,
-		"placeStayFrom":       data.PlaceStayFrom,
-		"placeStayFromTime":   data.PlaceStayFromTime,
-		"placeStayTo":         data.PlaceStayTo,
-		"placeStayToTime":     data.PlaceStayToTime,
-		"actuFocus":           data.ActuFocus,
-		"travelDay":           data.TravelDay,
-		"hasKids":             data.HasKids,
-		"weather":             data.Weather,
-		"highlights":          data.Highlights,
-		"candidates":          candidates,
+		"placeName":         data.PlaceName,
+		"locationId":        data.LocationID,
+		"weekday":           data.Weekday,
+		"date":              data.Date,
+		"placeStayFrom":     data.PlaceStayFrom,
+		"placeStayFromTime": data.PlaceStayFromTime,
+		"placeStayTo":       data.PlaceStayTo,
+		"placeStayToTime":   data.PlaceStayToTime,
+		"actuFocus":         data.ActuFocus,
+		"travelDay":         data.TravelDay,
+		"hasKids":           data.HasKids,
+		"weather":           data.Weather,
+		"highlights":        data.Highlights,
+		"candidates":        candidates,
 	}
 	payload, err := json.Marshal(ctx)
 	if err != nil {
@@ -348,10 +349,10 @@ func (c *BifrostClient) GenerateCultureExpress(data *DayBriefData, usedTexts []s
 		label = strings.TrimSpace(data.Label)
 	}
 	ctx := map[string]any{
-		"placeName": place,
-		"label":     label,
-		"travelDay": data != nil && data.TravelDay,
-		"hasKids":   data != nil && data.HasKids,
+		"placeName":   place,
+		"label":       label,
+		"travelDay":   data != nil && data.TravelDay,
+		"hasKids":     data != nil && data.HasKids,
 		"alreadySent": usedTexts,
 	}
 	payload, err := json.Marshal(ctx)

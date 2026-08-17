@@ -54,6 +54,7 @@ var (
 	reDernierCheck = regexp.MustCompile(`(?i)dernier check|✅|\bcheck\b`)
 	reTelecharg    = regexp.MustCompile(`(?i)télécharg|telecharg|hors-ligne|hors ligne|📥|préparer|preparer`)
 	reVisibility   = regexp.MustCompile(`(?i)ne (vois|voit) pas|je ne sais pas|j['’]espère|perso|locales?`)
+	reOrdreEtapes  = regexp.MustCompile(`(?i)ordre des [eé]tapes|🗺️`)
 )
 
 // RunQA validates Bifrost text against source data (deterministic).
@@ -161,6 +162,27 @@ func RunQA(text string, src *DayBriefData) QAResult {
 			if !rePratique.MatchString(text) {
 				res.Completeness = append(res.Completeness, "section Astuce pratique missing")
 				res.Verdict = QAFailed
+			}
+		}
+		if src.RouteOrder != nil && strings.TrimSpace(src.RouteOrder.Paragraph) != "" {
+			if !reOrdreEtapes.MatchString(text) {
+				res.Completeness = append(res.Completeness, "section Ordre des étapes missing")
+				if res.Verdict == QAPassed {
+					res.Verdict = QAWarning
+				}
+			} else if src.RouteOrder.Optimal {
+				low := strings.ToLower(text)
+				if !strings.Contains(low, "optimal") {
+					res.Completeness = append(res.Completeness, "ordre des étapes: optimal not stated")
+					if res.Verdict == QAPassed {
+						res.Verdict = QAWarning
+					}
+				}
+			} else if !strings.Contains(strings.ToLower(text), "pas optimal") && !strings.Contains(strings.ToLower(text), "détour") {
+				res.Completeness = append(res.Completeness, "ordre des étapes: detour not stated")
+				if res.Verdict == QAPassed {
+					res.Verdict = QAWarning
+				}
 			}
 		}
 		if src.HasKids == false && (strings.Contains(strings.ToLower(text), "aire de jeu") || strings.Contains(strings.ToLower(text), "avec enfants")) {
