@@ -19,46 +19,48 @@ type ExtractOpts struct {
 
 // DayBriefData is the structured extract (+ enrich fields) fed to Bifrost + QA.
 type DayBriefData struct {
-	TripID        string           `json:"tripId"`
-	TripName      string           `json:"tripName"`
-	DayNumber     int              `json:"dayNumber"`
-	Date          string           `json:"date"`
-	Weekday       string           `json:"weekday"`
-	Label         string           `json:"label,omitempty"`
-	PlaceName     string           `json:"placeName,omitempty"`
-	From          string           `json:"from,omitempty"`
-	To            string           `json:"to,omitempty"`
-	Dist          string           `json:"dist,omitempty"`
-	Hotel         map[string]any   `json:"hotel,omitempty"`
-	Restaurant    map[string]any   `json:"restaurant,omitempty"`
-	Timeline      []map[string]any `json:"timeline,omitempty"`
-	Highlights    []string         `json:"highlights,omitempty"`
-	PlaceFacts    []string         `json:"placeFacts,omitempty"`
+	TripID     string           `json:"tripId"`
+	TripName   string           `json:"tripName"`
+	DayNumber  int              `json:"dayNumber"`
+	Date       string           `json:"date"`
+	Weekday    string           `json:"weekday"`
+	Label      string           `json:"label,omitempty"`
+	PlaceName  string           `json:"placeName,omitempty"`
+	From       string           `json:"from,omitempty"`
+	To         string           `json:"to,omitempty"`
+	Dist       string           `json:"dist,omitempty"`
+	Hotel      map[string]any   `json:"hotel,omitempty"`
+	Restaurant map[string]any   `json:"restaurant,omitempty"`
+	Timeline   []map[string]any `json:"timeline,omitempty"`
+	Highlights []string         `json:"highlights,omitempty"`
+	PlaceFacts []string         `json:"placeFacts,omitempty"`
 	// PlaceFactsBySegment is filled on travel days: depart / route / arrive.
 	PlaceFactsBySegment map[string][]string `json:"placeFactsBySegment,omitempty"`
-	Actualites    []ActualiteItem  `json:"actualites,omitempty"`
-	CultureExpress *Tip            `json:"cultureExpress,omitempty"`
-	PracticalTip   *Tip            `json:"practicalTip,omitempty"` // mandatory 1-liner
-	Tips           []Tip           `json:"tips,omitempty"`         // 0–5 extras pertinents ce jour
-	HasKids        bool            `json:"hasKids,omitempty"`
-	TravelDay      bool            `json:"travelDay,omitempty"` // on roule / transfert
-	MapURL         string          `json:"mapUrl,omitempty"`
-	Duration       string          `json:"duration,omitempty"`
-	Alerts         []string        `json:"alerts,omitempty"`
-	WhatsAppGroup  string          `json:"whatsappGroup,omitempty"`
-	Weather        map[string]any  `json:"weather,omitempty"`
-	DressCode      string          `json:"dressCode,omitempty"`
-	DynamicAlerts  []string        `json:"dynamicAlerts,omitempty"`
-	Timezone       string          `json:"timezone,omitempty"`
+	Actualites          []ActualiteItem     `json:"actualites,omitempty"`
+	CultureExpress      *Tip                `json:"cultureExpress,omitempty"`
+	PracticalTip        *Tip                `json:"practicalTip,omitempty"` // mandatory 1-liner
+	Tips                []Tip               `json:"tips,omitempty"`         // 0–5 extras pertinents ce jour
+	HasKids             bool                `json:"hasKids,omitempty"`
+	TravelDay           bool                `json:"travelDay,omitempty"` // on roule / transfert
+	MapURL              string              `json:"mapUrl,omitempty"`
+	Duration            string              `json:"duration,omitempty"`
+	Alerts              []string            `json:"alerts,omitempty"`
+	WhatsAppGroup       string              `json:"whatsappGroup,omitempty"`
+	Weather             map[string]any      `json:"weather,omitempty"`
+	DressCode           string              `json:"dressCode,omitempty"`
+	DynamicAlerts       []string            `json:"dynamicAlerts,omitempty"`
+	Timezone            string              `json:"timezone,omitempty"`
 	// Place stay = physical presence in the Actualité city (half-days from timeline).
-	LocationID       string `json:"locationId,omitempty"`
-	PlaceStayFrom    string `json:"placeStayFrom,omitempty"`    // YYYY-MM-DD
+	LocationID        string `json:"locationId,omitempty"`
+	PlaceStayFrom     string `json:"placeStayFrom,omitempty"`     // YYYY-MM-DD
 	PlaceStayFromTime string `json:"placeStayFromTime,omitempty"` // HH:MM
-	PlaceStayTo      string `json:"placeStayTo,omitempty"`
-	PlaceStayToTime  string `json:"placeStayToTime,omitempty"`
-	ActuFocus        string `json:"actuFocus,omitempty"` // on_site | arrival
+	PlaceStayTo       string `json:"placeStayTo,omitempty"`
+	PlaceStayToTime   string `json:"placeStayToTime,omitempty"`
+	ActuFocus         string `json:"actuFocus,omitempty"` // on_site | arrival
 	// Prep = veille (day 0) or départ last-check (day 1). Built in pipeline.
 	Prep *PrepContext `json:"prep,omitempty"`
+	// RouteOrder = seed-qa geo_backtracking (Kiro): ordre des étapes vs nearest-neighbour.
+	RouteOrder *RouteOrder `json:"routeOrder,omitempty"`
 }
 
 // ActualiteItem is a traveler news item (actionable: detail + link when available).
@@ -207,6 +209,7 @@ func ExtractDayOpts(db *gorm.DB, tripID string, dayNumber int, opts ExtractOpts)
 	}
 
 	out.Timeline = timelineEntries(dayData["timeline"])
+	out.RouteOrder = AssessTimelineOrder(out.Timeline)
 	out.Highlights = stringList(dayData["highlights"])
 	out.MapURL = firstString(dayData, "mapUrl", "routeUrl")
 	out.Duration = firstString(dayData, "dur", "duration")
@@ -389,6 +392,15 @@ func timelineEntries(v any) []map[string]any {
 		}
 		if typ, ok := m["type"].(string); ok {
 			entry["type"] = typ
+		}
+		if p := firstString(m, "place"); p != "" {
+			entry["place"] = p
+		}
+		if lat, ok := asFloat(m["lat"]); ok {
+			entry["lat"] = lat
+		}
+		if lon, ok := asFloat(m["lon"]); ok {
+			entry["lon"] = lon
 		}
 		if len(entry) > 0 {
 			out = append(out, entry)
