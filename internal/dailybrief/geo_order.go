@@ -7,11 +7,10 @@ import (
 )
 
 // Port of tripkit-seeds seed-qa.py §10 geo_backtracking (Kiro, 2026-08-17 bba1f01).
-// Haversine + nearest-neighbour (origin = first point). Warn if > 30% detour
-// and actual distance ≥ 5 km (skip pedestrian days).
+// Haversine + nearest-neighbour (origin = first point). Warn if > 30% detour.
+// Pedestrian days are included (no 5 km floor).
 const (
 	geoBacktrackThreshold = 1.30
-	geoBacktrackMinKm     = 5.0
 	geoEarthRadiusKm      = 6371.0
 )
 
@@ -115,9 +114,6 @@ func AssessTimelineOrder(timeline []map[string]any) *RouteOrder {
 	actual := geoTotalDistance(stops)
 	optimal, order := geoNearestNeighbour(stops)
 	if optimal < 0.5 {
-		return nil
-	}
-	if actual < geoBacktrackMinKm {
 		return nil
 	}
 	ratio := actual / optimal
