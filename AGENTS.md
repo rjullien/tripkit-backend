@@ -1,5 +1,13 @@
 # AGENTS.md — tripkit-backend
 
+## Services centralisés
+
+**Référence : [`../tripkit/SERVICES.md`](https://github.com/rjullien/tripkit/blob/main/SERVICES.md)**
+
+Avant d'ajouter un appel HTTP vers un service externe (météo, WhatsApp, LLM,
+géocodage, Overpass), vérifier qu'un service centralisé existe déjà dans le
+backend. Ne jamais dupliquer — injecter via `cmd/api/main.go`.
+
 ## LLM / Safari
 
 Toute action UI qui appelle un LLM (Léo, Discovery, Polarsteps, Construction)
