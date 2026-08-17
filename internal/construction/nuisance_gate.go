@@ -15,6 +15,7 @@ type nuisanceVerdict struct {
 	LocationName string `json:"locationName"`
 	Verdict      string `json:"verdict"`
 	Partial      bool   `json:"partial"`
+	Accepted     bool   `json:"accepted"`
 }
 
 // NuisanceBlockers turns stored nuisance results into QA violations, per
@@ -34,6 +35,10 @@ func NuisanceBlockers(verdicts []nuisanceVerdict, targetPhase int) []QAViolation
 		if name == "" {
 			name = v.LocationID
 		}
+		// An accepted verdict no longer blocks.
+		if v.Accepted {
+			continue
+		}
 		switch v.Verdict {
 		case "ELEVE":
 			severity := "yellow"
@@ -44,14 +49,14 @@ func NuisanceBlockers(verdicts []nuisanceVerdict, targetPhase int) []QAViolation
 				Code:     "nuisance_unresolved",
 				Severity: severity,
 				Message:  "Nuisances élevées non traitées : " + name,
-				Detail:   "Change de lieu, ou épingle le résultat dans le seed pour acter le choix.",
+				Detail:   "Acceptez le risque dans l'onglet Résa (carte hôtel) ou changez d'hébergement.",
 			})
 		case "INDETERMINE":
 			out = append(out, QAViolation{
 				Code:     "nuisance_indeterminate",
 				Severity: "yellow",
 				Message:  "Analyse de nuisances incomplète : " + name,
-				Detail:   "Au moins une catégorie n'a pas pu être évaluée. Relance l'analyse.",
+				Detail:   "Au moins une catégorie n'a pas pu être évaluée. Rafraîchissez l'analyse (bouton Rafraîchir).",
 			})
 		default:
 			if v.Partial {
@@ -59,7 +64,7 @@ func NuisanceBlockers(verdicts []nuisanceVerdict, targetPhase int) []QAViolation
 					Code:     "nuisance_indeterminate",
 					Severity: "yellow",
 					Message:  "Analyse de nuisances partielle : " + name,
-					Detail:   "Au moins une catégorie n'a pas pu être évaluée. Relance l'analyse.",
+					Detail:   "Au moins une catégorie n'a pas pu être évaluée. Rafraîchissez l'analyse (bouton Rafraîchir).",
 				})
 			}
 		}

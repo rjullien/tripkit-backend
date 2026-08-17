@@ -67,6 +67,11 @@ func (h hotelInfo) booked() bool { return strings.EqualFold(h.status, statusBook
 //
 // A hotel is never silently scored at the city centre. That is the false green
 // that made two hotels in Toulouse share one verdict.
+//
+// Pre-departure filtering: when all=true, locations and hotels that belong
+// exclusively to day < 1 (J-1, preparation) are excluded. They are not part
+// of the actual trip and analysing them wastes Overpass quota. An explicit
+// locationId request still overrides this filter.
 func (s *Service) resolveTargets(ctx context.Context, tripID string, ids []string, all bool) ([]target, error) {
 	var trip models.Trip
 	if err := s.DB.First(&trip, "id = ?", tripID).Error; err != nil {
@@ -84,18 +89,37 @@ func (s *Service) resolveTargets(ctx context.Context, tripID string, ids []strin
 	if locs == nil {
 		return nil, nil
 	}
+
+	// Load days from the DB table (trip.Data does not contain days in the
+	// publish path — they live in the separate Days table). Fall back to
+	// trip.Data["days"] for tests and the seed-import.js path.
+	dbDays := s.loadDaysFromDB(tripID)
+	mergedDays := mergeDays(tripData, dbDays)
+
 	hotels := extractHotelInfos(tripData)
-	dayHotelToLocation := hotelLocationLinks(tripData)
+	// Enrich hotels with addr from the Hotels DB table when trip.Data lacks it.
+	s.enrichHotelsFromDB(tripID, hotels)
+
+	dayHotelToLocation := hotelLocationLinksFromDays(mergedDays)
+
+	// Pre-departure filter: build sets of locationIds and hotelIds that appear
+	// ONLY on day < 1. Only applied when all=true.
+	preDepartureLocIDs, preDepartureHotelIDs := preDepartureOnly(mergedDays)
 
 	var out []target
 	claimed := map[string]bool{} // location ids already represented by a hotel target
 
 	// 1. One target per hotel referenced by a day, in day order.
-	for _, hotelID := range orderedHotelIDs(tripData, hotels) {
+	for _, hotelID := range orderedHotelIDsFromDays(mergedDays, hotels) {
 		h := hotels[hotelID]
 		locID := dayHotelToLocation[hotelID]
 
 		if !matchesRequest(ids, all, hotelID, locID) {
+			continue
+		}
+
+		// Skip pre-departure hotels when running all (not explicitly requested).
+		if all && preDepartureHotelIDs[hotelID] {
 			continue
 		}
 
@@ -121,6 +145,10 @@ func (s *Service) resolveTargets(ctx context.Context, tripID string, ids []strin
 	// 2. Remaining stops with no hotel target: unchanged behaviour.
 	for id, v := range locs {
 		if claimed[id] || !matchesRequest(ids, all, "", id) {
+			continue
+		}
+		// Skip pre-departure locations when running all.
+		if all && preDepartureLocIDs[id] {
 			continue
 		}
 		lat, lon, ok := locationPoint(locs, id)
@@ -357,9 +385,16 @@ func hotelStatus(hm map[string]any) string {
 
 // hotelLocationLinks maps a hotel to its stop. A hotel carries no locationId:
 // the link only exists through the day that references both.
+// Retained for backward compatibility with tests that put days in trip.Data.
 func hotelLocationLinks(tripData map[string]any) map[string]string {
+	return hotelLocationLinksFromDays(days(tripData))
+}
+
+// hotelLocationLinksFromDays builds the hotel→location mapping from a slice of
+// day maps (sourced from the DB or from trip.Data["days"]).
+func hotelLocationLinksFromDays(daySlice []map[string]any) map[string]string {
 	out := map[string]string{}
-	for _, d := range days(tripData) {
+	for _, d := range daySlice {
 		hotelID := str(d["hotelId"])
 		if hotelID == "" {
 			continue
@@ -376,10 +411,17 @@ func hotelLocationLinks(tripData map[string]any) map[string]string {
 
 // orderedHotelIDs lists hotels in day order (stable output, stable progress
 // frames), then any hotel no day references.
+// Retained for backward compatibility with tests that put days in trip.Data.
 func orderedHotelIDs(tripData map[string]any, hotels map[string]hotelInfo) []string {
+	return orderedHotelIDsFromDays(days(tripData), hotels)
+}
+
+// orderedHotelIDsFromDays lists hotels in day order from a merged day slice,
+// then any hotel no day references (orphans).
+func orderedHotelIDsFromDays(daySlice []map[string]any, hotels map[string]hotelInfo) []string {
 	var out []string
 	seen := map[string]bool{}
-	for _, d := range days(tripData) {
+	for _, d := range daySlice {
 		id := str(d["hotelId"])
 		if id == "" || seen[id] {
 			continue
@@ -466,6 +508,168 @@ func sortStrings(ss []string) {
 	for i := 1; i < len(ss); i++ {
 		for j := i; j > 0 && ss[j] < ss[j-1]; j-- {
 			ss[j], ss[j-1] = ss[j-1], ss[j]
+		}
+	}
+}
+
+
+// ── Pre-departure filtering & DB enrichment ─────────────────────────────────
+
+// loadDaysFromDB reads the Days table for a trip and returns them as generic
+// maps (same shape as trip.Data["days"] entries). Returns nil if the query fails
+// or no rows exist — the caller falls back to trip.Data["days"].
+func (s *Service) loadDaysFromDB(tripID string) []map[string]any {
+	var rows []models.Day
+	if err := s.DB.Where("trip_id = ?", tripID).Order("day_num").Find(&rows).Error; err != nil {
+		return nil
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(rows))
+	for _, r := range rows {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(r.Data), &m); err != nil {
+			continue
+		}
+		// Ensure "day" key is present (some stores omit it from the JSON).
+		if _, ok := m["day"]; !ok {
+			m["day"] = float64(r.DayNum)
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// mergeDays prefers DB days when available, otherwise falls back to
+// trip.Data["days"] (tests put everything in trip.Data).
+func mergeDays(tripData map[string]any, dbDays []map[string]any) []map[string]any {
+	if len(dbDays) > 0 {
+		return dbDays
+	}
+	return days(tripData)
+}
+
+// preDepartureOnly returns two sets of IDs that appear ONLY on day < 1.
+// An ID that appears on both day 0 and day 3 is NOT pre-departure-only.
+// An ID that appears on NO day at all is NOT pre-departure-only (it's an orphan).
+func preDepartureOnly(daySlice []map[string]any) (locOnly, hotelOnly map[string]bool) {
+	// Track which IDs appear at all, and which appear on a trip day.
+	locSeen := map[string]bool{}
+	hotelSeen := map[string]bool{}
+	locOnTrip := map[string]bool{}
+	hotelOnTrip := map[string]bool{}
+
+	for _, d := range daySlice {
+		dayNum := dayNumFromMap(d)
+		locID := str(d["locationId"])
+		hotelID := str(d["hotelId"])
+
+		if locID != "" {
+			locSeen[locID] = true
+			if dayNum >= 1 {
+				locOnTrip[locID] = true
+			}
+		}
+		if hotelID != "" {
+			hotelSeen[hotelID] = true
+			if dayNum >= 1 {
+				hotelOnTrip[hotelID] = true
+			}
+		}
+	}
+
+	locOnly = map[string]bool{}
+	hotelOnly = map[string]bool{}
+	for id := range locSeen {
+		if !locOnTrip[id] {
+			locOnly[id] = true
+		}
+	}
+	for id := range hotelSeen {
+		if !hotelOnTrip[id] {
+			hotelOnly[id] = true
+		}
+	}
+	return locOnly, hotelOnly
+}
+
+// dayNumFromMap extracts the day number from a day map.
+func dayNumFromMap(d map[string]any) int {
+	switch n := d["day"].(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	}
+	return 0
+}
+
+// enrichHotelsFromDB loads hotel data from the Hotels DB table and fills in
+// any missing addr or city fields. In the publish path, trip.Data.hotels has
+// the full data, but in the seed-import.js path or after certain write-back
+// operations the dict may lose fields. The Hotels table always has the full
+// seed payload.
+func (s *Service) enrichHotelsFromDB(tripID string, hotels map[string]hotelInfo) {
+	var rows []models.Hotel
+	if err := s.DB.Where("trip_id = ?", tripID).Find(&rows).Error; err != nil {
+		return
+	}
+	for _, row := range rows {
+		var hm map[string]any
+		if err := json.Unmarshal([]byte(row.Data), &hm); err != nil {
+			continue
+		}
+		hotelID := str(hm["hotelId"])
+		if hotelID == "" {
+			hotelID = str(hm["id"])
+		}
+		if hotelID == "" {
+			continue
+		}
+		h, exists := hotels[hotelID]
+		if !exists {
+			// Hotel in DB but not in trip.Data.hotels — add it.
+			h = hotelInfo{id: hotelID}
+			h.name, _ = hm["name"].(string)
+			h.addr = firstNonEmpty(str(hm["addr"]), str(hm["address"]))
+			h.city = str(hm["city"])
+			h.status = hotelStatus(hm)
+			if lat, okLat := asFloat(hm["lat"]); okLat {
+				if lon, okLon := asFloat(hm["lon"]); okLon && !(lat == 0 && lon == 0) {
+					h.lat, h.lon, h.hasGeo = lat, lon, true
+				}
+			}
+			if nums, ok := hm["dayNums"].([]any); ok {
+				for _, n := range nums {
+					if f, ok := asFloat(n); ok {
+						h.dayNums = append(h.dayNums, int(f))
+					}
+				}
+			}
+			hotels[hotelID] = h
+			continue
+		}
+		// Enrich missing fields from DB row.
+		if strings.TrimSpace(h.addr) == "" {
+			if addr := firstNonEmpty(str(hm["addr"]), str(hm["address"])); addr != "" {
+				h.addr = addr
+				hotels[hotelID] = h
+			}
+		}
+		if strings.TrimSpace(h.city) == "" {
+			if city := str(hm["city"]); city != "" {
+				h.city = city
+				hotels[hotelID] = h
+			}
+		}
+		if !h.hasGeo {
+			if lat, okLat := asFloat(hm["lat"]); okLat {
+				if lon, okLon := asFloat(hm["lon"]); okLon && !(lat == 0 && lon == 0) {
+					h.lat, h.lon, h.hasGeo = lat, lon, true
+					hotels[hotelID] = h
+				}
+			}
 		}
 	}
 }
