@@ -53,12 +53,17 @@ func ApplyCanonical(db *gorm.DB, p CanonicalPayload, ownerLogins []string) (Appl
 		// Runtime construction (PUT /construction/phase, lastQA) must survive
 		// publish. Québec's seed ships construction.phase=5 (Live); blindly
 		// applying that blob used to rewind a phase the user had just set.
-		if !created && existing.Data != nil && *existing.Data != "" {
+		if !created {
 			if p.TripData == nil {
 				p.TripData = map[string]any{}
 			}
-			p.TripData["construction"] = mergeRuntimeConstruction(*existing.Data, p.TripData["construction"])
-			MergeRuntimeDailyBrief(p.TripData, *existing.Data)
+			if existing.Data != nil && *existing.Data != "" {
+				p.TripData["construction"] = mergeRuntimeConstruction(*existing.Data, p.TripData["construction"])
+				MergeRuntimeDailyBrief(p.TripData, *existing.Data)
+			}
+			// Columns survive a JSON wipe; copy them back so the next reseed
+			// does not persist an itinerary-only blob.
+			HydrateDataFromColumns(p.TripData, existing)
 		}
 
 		dataBytes, err := json.Marshal(p.TripData)
@@ -77,6 +82,7 @@ func ApplyCanonical(db *gorm.DB, p CanonicalPayload, ownerLogins []string) (Appl
 				EndDate:   p.EndDate,
 				Data:      &dataStr,
 			}
+			ApplyFlagFields(&trip, p.TripData)
 			if err := tx.Create(&trip).Error; err != nil {
 				return fmt.Errorf("create trip: %w", err)
 			}
@@ -94,6 +100,9 @@ func ApplyCanonical(db *gorm.DB, p CanonicalPayload, ownerLogins []string) (Appl
 			}
 			if p.EndDate != nil {
 				updates["end_date"] = *p.EndDate
+			}
+			for k, v := range FlagColumnUpdates(p.TripData) {
+				updates[k] = v
 			}
 			if err := tx.Model(&existing).Updates(updates).Error; err != nil {
 				return fmt.Errorf("update trip: %w", err)
@@ -362,6 +371,74 @@ func dailyBriefFlagEmpty(v any) bool {
 	}
 	s, ok := v.(string)
 	return ok && strings.TrimSpace(s) == ""
+}
+
+// FlagColumnUpdates returns GORM column writes for auto-send flags present in
+// data. Omitted keys are absent so a whitelist PUT cannot clear the columns.
+func FlagColumnUpdates(data map[string]any) map[string]any {
+	if data == nil {
+		return nil
+	}
+	out := map[string]any{}
+	if v, ok := data["dailyBrief"].(bool); ok {
+		out["daily_brief"] = v
+	}
+	if s, ok := data["whatsappGroup"].(string); ok && strings.TrimSpace(s) != "" {
+		out["whatsapp_group"] = strings.TrimSpace(s)
+	}
+	if s, ok := data["briefSendTime"].(string); ok && strings.TrimSpace(s) != "" {
+		out["brief_send_time"] = strings.TrimSpace(s)
+	}
+	if s, ok := data["homeTz"].(string); ok && strings.TrimSpace(s) != "" {
+		out["home_tz"] = strings.TrimSpace(s)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// ApplyFlagFields sets pointer columns on trip from data (Create path).
+func ApplyFlagFields(trip *models.Trip, data map[string]any) {
+	if trip == nil || data == nil {
+		return
+	}
+	if v, ok := data["dailyBrief"].(bool); ok {
+		b := v
+		trip.DailyBrief = &b
+	}
+	if s, ok := data["whatsappGroup"].(string); ok && strings.TrimSpace(s) != "" {
+		g := strings.TrimSpace(s)
+		trip.WhatsappGroup = &g
+	}
+	if s, ok := data["briefSendTime"].(string); ok && strings.TrimSpace(s) != "" {
+		t := strings.TrimSpace(s)
+		trip.BriefSendTime = &t
+	}
+	if s, ok := data["homeTz"].(string); ok && strings.TrimSpace(s) != "" {
+		tz := strings.TrimSpace(s)
+		trip.HomeTz = &tz
+	}
+}
+
+// HydrateDataFromColumns copies column flags into trip.data when the JSON
+// blob omitted them (GET / seed-import keepRuntimeFlags).
+func HydrateDataFromColumns(data map[string]any, trip models.Trip) {
+	if data == nil {
+		return
+	}
+	if dailyBriefFlagEmpty(data["dailyBrief"]) && trip.DailyBrief != nil {
+		data["dailyBrief"] = *trip.DailyBrief
+	}
+	if dailyBriefFlagEmpty(data["whatsappGroup"]) && trip.WhatsappGroup != nil && strings.TrimSpace(*trip.WhatsappGroup) != "" {
+		data["whatsappGroup"] = *trip.WhatsappGroup
+	}
+	if dailyBriefFlagEmpty(data["briefSendTime"]) && trip.BriefSendTime != nil && strings.TrimSpace(*trip.BriefSendTime) != "" {
+		data["briefSendTime"] = *trip.BriefSendTime
+	}
+	if dailyBriefFlagEmpty(data["homeTz"]) && trip.HomeTz != nil && strings.TrimSpace(*trip.HomeTz) != "" {
+		data["homeTz"] = *trip.HomeTz
+	}
 }
 
 // mergeRuntimeConstruction keeps the phase / lastQA written via the Construction

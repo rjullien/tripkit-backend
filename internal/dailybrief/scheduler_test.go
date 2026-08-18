@@ -97,4 +97,11 @@ func TestTripFlags_WorkerSkipsUnlessEnabledAndGroup(t *testing.T) {
 	if en || g != "" {
 		t.Fatalf("stripped payload must disable worker, got enabled=%v group=%q", en, g)
 	}
+
+	on := true
+	group := "120363000000000001@g.us"
+	en, g = TripFlags(models.Trip{Data: &stripped, DailyBrief: &on, WhatsappGroup: &group})
+	if !en || g != group {
+		t.Fatalf("columns must keep auto-send after JSON wipe, got enabled=%v group=%q", en, g)
+	}
 }

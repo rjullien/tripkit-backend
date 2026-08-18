@@ -1,6 +1,7 @@
 package dailybrief
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rjullien/tripkit-backend/internal/models"
+	"github.com/rjullien/tripkit-backend/internal/publish"
 	"gorm.io/gorm"
 )
 
@@ -60,6 +62,10 @@ func (w *Worker) Start() {
 		w.nowFn = time.Now
 	}
 	go func() {
+		n := BackfillFlagColumns(w.DB)
+		if n > 0 {
+			log.Printf("dailybrief: backfilled auto-send columns on %d trip(s)", n)
+		}
 		log.Printf("dailybrief: worker started (tick=%s, same-day catch-up, in-process — not k8s CronJob)", w.every)
 		w.tick() // catch up immediately after restart; ticker waits `every` before first fire
 		t := time.NewTicker(w.every)
@@ -236,5 +242,51 @@ func logFlagSkip(tripID string) {
 		}
 	}
 	flagSkipLog.Store(tripID, now)
-	log.Printf("dailybrief: skip %s — dailyBrief/whatsappGroup missing from trip.data (PUT overwrite?)", tripID)
+	log.Printf("dailybrief: skip %s — dailyBrief/whatsappGroup missing (columns and trip.data)", tripID)
+}
+
+// BackfillFlagColumns copies dailyBrief flags from trip.data JSON into columns
+// when the columns are still NULL (post-migrate). Safe to run on every Start.
+func BackfillFlagColumns(db *gorm.DB) int {
+	if db == nil {
+		return 0
+	}
+	var trips []models.Trip
+	if err := db.Find(&trips).Error; err != nil {
+		return 0
+	}
+	n := 0
+	for _, trip := range trips {
+		if trip.DailyBrief != nil && trip.WhatsappGroup != nil && trip.BriefSendTime != nil && trip.HomeTz != nil {
+			continue
+		}
+		data := map[string]any{}
+		if trip.Data != nil && *trip.Data != "" {
+			_ = json.Unmarshal([]byte(*trip.Data), &data)
+		}
+		upd := publish.FlagColumnUpdates(data)
+		if upd == nil {
+			continue
+		}
+		if trip.DailyBrief != nil {
+			delete(upd, "daily_brief")
+		}
+		if trip.WhatsappGroup != nil {
+			delete(upd, "whatsapp_group")
+		}
+		if trip.BriefSendTime != nil {
+			delete(upd, "brief_send_time")
+		}
+		if trip.HomeTz != nil {
+			delete(upd, "home_tz")
+		}
+		if len(upd) == 0 {
+			continue
+		}
+		if err := db.Model(&trip).Updates(upd).Error; err != nil {
+			continue
+		}
+		n++
+	}
+	return n
 }

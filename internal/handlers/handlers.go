@@ -172,13 +172,22 @@ func asStringMap(v any) (map[string]any, error) {
 }
 
 func tripResponse(t models.Trip, daysCount *int64) map[string]any {
+	data := parseJSONRaw(t.Data)
+	if m, ok := data.(map[string]any); ok {
+		publish.HydrateDataFromColumns(m, t)
+		data = m
+	} else if data == nil && (t.DailyBrief != nil || t.WhatsappGroup != nil) {
+		m := map[string]any{}
+		publish.HydrateDataFromColumns(m, t)
+		data = m
+	}
 	resp := map[string]any{
 		"id":         t.ID,
 		"name":       t.Name,
 		"emoji":      t.Emoji,
 		"start_date": t.StartDate,
 		"end_date":   t.EndDate,
-		"data":       parseJSONRaw(t.Data),
+		"data":       data,
 		"created_at": t.CreatedAt.Format(time.RFC3339),
 		"updated_at": t.UpdatedAt.Format(time.RFC3339),
 	}
@@ -324,7 +333,9 @@ func (h *Handler) CreateTrip(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var dataStr *string
+	var dataMap map[string]any
 	if body.Data != nil {
+		dataMap, _ = asStringMap(body.Data)
 		b, _ := json.Marshal(body.Data)
 		s := string(b)
 		dataStr = &s
@@ -338,6 +349,7 @@ func (h *Handler) CreateTrip(w http.ResponseWriter, r *http.Request) {
 		EndDate:   body.EndDate,
 		Data:      dataStr,
 	}
+	publish.ApplyFlagFields(&trip, dataMap)
 	if err := h.db.Create(&trip).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to create trip")
 		return
@@ -411,12 +423,16 @@ func (h *Handler) UpdateTrip(w http.ResponseWriter, r *http.Request) {
 		if trip.Data != nil {
 			publish.MergeRuntimeDailyBrief(dst, *trip.Data)
 		}
+		publish.HydrateDataFromColumns(dst, trip)
 		b, err := json.Marshal(dst)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "Invalid request body")
 			return
 		}
 		updates["data"] = string(b)
+		for k, v := range publish.FlagColumnUpdates(dst) {
+			updates[k] = v
+		}
 	}
 
 	if len(updates) > 0 {

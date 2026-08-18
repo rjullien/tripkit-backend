@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/rjullien/tripkit-backend/internal/models"
+	"github.com/rjullien/tripkit-backend/internal/publish"
 	"gorm.io/gorm"
 )
 
@@ -95,10 +96,9 @@ func ExtractDayOpts(db *gorm.DB, tripID string, dayNumber int, opts ExtractOpts)
 	if trip.Data != nil {
 		_ = json.Unmarshal([]byte(*trip.Data), &tripData)
 	}
+	publish.HydrateDataFromColumns(tripData, trip)
 
-	dailyBrief, _ := tripData["dailyBrief"].(bool)
-	waGroup, _ := tripData["whatsappGroup"].(string)
-	waGroup = strings.TrimSpace(waGroup)
+	dailyBrief, waGroup := TripFlags(trip)
 	if opts.RequireConfigured && (!dailyBrief || waGroup == "") {
 		return nil, fmt.Errorf("daily brief not configured for trip %s", tripID)
 	}
@@ -313,6 +313,7 @@ func DayTimezone(db *gorm.DB, trip models.Trip, dayNumber int) string {
 	if trip.Data != nil {
 		_ = json.Unmarshal([]byte(*trip.Data), &tripData)
 	}
+	publish.HydrateDataFromColumns(tripData, trip)
 	dayData := map[string]any{}
 	var day models.Day
 	lookup := dayNumber
@@ -458,23 +459,41 @@ func frenchWeekday(w time.Weekday) string {
 	}
 }
 
-// TripFlags reads dailyBrief / whatsappGroup from trip.data.
+// TripFlags reads dailyBrief / whatsappGroup.
+// Columns are the durable SoT (survive PUT/reseed that replaces trip.data).
+// JSON is the fallback for rows not yet backfilled.
 func TripFlags(trip models.Trip) (enabled bool, group string) {
+	if trip.DailyBrief != nil {
+		enabled = *trip.DailyBrief
+	}
+	if trip.WhatsappGroup != nil {
+		group = strings.TrimSpace(*trip.WhatsappGroup)
+	}
 	if trip.Data == nil {
-		return false, ""
+		return enabled, group
 	}
 	var data map[string]any
 	if err := json.Unmarshal([]byte(*trip.Data), &data); err != nil {
-		return false, ""
+		return enabled, group
 	}
-	enabled, _ = data["dailyBrief"].(bool)
-	group, _ = data["whatsappGroup"].(string)
-	return enabled, strings.TrimSpace(group)
+	if trip.DailyBrief == nil {
+		enabled, _ = data["dailyBrief"].(bool)
+	}
+	if group == "" {
+		group, _ = data["whatsappGroup"].(string)
+		group = strings.TrimSpace(group)
+	}
+	return enabled, group
 }
 
 // TripBriefSendTime reads optional seed trip.briefSendTime ("HH:MM" or "H:MM").
 // ok=false → worker must use ops/daily-brief.json sendLocalHour/Minute.
 func TripBriefSendTime(trip models.Trip) (hour, minute int, ok bool) {
+	if trip.BriefSendTime != nil {
+		if h, m, okp := ParseBriefSendTime(*trip.BriefSendTime); okp {
+			return h, m, true
+		}
+	}
 	if trip.Data == nil {
 		return 0, 0, false
 	}

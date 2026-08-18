@@ -293,6 +293,25 @@ func TestTrips_UpdateData_SeedFalseDisablesDailyBrief(t *testing.T) {
 	}
 }
 
+func TestTrips_GETHydratesFlagsFromColumnsAfterDataWipe(t *testing.T) {
+	r := setupRouter(t)
+	doReq(r, "POST", "/api/trips", map[string]any{"id": "trip-col", "name": "Québec", "data": map[string]any{
+		"dailyBrief":    true,
+		"briefSendTime": "07:00",
+		"homeTz":        "Europe/Paris",
+		"whatsappGroup": "120363000000000001@g.us",
+	}})
+	doReq(r, "PUT", "/api/trips/trip-col", map[string]any{"data": map[string]any{"hotels": map[string]any{}}})
+	body := parseResp(doReq(r, "GET", "/api/trips/trip-col", nil))
+	data := body["data"].(map[string]any)
+	if data["dailyBrief"] != true || data["whatsappGroup"] != "120363000000000001@g.us" {
+		t.Fatalf("flags must survive itinerary PUT via columns+merge: %v", data)
+	}
+	if data["briefSendTime"] != "07:00" || data["homeTz"] != "Europe/Paris" {
+		t.Fatalf("schedule/tz dropped: %v", data)
+	}
+}
+
 func TestTrips_Delete(t *testing.T) {
 	r := setupRouter(t)
 	doReq(r, "POST", "/api/trips", map[string]any{"id": "trip-del", "name": "Delete Me"})
