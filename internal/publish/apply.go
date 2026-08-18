@@ -58,7 +58,7 @@ func ApplyCanonical(db *gorm.DB, p CanonicalPayload, ownerLogins []string) (Appl
 				p.TripData = map[string]any{}
 			}
 			p.TripData["construction"] = mergeRuntimeConstruction(*existing.Data, p.TripData["construction"])
-			mergeRuntimeDailyBrief(p.TripData, *existing.Data)
+			MergeRuntimeDailyBrief(p.TripData, *existing.Data)
 		}
 
 		dataBytes, err := json.Marshal(p.TripData)
@@ -334,10 +334,11 @@ func mergeMembers(fromSeed, owners []string) []string {
 	return out
 }
 
-// mergeRuntimeDailyBrief keeps live auto-send flags when the incoming payload
+// MergeRuntimeDailyBrief keeps live auto-send flags when the incoming payload
 // omits them (nil / ""). Seed values always win when present — including
 // dailyBrief=false, which turns the worker off on purpose.
-func mergeRuntimeDailyBrief(dst map[string]any, existingJSON string) {
+// Used by GitHub publish AND PUT /trips/:id (seed-import sends a whitelist).
+func MergeRuntimeDailyBrief(dst map[string]any, existingJSON string) {
 	if dst == nil || existingJSON == "" {
 		return
 	}

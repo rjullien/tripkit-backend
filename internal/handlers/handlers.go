@@ -150,6 +150,27 @@ func parseJSONRaw(s *string) any {
 	return v
 }
 
+func asStringMap(v any) (map[string]any, error) {
+	if v == nil {
+		return map[string]any{}, nil
+	}
+	if m, ok := v.(map[string]any); ok {
+		return m, nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	if m == nil {
+		m = map[string]any{}
+	}
+	return m, nil
+}
+
 func tripResponse(t models.Trip, daysCount *int64) map[string]any {
 	resp := map[string]any{
 		"id":         t.ID,
@@ -382,7 +403,19 @@ func (h *Handler) UpdateTrip(w http.ResponseWriter, r *http.Request) {
 		updates["end_date"] = *body.EndDate
 	}
 	if body.Data != nil {
-		b, _ := json.Marshal(body.Data)
+		dst, err := asStringMap(body.Data)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+		if trip.Data != nil {
+			publish.MergeRuntimeDailyBrief(dst, *trip.Data)
+		}
+		b, err := json.Marshal(dst)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
 		updates["data"] = string(b)
 	}
 

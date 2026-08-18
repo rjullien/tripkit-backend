@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rjullien/tripkit-backend/internal/models"
@@ -88,14 +89,6 @@ func (w *Worker) tick() {
 		return
 	}
 	for _, trip := range trips {
-		enabled, group := TripFlags(trip)
-		if !enabled || group == "" {
-			continue
-		}
-		wantHour, wantMin := globalHour, globalMin
-		if h, m, ok := TripBriefSendTime(trip); ok {
-			wantHour, wantMin = h, m
-		}
 		if trip.StartDate == nil || trip.EndDate == nil {
 			continue
 		}
@@ -103,6 +96,17 @@ func (w *Worker) tick() {
 		end, err2 := time.Parse("2006-01-02", *trip.EndDate)
 		if err1 != nil || err2 != nil {
 			continue
+		}
+		enabled, group := TripFlags(trip)
+		if !enabled || group == "" {
+			if !nowUTC.Before(start.UTC().AddDate(0, 0, -2)) && !nowUTC.After(end.UTC().AddDate(0, 0, 2)) {
+				logFlagSkip(trip.ID)
+			}
+			continue
+		}
+		wantHour, wantMin := globalHour, globalMin
+		if h, m, ok := TripBriefSendTime(trip); ok {
+			wantHour, wantMin = h, m
 		}
 
 		// Scan day numbers that could be "today" in some TZ (±1 day cushion).
@@ -220,4 +224,17 @@ func parseCronHM(expr string) (min, hour int) {
 		return m, h
 	}
 	return
+}
+
+var flagSkipLog sync.Map // tripID -> time.Time
+
+func logFlagSkip(tripID string) {
+	now := time.Now()
+	if v, ok := flagSkipLog.Load(tripID); ok {
+		if now.Sub(v.(time.Time)) < 15*time.Minute {
+			return
+		}
+	}
+	flagSkipLog.Store(tripID, now)
+	log.Printf("dailybrief: skip %s — dailyBrief/whatsappGroup missing from trip.data (PUT overwrite?)", tripID)
 }
