@@ -81,7 +81,6 @@ func doReqAs(r *chi.Mux, method, url string, body any, user string) *httptest.Re
 	return w
 }
 
-
 func parseResp(w *httptest.ResponseRecorder) map[string]any {
 	var m map[string]any
 	json.Unmarshal(w.Body.Bytes(), &m)
@@ -238,6 +237,59 @@ func TestTrips_UpdateData(t *testing.T) {
 	data := body["data"].(map[string]any)
 	if travelers := data["travelers"].([]any); len(travelers) != 2 {
 		t.Errorf("expected 2 travelers, got %d", len(travelers))
+	}
+}
+
+func TestTrips_UpdateData_KeepsDailyBriefFlags(t *testing.T) {
+	r := setupRouter(t)
+	doReq(r, "POST", "/api/trips", map[string]any{"id": "trip-brief", "name": "Québec"})
+	doReq(r, "PUT", "/api/trips/trip-brief", map[string]any{"data": map[string]any{
+		"dailyBrief":    true,
+		"briefSendTime": "07:00",
+		"homeTz":        "Europe/Paris",
+		"whatsappGroup": "120363000000000001@g.us",
+		"hotels":        map[string]any{},
+	}})
+	// seed-import / itinerary-only PUT used to wipe auto-send flags.
+	doReq(r, "PUT", "/api/trips/trip-brief", map[string]any{"data": map[string]any{
+		"hotels":    map[string]any{"a": map[string]any{"name": "Auberge"}},
+		"locations": map[string]any{"quebec": map[string]any{"tz": "America/Toronto"}},
+	}})
+	body := parseResp(doReq(r, "GET", "/api/trips/trip-brief", nil))
+	data := body["data"].(map[string]any)
+	if data["dailyBrief"] != true {
+		t.Fatalf("dailyBrief dropped: %v", data["dailyBrief"])
+	}
+	if data["briefSendTime"] != "07:00" {
+		t.Fatalf("briefSendTime dropped: %v", data["briefSendTime"])
+	}
+	if data["homeTz"] != "Europe/Paris" {
+		t.Fatalf("homeTz dropped: %v", data["homeTz"])
+	}
+	if data["whatsappGroup"] != "120363000000000001@g.us" {
+		t.Fatal("whatsappGroup dropped")
+	}
+	hotels, _ := data["hotels"].(map[string]any)
+	if _, ok := hotels["a"]; !ok {
+		t.Fatalf("itinerary hotels not stored: %v", data["hotels"])
+	}
+}
+
+func TestTrips_UpdateData_SeedFalseDisablesDailyBrief(t *testing.T) {
+	r := setupRouter(t)
+	doReq(r, "POST", "/api/trips", map[string]any{"id": "trip-off", "name": "Off"})
+	doReq(r, "PUT", "/api/trips/trip-off", map[string]any{"data": map[string]any{
+		"dailyBrief":    true,
+		"whatsappGroup": "120363000000000001@g.us",
+	}})
+	doReq(r, "PUT", "/api/trips/trip-off", map[string]any{"data": map[string]any{
+		"dailyBrief":    false,
+		"whatsappGroup": "120363000000000001@g.us",
+	}})
+	body := parseResp(doReq(r, "GET", "/api/trips/trip-off", nil))
+	data := body["data"].(map[string]any)
+	if data["dailyBrief"] != false {
+		t.Fatalf("explicit false must win, got %v", data["dailyBrief"])
 	}
 }
 
