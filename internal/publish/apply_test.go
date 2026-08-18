@@ -471,6 +471,52 @@ func TestApplyCanonical_KeepsLiveDailyBriefWhenSeedOmits(t *testing.T) {
 	}
 }
 
+func TestApplyCanonical_RestoresFlagsFromColumnsWhenJSONStripped(t *testing.T) {
+	db, err := database.InitMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, end := "2026-08-14", "2026-09-01"
+	stripped := `{"hotels":{},"locations":{}}`
+	on := true
+	group := "120363000000000001@g.us"
+	sendAt := "07:00"
+	home := "Europe/Paris"
+	if err := db.Create(&models.Trip{
+		ID: "brief-cols-2026", Name: "Boucle",
+		StartDate: &start, EndDate: &end, Data: &stripped,
+		DailyBrief: &on, WhatsappGroup: &group, BriefSendTime: &sendAt, HomeTz: &home,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	payload := publish.CanonicalPayload{
+		TripID:   "brief-cols-2026",
+		Name:     "Boucle",
+		TripData: map[string]any{"hotels": map[string]any{}},
+		Days:     []map[string]any{{"day": 1, "title": "A"}},
+	}
+	if _, err := publish.ApplyCanonical(db, payload, []string{"rene"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var trip models.Trip
+	if err := db.First(&trip, "id = ?", "brief-cols-2026").Error; err != nil {
+		t.Fatal(err)
+	}
+	if trip.DailyBrief == nil || !*trip.DailyBrief {
+		t.Fatal("daily_brief column cleared by itinerary publish")
+	}
+	if trip.WhatsappGroup == nil || *trip.WhatsappGroup != group {
+		t.Fatal("whatsapp_group column cleared by itinerary publish")
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(*trip.Data), &data); err != nil {
+		t.Fatal(err)
+	}
+	if data["dailyBrief"] != true || data["whatsappGroup"] != group {
+		t.Fatalf("publish must copy columns back into trip.data, got %v", data)
+	}
+}
+
 func TestApplyCanonical_SeedBriefSendTimeWins(t *testing.T) {
 	db, err := database.InitMemory()
 	if err != nil {

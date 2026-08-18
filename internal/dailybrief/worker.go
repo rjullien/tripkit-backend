@@ -242,7 +242,7 @@ func logFlagSkip(tripID string) {
 		}
 	}
 	flagSkipLog.Store(tripID, now)
-	log.Printf("dailybrief: skip %s — dailyBrief/whatsappGroup missing from trip.data (PUT overwrite?)", tripID)
+	log.Printf("dailybrief: skip %s — dailyBrief/whatsappGroup missing (columns and trip.data)", tripID)
 }
 
 // BackfillFlagColumns copies dailyBrief flags from trip.data JSON into columns

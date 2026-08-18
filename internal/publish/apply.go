@@ -53,12 +53,17 @@ func ApplyCanonical(db *gorm.DB, p CanonicalPayload, ownerLogins []string) (Appl
 		// Runtime construction (PUT /construction/phase, lastQA) must survive
 		// publish. Québec's seed ships construction.phase=5 (Live); blindly
 		// applying that blob used to rewind a phase the user had just set.
-		if !created && existing.Data != nil && *existing.Data != "" {
+		if !created {
 			if p.TripData == nil {
 				p.TripData = map[string]any{}
 			}
-			p.TripData["construction"] = mergeRuntimeConstruction(*existing.Data, p.TripData["construction"])
-			MergeRuntimeDailyBrief(p.TripData, *existing.Data)
+			if existing.Data != nil && *existing.Data != "" {
+				p.TripData["construction"] = mergeRuntimeConstruction(*existing.Data, p.TripData["construction"])
+				MergeRuntimeDailyBrief(p.TripData, *existing.Data)
+			}
+			// Columns survive a JSON wipe; copy them back so the next reseed
+			// does not persist an itinerary-only blob.
+			HydrateDataFromColumns(p.TripData, existing)
 		}
 
 		dataBytes, err := json.Marshal(p.TripData)

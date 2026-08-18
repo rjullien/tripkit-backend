@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/rjullien/tripkit-backend/internal/models"
+	"github.com/rjullien/tripkit-backend/internal/publish"
 	"gorm.io/gorm"
 )
 
@@ -95,6 +96,7 @@ func ExtractDayOpts(db *gorm.DB, tripID string, dayNumber int, opts ExtractOpts)
 	if trip.Data != nil {
 		_ = json.Unmarshal([]byte(*trip.Data), &tripData)
 	}
+	publish.HydrateDataFromColumns(tripData, trip)
 
 	dailyBrief, waGroup := TripFlags(trip)
 	if opts.RequireConfigured && (!dailyBrief || waGroup == "") {
@@ -311,6 +313,7 @@ func DayTimezone(db *gorm.DB, trip models.Trip, dayNumber int) string {
 	if trip.Data != nil {
 		_ = json.Unmarshal([]byte(*trip.Data), &tripData)
 	}
+	publish.HydrateDataFromColumns(tripData, trip)
 	dayData := map[string]any{}
 	var day models.Day
 	lookup := dayNumber
