@@ -7,14 +7,21 @@ import (
 
 // Trip represents a travel trip.
 type Trip struct {
-	ID        string    `gorm:"primaryKey;size:255" json:"id"`
-	Name      string    `gorm:"not null" json:"name"`
-	Emoji     *string   `json:"emoji"`
-	StartDate *string   `json:"start_date"`
-	EndDate   *string   `json:"end_date"`
-	Data      *string   `gorm:"type:json" json:"data"`
-	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	ID        string  `gorm:"primaryKey;size:255" json:"id"`
+	Name      string  `gorm:"not null" json:"name"`
+	Emoji     *string `json:"emoji"`
+	StartDate *string `json:"start_date"`
+	EndDate   *string `json:"end_date"`
+	Data      *string `gorm:"type:json" json:"data"`
+	// Auto-send flags live in columns so a PUT/reseed that replaces trip.data
+	// cannot silence the WhatsApp worker. json:"-" — GET still exposes them
+	// inside data via HydrateDataFromColumns.
+	DailyBrief    *bool     `gorm:"column:daily_brief" json:"-"`
+	WhatsappGroup *string   `gorm:"column:whatsapp_group;size:255" json:"-"`
+	BriefSendTime *string   `gorm:"column:brief_send_time;size:16" json:"-"`
+	HomeTz        *string   `gorm:"column:home_tz;size:64" json:"-"`
+	CreatedAt     time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt     time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 
 	Days   []Day   `gorm:"foreignKey:TripID;constraint:OnDelete:CASCADE" json:"-"`
 	Hotels []Hotel `gorm:"foreignKey:TripID;constraint:OnDelete:CASCADE" json:"-"`
@@ -88,14 +95,14 @@ type ListCustomDeleted struct {
 
 // MagicToken is a one-time invite link token.
 type MagicToken struct {
-	Token     string    `gorm:"primaryKey;size:64" json:"token"`
-	Name      string    `gorm:"not null;size:255" json:"name"`
-	Role      string    `gorm:"not null;size:50;default:'viewer'" json:"role"` // admin, viewer
-	TripID    string    `gorm:"not null;size:255" json:"trip_id"`
-	UsedBy    *string   `gorm:"size:255" json:"used_by"`
+	Token     string     `gorm:"primaryKey;size:64" json:"token"`
+	Name      string     `gorm:"not null;size:255" json:"name"`
+	Role      string     `gorm:"not null;size:50;default:'viewer'" json:"role"` // admin, viewer
+	TripID    string     `gorm:"not null;size:255" json:"trip_id"`
+	UsedBy    *string    `gorm:"size:255" json:"used_by"`
 	UsedAt    *time.Time `json:"used_at"`
-	ExpiresAt time.Time `gorm:"not null" json:"expires_at"`
-	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+	ExpiresAt time.Time  `gorm:"not null" json:"expires_at"`
+	CreatedAt time.Time  `gorm:"autoCreateTime" json:"created_at"`
 }
 
 // IsValid checks if the token can still be used.

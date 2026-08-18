@@ -420,6 +420,12 @@ func TestApplyCanonical_WritesDailyBriefFlags(t *testing.T) {
 	if data["whatsappGroup"] != "120363000000000001@g.us" {
 		t.Fatal("whatsappGroup dropped")
 	}
+	if trip.DailyBrief == nil || !*trip.DailyBrief {
+		t.Fatal("daily_brief column not set")
+	}
+	if trip.WhatsappGroup == nil || *trip.WhatsappGroup != "120363000000000001@g.us" {
+		t.Fatal("whatsapp_group column not set")
+	}
 }
 
 func TestApplyCanonical_KeepsLiveDailyBriefWhenSeedOmits(t *testing.T) {

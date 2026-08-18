@@ -193,6 +193,54 @@ func TestWorkerTick_SkipsAlreadySent(t *testing.T) {
 	}
 }
 
+func TestWorkerTick_SendsWhenColumnsSetAndJSONStripped(t *testing.T) {
+	db := setupTickDB(t, "tick_cols")
+	stripped := map[string]any{
+		"locations": map[string]any{"quebec": map[string]any{"tz": "America/Toronto"}},
+		"hotels":    map[string]any{},
+	}
+	seedQuebecDay4(t, db, stripped)
+	on := true
+	group := "120363000000000001@g.us"
+	sendAt := "07:00"
+	if err := db.Model(&models.Trip{}).Where("id = ?", "quebec-2026").Updates(map[string]any{
+		"daily_brief":     on,
+		"whatsapp_group":  group,
+		"brief_send_time": sendAt,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := quebecLocal(t, 17, 7, 0)
+	var calls []sendCall
+	var mu sync.Mutex
+	tickingWorker(db, now, &calls, &mu).tick()
+	if len(calls) != 1 || calls[0].dayNumber != 4 {
+		t.Fatalf("columns must send J4 after JSON wipe, got %+v", calls)
+	}
+}
+
+func TestBackfillFlagColumns_CopiesJSONIntoNullColumns(t *testing.T) {
+	db := setupTickDB(t, "tick_backfill")
+	seedQuebecDay4(t, db, quebecEnabledData())
+	n := BackfillFlagColumns(db)
+	if n != 1 {
+		t.Fatalf("expected 1 backfill, got %d", n)
+	}
+	var trip models.Trip
+	if err := db.First(&trip, "id = ?", "quebec-2026").Error; err != nil {
+		t.Fatal(err)
+	}
+	if trip.DailyBrief == nil || !*trip.DailyBrief {
+		t.Fatal("daily_brief not backfilled")
+	}
+	if trip.WhatsappGroup == nil || *trip.WhatsappGroup == "" {
+		t.Fatal("whatsapp_group not backfilled")
+	}
+	if n2 := BackfillFlagColumns(db); n2 != 0 {
+		t.Fatalf("second backfill must be no-op, got %d", n2)
+	}
+}
+
 func TestWorkerTick_SkipsSameDayQAFailed(t *testing.T) {
 	db := setupTickDB(t, "tick_qa")
 	seedQuebecDay4(t, db, quebecEnabledData())
