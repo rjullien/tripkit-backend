@@ -4,13 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
 )
 
 // MSC is the Meteorological Service of Canada provider.
-// Uses the OGC API: api.weather.gc.ca/collections/weather:forecasts
+// Uses the OGC API: api.weather.gc.ca/collections/citypageweather-realtime
+// (the old weather:forecasts collection was removed by ECCC in 2026).
 type MSC struct {
 	Client *http.Client
 }
@@ -24,14 +26,15 @@ func NewMSC() *MSC {
 func (p *MSC) Name() string { return "msc" }
 
 func (p *MSC) Fetch(req ForecastRequest) (*Forecast, error) {
-	days := req.Days
-	if days <= 0 {
-		days = 7
-	}
+	// Build a small bbox around the target point (~50 km) to find the nearest station.
+	dlat := 0.5
+	dlon := 0.7
+	bbox := fmt.Sprintf("%.4f,%.4f,%.4f,%.4f",
+		req.Lon-dlon, req.Lat-dlat, req.Lon+dlon, req.Lat+dlat)
 
 	u := fmt.Sprintf(
-		"https://api.weather.gc.ca/collections/weather:forecasts/items?lat=%.4f&lon=%.4f&limit=%d",
-		req.Lat, req.Lon, days*2, // day + night periods
+		"https://api.weather.gc.ca/collections/citypageweather-realtime/items?bbox=%s&limit=5",
+		bbox,
 	)
 
 	httpReq, _ := http.NewRequest("GET", u, nil)
@@ -50,134 +53,249 @@ func (p *MSC) Fetch(req ForecastRequest) (*Forecast, error) {
 
 	var parsed struct {
 		Features []struct {
-			Properties map[string]any `json:"properties"`
+			Geometry struct {
+				Coordinates []float64 `json:"coordinates"` // [lon, lat]
+			} `json:"geometry"`
+			Properties json.RawMessage `json:"properties"`
 		} `json:"features"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return nil, fmt.Errorf("msc decode: %w", err)
 	}
 
-	// Group features by date. MSC returns individual time-step features.
-	type dayData struct {
-		hi, lo    float64
-		hiSet     bool
-		loSet     bool
-		condition string
-		pop       int
+	if len(parsed.Features) == 0 {
+		return nil, fmt.Errorf("msc: no stations found near %.4f,%.4f", req.Lat, req.Lon)
 	}
-	dailyMap := map[string]*dayData{}
-	var dateOrder []string
 
-	for _, f := range parsed.Features {
-		props := f.Properties
-		if props == nil {
-			continue
-		}
-
-		// Extract datetime → date
-		dt, _ := props["datetime"].(string)
-		if dt == "" {
-			// Some responses use "forecast_datetime" or "time"
-			dt, _ = props["forecast_datetime"].(string)
-		}
-		if len(dt) < 10 {
-			continue
-		}
-		iso := dt[:10]
-
-		dd, exists := dailyMap[iso]
-		if !exists {
-			dd = &dayData{lo: 100, hi: -100}
-			dailyMap[iso] = dd
-			dateOrder = append(dateOrder, iso)
-		}
-
-		// Temperature
-		if temp, ok := mscFloat(props["temperature"]); ok {
-			if temp > dd.hi {
-				dd.hi = temp
-				dd.hiSet = true
-			}
-			if temp < dd.lo {
-				dd.lo = temp
-				dd.loSet = true
-			}
-		}
-		if tmax, ok := mscFloat(props["temperature_maximum"]); ok {
-			dd.hi = tmax
-			dd.hiSet = true
-		}
-		if tmin, ok := mscFloat(props["temperature_minimum"]); ok {
-			dd.lo = tmin
-			dd.loSet = true
-		}
-
-		// Condition text
-		if cond, _ := props["text_summary"].(string); cond != "" {
-			dd.condition = cond
-		}
-		if cond, _ := props["icon_code"].(string); cond != "" && dd.condition == "" {
-			dd.condition = cond
-		}
-
-		// POP
-		if pop, ok := mscFloat(props["probability_of_precipitation"]); ok {
-			if int(pop) > dd.pop {
-				dd.pop = int(pop)
+	// Pick the nearest station.
+	bestIdx := 0
+	bestDist := math.MaxFloat64
+	for i, f := range parsed.Features {
+		if len(f.Geometry.Coordinates) >= 2 {
+			d := haversineKm(req.Lat, req.Lon, f.Geometry.Coordinates[1], f.Geometry.Coordinates[0])
+			if d < bestDist {
+				bestDist = d
+				bestIdx = i
 			}
 		}
 	}
 
+	// Parse the nearest station's properties.
+	var props struct {
+		ForecastGroup struct {
+			Forecasts []mscForecast `json:"forecasts"`
+		} `json:"forecastGroup"`
+	}
+	if err := json.Unmarshal(parsed.Features[bestIdx].Properties, &props); err != nil {
+		return nil, fmt.Errorf("msc props decode: %w", err)
+	}
+
+	forecasts := props.ForecastGroup.Forecasts
+	if len(forecasts) == 0 {
+		return nil, fmt.Errorf("msc: station has no forecasts")
+	}
+
+	// Build ForecastDay list. MSC returns day/night pairs (e.g. "Friday" high, "Friday night" low).
+	// We combine consecutive high+low into one ForecastDay.
 	fc := &Forecast{
 		Lat:       req.Lat,
 		Lon:       req.Lon,
-		Timezone:  "America/Toronto", // MSC doesn't return tz; default to Eastern
+		Timezone:  "America/Toronto",
 		FetchedAt: time.Now().UTC(),
 	}
 
-	for _, iso := range dateOrder {
-		if len(fc.Days) >= days {
-			break
+	days := req.Days
+	if days <= 0 {
+		days = 7
+	}
+	if days > 16 {
+		days = 16
+	}
+
+	// Walk forecasts and pair day/night.
+	today := time.Now().In(time.FixedZone("EST", -5*3600))
+	dayOffset := 0
+
+	i := 0
+	for i < len(forecasts) && len(fc.Days) < days {
+		entry := forecasts[i]
+		tempClass := entry.tempClass()
+		tempVal := entry.tempValue()
+		icon := entry.iconCode()
+		cond := entry.textSummary()
+
+		var hi, lo float64
+		var hiSet, loSet bool
+
+		if tempClass == "high" {
+			hi = tempVal
+			hiSet = true
+			// Next entry should be the night (low)
+			if i+1 < len(forecasts) && forecasts[i+1].tempClass() == "low" {
+				lo = forecasts[i+1].tempValue()
+				loSet = true
+				i += 2
+			} else {
+				i++
+			}
+		} else if tempClass == "low" {
+			// Night-only entry (e.g. "Tonight") — pair with next day if available
+			lo = tempVal
+			loSet = true
+			if i+1 < len(forecasts) && forecasts[i+1].tempClass() == "high" {
+				hi = forecasts[i+1].tempValue()
+				hiSet = true
+				icon = forecasts[i+1].iconCode()
+				cond = forecasts[i+1].textSummary()
+				i += 2
+			} else {
+				i++
+			}
+		} else {
+			i++
+			continue
 		}
-		dd := dailyMap[iso]
+
+		date := today.AddDate(0, 0, dayOffset)
+		dayOffset++
+
 		day := ForecastDay{
-			Date:     iso,
+			Date:     date.Format("2006-01-02"),
 			Provider: p.Name(),
-			Rain:     dd.pop,
 		}
-		if dd.hiSet {
-			day.TempMax = dd.hi
+		if hiSet {
+			day.TempMax = hi
 		}
-		if dd.loSet {
-			day.TempMin = dd.lo
+		if loSet {
+			day.TempMin = lo
 		}
-		day.Code = mscConditionToWMO(dd.condition)
-		day.Conditions = WeatherCodeText(day.Code)
+		day.Code = mscIconToWMO(icon)
+		day.Conditions = cond
 		fc.Days = append(fc.Days, day)
+	}
+
+	if len(fc.Days) == 0 {
+		return nil, fmt.Errorf("msc: could not build any forecast days")
 	}
 
 	return fc, nil
 }
 
-func mscFloat(v any) (float64, bool) {
-	switch t := v.(type) {
-	case float64:
-		return t, true
-	case json.Number:
-		f, err := t.Float64()
-		return f, err == nil
-	case int:
-		return float64(t), true
-	case string:
-		var f float64
-		if _, err := fmt.Sscanf(t, "%f", &f); err == nil {
-			return f, true
-		}
-	}
-	return 0, false
+// mscForecast represents a single forecast period from citypageweather-realtime.
+type mscForecast struct {
+	Temperatures struct {
+		Temperature []struct {
+			Class struct {
+				En string `json:"en"`
+			} `json:"class"`
+			Value struct {
+				En float64 `json:"en"`
+			} `json:"value"`
+		} `json:"temperature"`
+	} `json:"temperatures"`
+	AbbreviatedForecast struct {
+		Icon struct {
+			Value int `json:"value"`
+		} `json:"icon"`
+		TextSummary struct {
+			En string `json:"en"`
+		} `json:"textSummary"`
+	} `json:"abbreviatedForecast"`
+	Period struct {
+		TextForecastName struct {
+			En string `json:"en"`
+		} `json:"textForecastName"`
+	} `json:"period"`
 }
 
-// mscConditionToWMO maps MSC text summaries to WMO codes.
+func (f *mscForecast) tempClass() string {
+	if len(f.Temperatures.Temperature) > 0 {
+		return f.Temperatures.Temperature[0].Class.En
+	}
+	return ""
+}
+
+func (f *mscForecast) tempValue() float64 {
+	if len(f.Temperatures.Temperature) > 0 {
+		return f.Temperatures.Temperature[0].Value.En
+	}
+	return 0
+}
+
+func (f *mscForecast) iconCode() int {
+	return f.AbbreviatedForecast.Icon.Value
+}
+
+func (f *mscForecast) textSummary() string {
+	return f.AbbreviatedForecast.TextSummary.En
+}
+
+// mscIconToWMO maps MSC icon codes to WMO weather codes.
+// Reference: https://weather.gc.ca/weathericons/
+func mscIconToWMO(icon int) int {
+	switch {
+	case icon == 0 || icon == 1:
+		return 0 // Sunny / Clear
+	case icon == 2 || icon == 3:
+		return 1 // Partly cloudy
+	case icon == 4 || icon == 5 || icon == 22:
+		return 2 // Mostly cloudy
+	case icon == 6 || icon == 10:
+		return 3 // Overcast
+	case icon >= 7 && icon <= 9:
+		return 51 // Light rain / drizzle / showers
+	case icon == 11 || icon == 12 || icon == 28:
+		return 61 // Rain
+	case icon == 13 || icon == 14:
+		return 63 // Heavy rain
+	case icon == 15 || icon == 16 || icon == 17:
+		return 73 // Snow
+	case icon == 18:
+		return 75 // Heavy snow
+	case icon == 19:
+		return 95 // Thunderstorm
+	case icon == 23 || icon == 24:
+		return 45 // Fog / haze
+	case icon == 25:
+		return 48 // Freezing drizzle / rain
+	case icon == 26 || icon == 27:
+		return 67 // Freezing rain
+	case icon >= 30 && icon <= 35:
+		// Night equivalents: 30=clear, 31=few clouds, 32=partly, 33=mostly, 34=overcast
+		if icon == 30 {
+			return 0
+		}
+		if icon == 31 || icon == 32 {
+			return 1
+		}
+		return 3
+	case icon == 36 || icon == 37 || icon == 38 || icon == 39:
+		// Night precipitation: 36=chance showers, 37=showers, 38=snow, 39=thunderstorm
+		if icon == 36 || icon == 37 {
+			return 61
+		}
+		if icon == 38 {
+			return 73
+		}
+		return 95
+	default:
+		return 3 // Default: overcast
+	}
+}
+
+// haversineKm computes the great-circle distance between two lat/lon pairs in km.
+func haversineKm(lat1, lon1, lat2, lon2 float64) float64 {
+	const R = 6371.0
+	dLat := (lat2 - lat1) * math.Pi / 180
+	dLon := (lon2 - lon1) * math.Pi / 180
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
+		math.Cos(lat1*math.Pi/180)*math.Cos(lat2*math.Pi/180)*
+			math.Sin(dLon/2)*math.Sin(dLon/2)
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+	return R * c
+}
+
+// mscConditionToWMO maps MSC text summaries to WMO codes (legacy fallback).
 func mscConditionToWMO(cond string) int {
 	s := strings.ToLower(cond)
 	switch {
