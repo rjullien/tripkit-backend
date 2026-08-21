@@ -97,10 +97,16 @@ func (p *MSC) Fetch(req ForecastRequest) (*Forecast, error) {
 
 	// Build ForecastDay list. MSC returns day/night pairs (e.g. "Friday" high, "Friday night" low).
 	// We combine consecutive high+low into one ForecastDay.
+	// Use the request timezone (from location.tz) for correct date assignment.
+	tzName := req.Timezone
+	if tzName == "" {
+		tzName = "America/Toronto"
+	}
+
 	fc := &Forecast{
 		Lat:       req.Lat,
 		Lon:       req.Lon,
-		Timezone:  "America/Toronto",
+		Timezone:  tzName,
 		FetchedAt: time.Now().UTC(),
 	}
 
@@ -113,7 +119,12 @@ func (p *MSC) Fetch(req ForecastRequest) (*Forecast, error) {
 	}
 
 	// Walk forecasts and pair day/night.
-	today := time.Now().In(time.FixedZone("EST", -5*3600))
+	// Falls back to America/Toronto if not provided.
+	loc, _ := time.LoadLocation(tzName)
+	if loc == nil {
+		loc = time.FixedZone("EDT", -4*3600) // fallback: summer EDT
+	}
+	today := time.Now().In(loc)
 	dayOffset := 0
 
 	i := 0
