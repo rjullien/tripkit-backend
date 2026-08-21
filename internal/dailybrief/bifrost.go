@@ -78,7 +78,8 @@ SECTIONS OPTIONNELLES (si présentes dans les données) :
 - Ne crée PAS de tip « famille / parc / enfants » si hasKids=false
 - Ne force PAS de tip route si travelDay=false
 - Si routeOrder.paragraph est fourni : copie ce paragraphe TEL QUEL (🗺️ *Ordre des étapes*). Ne recalcule pas les km, ne change pas « optimal / pas optimal ». Place-le après le programme / horaires, avant ⭐ *À savoir*.
-- Si prep.mode=depart : ajoute une section courte ✅ *Dernier check listes* (progression + 3–5 priorityOpen / lastCheck). Mentionne prep.visibilityNote en une ligne (tu ne vois pas les valises perso / coches locales).`
+- Si prep.mode=depart : ajoute une section courte ✅ *Dernier check listes* (progression + 3–5 priorityOpen / lastCheck). Mentionne prep.visibilityNote en une ligne (tu ne vois pas les valises perso / coches locales).
+- INTERDIT : si prep est absent ou null, NE JAMAIS ajouter de section listes / valises / checklist / "Dernier check". Ces sections n'existent qu'avant le départ.`
 
 const correctSystemPrompt = formatSystemPrompt + `
 

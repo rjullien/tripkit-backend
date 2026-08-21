@@ -191,6 +191,19 @@ func RunQA(text string, src *DayBriefData) QAResult {
 				res.Verdict = QAWarning
 			}
 		}
+		// Prep/listes section must NOT appear when prep is nil (trip already started).
+		if src.Prep == nil {
+			low := strings.ToLower(text)
+			hasPrepSection := strings.Contains(low, "dernier check listes") ||
+				strings.Contains(low, "✅ dernier check") ||
+				strings.Contains(low, "listes cloud") ||
+				strings.Contains(low, "checklist") ||
+				(strings.Contains(low, "valises") && strings.Contains(low, "progression"))
+			if hasPrepSection {
+				res.Hallucinations = append(res.Hallucinations, "prep/listes section while prep=nil (trip en cours)")
+				res.Verdict = QAFailed
+			}
+		}
 	}
 
 	sourceBlob, _ := json.Marshal(src)
