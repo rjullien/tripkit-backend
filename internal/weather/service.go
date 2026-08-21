@@ -58,17 +58,39 @@ func (s *Service) GetForecast(req ForecastRequest) (*Forecast, error) {
 	s.mu.RUnlock()
 
 	provider := s.providerFor(req.Country)
-	fc, err := provider.Fetch(req)
-	if err != nil {
-		// Fallback: if NWS or MSC fails, try Open-Meteo.
-		if provider.Name() != "open-meteo" {
-			log.Printf("weather: %s failed (%v), falling back to open-meteo", provider.Name(), err)
+	var fc *Forecast
+	var err error
+
+	// For CA/US (MSC/NWS): if a specific date is requested and it's beyond
+	// the provider's horizon (MSC=6 days, NWS=7 days), skip directly to
+	// Open-Meteo to avoid a useless call + fallback delay.
+	if provider.Name() != "open-meteo" && req.Date != "" {
+		horizon := 7 // NWS
+		if provider.Name() == "msc" {
+			horizon = 6
+		}
+		if daysUntil(req.Date) >= horizon {
+			// Beyond MSC/NWS horizon — go straight to Open-Meteo
 			fc, err = s.openMeteo.Fetch(req)
 			if err != nil {
-				return nil, fmt.Errorf("weather: all providers failed: %w", err)
+				return nil, err
 			}
-		} else {
-			return nil, err
+		}
+	}
+
+	// Normal path: try the preferred provider, fallback to Open-Meteo
+	if fc == nil {
+		fc, err = provider.Fetch(req)
+		if err != nil {
+			if provider.Name() != "open-meteo" {
+				log.Printf("weather: %s failed (%v), falling back to open-meteo", provider.Name(), err)
+				fc, err = s.openMeteo.Fetch(req)
+				if err != nil {
+					return nil, fmt.Errorf("weather: all providers failed: %w", err)
+				}
+			} else {
+				return nil, err
+			}
 		}
 	}
 
@@ -82,6 +104,17 @@ func (s *Service) GetForecast(req ForecastRequest) (*Forecast, error) {
 	s.mu.Unlock()
 
 	return fc, nil
+}
+
+// daysUntil returns how many days from today (UTC) the given ISO date is.
+// Returns 0 for today, negative for past dates.
+func daysUntil(isoDate string) int {
+	t, err := time.Parse("2006-01-02", isoDate)
+	if err != nil {
+		return 0
+	}
+	now := time.Now().UTC().Truncate(24 * time.Hour)
+	return int(t.Sub(now).Hours() / 24)
 }
 
 // GetDay returns weather for a single date. Convenience wrapper around GetForecast.
