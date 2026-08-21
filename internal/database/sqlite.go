@@ -36,7 +36,7 @@ func openSQLiteAt(path string) (*gorm.DB, error) {
 // InitMemory opens an in-memory SQLite database (for tests).
 // Each call creates a unique database to avoid cross-test pollution.
 func InitMemory() (*gorm.DB, error) {
-	name := fmt.Sprintf("file:memdb_%d?mode=memory&cache=shared&_foreign_keys=on", time.Now().UnixNano())
+	name := fmt.Sprintf("file:memdb_%d?mode=memory&cache=shared&_foreign_keys=on&_busy_timeout=5000&_journal_mode=WAL", time.Now().UnixNano())
 	db, err := gorm.Open(sqlite.Open(name), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
