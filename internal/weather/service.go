@@ -91,6 +91,10 @@ func (s *Service) GetForecast(req ForecastRequest) (*Forecast, error) {
 			} else {
 				return nil, err
 			}
+		} else if provider.Name() != "open-meteo" && fc != nil && len(fc.Days) > 0 {
+			// Enrich MSC/NWS response with missing fields from Open-Meteo
+			// (UV, wind max, precip probability) and mark as combined provider.
+			s.enrichWithOpenMeteo(fc, req)
 		}
 	}
 
@@ -115,6 +119,68 @@ func daysUntil(isoDate string) int {
 	}
 	now := time.Now().UTC().Truncate(24 * time.Hour)
 	return int(t.Sub(now).Hours() / 24)
+}
+
+// enrichWithOpenMeteo fills missing fields (UV, wind max, precip probability,
+// sunrise, sunset) in a MSC/NWS forecast using Open-Meteo data.
+// On success, marks provider as "msc+open-meteo" or "nws+open-meteo".
+func (s *Service) enrichWithOpenMeteo(fc *Forecast, req ForecastRequest) {
+	omReq := ForecastRequest{
+		Lat:      req.Lat,
+		Lon:      req.Lon,
+		Days:     16,
+		Date:     req.Date,
+		Timezone: req.Timezone,
+	}
+	omFc, err := s.openMeteo.Fetch(omReq)
+	if err != nil {
+		// Best-effort: if Open-Meteo fails, keep MSC data as-is.
+		return
+	}
+
+	// Index Open-Meteo days by date for quick lookup.
+	omByDate := make(map[string]*ForecastDay, len(omFc.Days))
+	for i := range omFc.Days {
+		omByDate[omFc.Days[i].Date] = &omFc.Days[i]
+	}
+
+	enriched := false
+	for i := range fc.Days {
+		om, ok := omByDate[fc.Days[i].Date]
+		if !ok {
+			continue
+		}
+		// Fill missing fields only (don't overwrite MSC temps/conditions).
+		if fc.Days[i].UVMax == 0 && om.UVMax > 0 {
+			fc.Days[i].UVMax = om.UVMax
+			enriched = true
+		}
+		if fc.Days[i].WindMax == 0 && om.WindMax > 0 {
+			fc.Days[i].WindMax = om.WindMax
+			enriched = true
+		}
+		if fc.Days[i].Rain == 0 && om.Rain > 0 {
+			fc.Days[i].Rain = om.Rain
+			enriched = true
+		}
+		if fc.Days[i].Sunrise == "" && om.Sunrise != "" {
+			fc.Days[i].Sunrise = om.Sunrise
+			enriched = true
+		}
+		if fc.Days[i].Sunset == "" && om.Sunset != "" {
+			fc.Days[i].Sunset = om.Sunset
+			enriched = true
+		}
+	}
+
+	if enriched {
+		// Mark all days as combined provider.
+		for i := range fc.Days {
+			if fc.Days[i].Provider != "" && fc.Days[i].Provider != "open-meteo" {
+				fc.Days[i].Provider = fc.Days[i].Provider + "+open-meteo"
+			}
+		}
+	}
 }
 
 // GetDay returns weather for a single date. Convenience wrapper around GetForecast.
